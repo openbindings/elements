@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out elements
+        uses: actions/checkout@v4
+        with:
+          path: elements
+
+      - name: Check out TypeScript SDK
+        uses: actions/checkout@v4
+        with:
+          repository: openbindings/openbindings-ts
+          path: openbindings-ts
+
+      - name: Check out shared interfaces
+        uses: actions/checkout@v4
+        with:
+          repository: openbindings/interfaces
+          path: interfaces
+
+      - name: Check out ob
+        uses: actions/checkout@v4
+        with:
+          repository: openbindings/ob
+          path: ob
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            elements/pnpm-lock.yaml
+            openbindings-ts/pnpm-lock.yaml
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ob/go.mod
+          cache-dependency-path: ob/go.sum
+
+      - name: Build SDK dependencies
+        working-directory: openbindings-ts
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @openbindings/sdk build
+
+      - name: Install element dependencies
+        working-directory: elements
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify generated contracts
+        working-directory: elements
+        run: |
+          pnpm sync:requirements
+          git diff --exit-code
+
+      - name: Build, typecheck, and test packages
+        working-directory: elements
+        run: |
+          pnpm check
+          pnpm test
+          pnpm browser:imports
+          pnpm ssr:imports
+          pnpm pack:verify
+
+      - name: Install Chromium
+        working-directory: elements
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Test plain-browser composition
+        working-directory: elements
+        run: pnpm test:browser
+
+      - name: Test embedded ob start workbench
+        working-directory: elements
+        run: pnpm test:ob-start

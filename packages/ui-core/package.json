@@ -1,0 +1,30 @@
+{
+  "name": "@openbindings/ui-core",
+  "version": "0.1.0",
+  "description": "Framework-neutral UI substrate for OpenBindings elements",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "check": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@openbindings/sdk": "^0.2.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/openbindings/elements.git",
+    "directory": "packages/ui-core"
+  }
+}
