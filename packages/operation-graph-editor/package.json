@@ -1,0 +1,36 @@
+{
+  "name": "@openbindings/operation-graph-editor",
+  "version": "0.1.0",
+  "description": "Framework-neutral intent editor for OpenBindings operation graphs",
+  "type": "module",
+  "sideEffects": ["./dist/define.js"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./define": {
+      "types": "./dist/define.d.ts",
+      "default": "./dist/define.js"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsup src/index.ts src/define.ts --format esm --dts --clean",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@openbindings/operation-graph-model": "workspace:^",
+    "@openbindings/operation-graph-viewer": "workspace:^",
+    "@openbindings/ui-core": "workspace:^"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/openbindings/elements.git",
+    "directory": "packages/operation-graph-editor"
+  }
+}

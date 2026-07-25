@@ -20,6 +20,7 @@ export interface OperationDetailEventMap {
 export class OperationDetailElement extends OpenBindingsElement {
   #obi: OBInterface | null = null;
   #operationKey: string | null = null;
+  #selectedBindingKey: string | null = null;
 
   get obi(): OBInterface | null {
     return this.#obi;
@@ -38,6 +39,17 @@ export class OperationDetailElement extends OpenBindingsElement {
   set operationKey(value: string | null) {
     if (value === this.#operationKey) return;
     this.#operationKey = value;
+    this.#selectedBindingKey = null;
+    this.requestRender();
+  }
+
+  get selectedBindingKey(): string | null {
+    return this.#selectedBindingKey;
+  }
+
+  set selectedBindingKey(value: string | null) {
+    if (value === this.#selectedBindingKey) return;
+    this.#selectedBindingKey = value;
     this.requestRender();
   }
 
@@ -152,6 +164,11 @@ export class OperationDetailElement extends OpenBindingsElement {
       const source = this.#obi.sources?.[binding.source];
       button.type = "button";
       button.setAttribute("part", "binding");
+      button.classList.toggle("selected", bindingKey === this.#selectedBindingKey);
+      button.setAttribute(
+        "aria-pressed",
+        String(bindingKey === this.#selectedBindingKey),
+      );
       key.className = "binding-key";
       key.textContent = bindingKey;
       family.className = "binding-family";
@@ -160,6 +177,8 @@ export class OperationDetailElement extends OpenBindingsElement {
         : binding.source;
       button.append(key, family);
       button.addEventListener("click", () => {
+        this.#selectedBindingKey = bindingKey;
+        this.requestRender();
         this.emit<BindingSelectDetail>("ob-binding-select", {
           bindingKey,
           binding,
@@ -368,6 +387,15 @@ const styles = `
     border: 1px solid var(--ob-color-border);
     border-radius: var(--ob-radius);
     cursor: pointer;
+  }
+
+  .binding-list button:hover {
+    background: var(--ob-color-surface-strong);
+  }
+
+  .binding-list button.selected {
+    background: color-mix(in srgb, var(--ob-color-accent) 9%, var(--ob-color-background));
+    border-color: color-mix(in srgb, var(--ob-color-accent) 35%, var(--ob-color-border));
   }
 
   .binding-key {

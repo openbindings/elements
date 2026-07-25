@@ -26,6 +26,9 @@ requirement against that source.
 
 - `obi: OBInterface | null`
 - `operationKey: string | null`
+- `bindingKey: string | null` — optional explicit implementation route. When
+  set, the invocation names this binding instead of asking the provider to
+  select among bindings for the operation.
 - `operationSource: OperationSource | null`
 - `context: Record<string, unknown> | null` — context passed by value to the
   selected target invocation
@@ -40,6 +43,7 @@ requirement against that source.
 - `ob-dependency-state` — `{ status, message }`
 - `ob-invocation-start` — `{ interface, operationKey }`
 - `ob-output` — `{ operationKey, value, index }`
+- `ob-input-change` — `{ operationKey, text, mode }`
 - `ob-input-closed` — `{ operationKey }`
 - `ob-context-required` — `{ operationKey, details?, error }`
 - `ob-invocation-complete` —
@@ -54,15 +58,26 @@ Every event is a bubbling, composed `CustomEvent`. The package augments
 ## Customization
 
 The element inherits shared `--ob-*` tokens and exposes `container`, `status`,
-`input`, `input-mode`, `run`, `cancel`, `output`, `empty`, and `error` parts.
+`input`, `input-mode`, `format-input`, `reset-input`, `run`, `cancel`,
+`output`, `clear-output`, `empty`, and `error` parts.
 
 The element owns frame grammar, cancellation, stale-result suppression, and
 accessible invocation state. Applications own candidate implementations,
 credentials, trust, and preference.
 
-An operation with input starts with an empty editor. The element does not
-invent a value from JSON Schema annotations or choose among examples. Single
-mode sends one complete JSON value. Sequence mode is explicit so a JSON array
-value remains distinguishable from several input values: one array input is
-entered in single mode; several values are entered as the members of an outer
-array in sequence mode.
+An operation with input starts from a conservative value derived from declared
+schema evidence such as `example`, `default`, `const`, `enum`, and required
+properties. The element does not invent domain values or claim that the
+starter is valid when an unresolved or unsupported schema prevents that.
+It refuses to generate a starter for constraints it cannot represent
+conservatively (for example a patterned required string or a required
+property with no derivable value). `Reset starter` restores this evidence-based
+draft; `Format JSON` never changes the decoded value. Runtime operation
+validation remains authoritative.
+Single mode sends one complete JSON value. Sequence mode is explicit so a JSON
+array value remains distinguishable from several input values: one array input
+is entered in single mode; several values are entered as the members of an
+outer array in sequence mode.
+
+Invocation failures have a concise user-facing summary and retain the exact
+code and message under “Technical details.”

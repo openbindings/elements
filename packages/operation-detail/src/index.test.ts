@@ -82,7 +82,14 @@ describe("OperationDetailElement", () => {
     element.shadowRoot
       ?.querySelector<HTMLButtonElement>('[part~="binding"]')
       ?.click();
+    await settled();
     expect(selected).toHaveBeenCalledTimes(1);
+    expect(element.selectedBindingKey).toBe("createPetHTTP");
+    expect(
+      element.shadowRoot?.querySelector('[part~="binding"]')?.getAttribute(
+        "aria-pressed",
+      ),
+    ).toBe("true");
     expect(
       (selected.mock.calls[0]?.[0] as CustomEvent).detail.bindingKey,
     ).toBe("createPetHTTP");

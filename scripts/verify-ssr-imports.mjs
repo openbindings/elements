@@ -5,8 +5,30 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packages = [
   { name: "ui-core", expected: "OperationEnvironment", define: false },
+  { name: "obi-editor", expected: "OBIEditorElement", define: true },
   { name: "obi-explorer", expected: "OBIExplorerElement", define: true },
+  {
+    name: "interface-sources",
+    expected: "InterfaceSourcesElement",
+    define: true,
+  },
   { name: "operation-detail", expected: "OperationDetailElement", define: true },
+  {
+    name: "operation-graph-model",
+    expected: "layoutOperationGraph",
+    define: false,
+  },
+  {
+    name: "operation-graph-viewer",
+    expected: "OperationGraphViewerElement",
+    define: true,
+  },
+  {
+    name: "operation-graph-editor",
+    expected: "OperationGraphEditorElement",
+    define: true,
+  },
+  { name: "operation-tabs", expected: "OperationTabsElement", define: true },
   {
     name: "operation-workbench",
     expected: "OperationWorkbenchElement",

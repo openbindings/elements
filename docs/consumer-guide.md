@@ -49,6 +49,41 @@ explorer.addEventListener("ob-operation-select", event => {
 Events bubble and cross the shadow boundary. Their package READMEs document
 the detail payloads.
 
+Editors emit intent; applications commit
+-----------------------------------------
+
+The editor and source/graph authoring surfaces never save or mutate the values
+assigned to them. The application chooses whether an emitted intent becomes a
+local draft, a call to a backend operation, or a persisted change:
+
+```ts
+editor.addEventListener("ob-interface-edit", event => {
+  applyButton.disabled = !event.detail.valid || !event.detail.dirty;
+  pendingDocument = event.detail.valid ? event.detail.value : null;
+});
+
+sources.addEventListener("ob-binding-remove", async event => {
+  const accepted = await confirmBindingRemoval(event.detail.bindingKey);
+  if (accepted) await removeBindingThroughApplicationPolicy(event.detail);
+});
+
+graphEditor.addEventListener("ob-graph-patch", event => {
+  if (!event.detail.requiresConfirmation || hostConfirmed(event.detail)) {
+    graphDraft = applyOperationGraphPatches(graphDraft, event.detail.patches);
+  }
+});
+```
+
+The graph viewer and editor consume the same graph value and shared model, but
+remain separate packages. Read-only consumers do not acquire editing,
+persistence, execution, or operation-discovery responsibilities.
+
+Operation tabs are also application-owned. The element renders and emits
+intent for a supplied array of keyed sessions; the application owns each
+session's content and lifecycle. This is what allows the reference workbench
+to retain independent invocation state without turning the tab strip into a
+workbench-specific component.
+
 ## Supply operation implementations
 
 Behavioral elements consume the read-only `OperationSource` interface.

@@ -8,7 +8,6 @@ import {
   OpenBindingsElement,
   baseStyles,
   formatJSON,
-  renderStatic,
   type OperationSource,
 } from "@openbindings/ui-core";
 import type {
@@ -77,6 +76,12 @@ export interface InvocationInputClosedDetail {
   operationKey: string;
 }
 
+export interface InvocationInputChangeDetail {
+  operationKey: string;
+  text: string;
+  mode: OperationInputMode;
+}
+
 export interface InvocationContextRequiredDetail {
   operationKey: string;
   details?: unknown;
@@ -95,6 +100,7 @@ export interface OperationWorkbenchEventMap {
   "ob-dependency-state": CustomEvent<OperationDependencyStateDetail>;
   "ob-invocation-start": CustomEvent<InvocationStartDetail>;
   "ob-output": CustomEvent<InvocationOutputDetail>;
+  "ob-input-change": CustomEvent<InvocationInputChangeDetail>;
   "ob-input-closed": CustomEvent<InvocationInputClosedDetail>;
   "ob-context-required": CustomEvent<InvocationContextRequiredDetail>;
   "ob-invocation-complete": CustomEvent<InvocationCompleteDetail>;
@@ -104,6 +110,7 @@ export interface OperationWorkbenchEventMap {
 export class OperationWorkbenchElement extends OpenBindingsElement {
   #obi: OBInterface | null = null;
   #operationKey: string | null = null;
+  #bindingKey: string | null = null;
   #operationSource: OperationSource | null = null;
   #context: Record<string, unknown> | null = null;
   #inputText = "";
@@ -125,6 +132,26 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
   #outputCount = 0;
   #frameError: OperationFrameError | null = null;
   #runtimeError: Error | null = null;
+  #contentRoot: HTMLElement | null = null;
+  #statusAnnouncer: HTMLElement | null = null;
+  #outputAnnouncer: HTMLElement | null = null;
+  #lastStatusAnnouncement = "";
+  #lastAnnouncedOutputCount = 0;
+
+  constructor() {
+    super();
+    const root = this.renderRoot;
+    if (!root) return;
+    root.innerHTML = `<style>${baseStyles}${styles}</style>
+      <div class="render-root"></div>
+      <div class="live-announcers">
+        <span class="status-announcer" role="status" aria-live="polite" aria-atomic="true"></span>
+        <span class="output-announcer" aria-live="polite" aria-atomic="true"></span>
+      </div>`;
+    this.#contentRoot = root.querySelector(".render-root");
+    this.#statusAnnouncer = root.querySelector(".status-announcer");
+    this.#outputAnnouncer = root.querySelector(".output-announcer");
+  }
 
   get obi(): OBInterface | null {
     return this.#obi;
@@ -149,6 +176,18 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     this.#operationKey = value;
     this.#inputTouched = false;
     this.#resetInput();
+    this.#clearResult();
+    void this.cancel();
+    this.requestRender();
+  }
+
+  get bindingKey(): string | null {
+    return this.#bindingKey;
+  }
+
+  set bindingKey(value: string | null) {
+    if (value === this.#bindingKey) return;
+    this.#bindingKey = value;
     this.#clearResult();
     void this.cancel();
     this.requestRender();
@@ -218,6 +257,49 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     this.requestRender();
   }
 
+  resetInputToSchema(): boolean {
+    const operation =
+      this.#obi && this.#operationKey
+        ? this.#obi.operations[this.#operationKey]
+        : undefined;
+    if (!operation || operation.input === undefined || operation.input === null) {
+      return false;
+    }
+    const sample = sampleFromSchema(operation.input, this.#obi);
+    if (!sample.available) return false;
+    this.#inputTouched = false;
+    this.#inputText = JSON.stringify(sample.value, null, 2) ?? "";
+    this.#runtimeError = null;
+    this.#emitInputChange();
+    this.requestRender();
+    return true;
+  }
+
+  formatInput(): boolean {
+    if (!this.#inputText.trim()) return false;
+    try {
+      const parsed = JSON.parse(this.#inputText) as unknown;
+      this.#inputText = JSON.stringify(parsed, null, 2) ?? "";
+      this.#runtimeError = null;
+      this.#emitInputChange();
+      this.requestRender();
+      return true;
+    } catch (error) {
+      this.#runtimeError = new Error(
+        `Input must be valid JSON: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      this.requestRender();
+      return false;
+    }
+  }
+
+  clearOutput(): void {
+    this.#clearResult();
+    this.requestRender();
+  }
+
   override connectedCallback(): void {
     super.connectedCallback();
     if (this.#operationSource && !this.#unsubscribe) {
@@ -241,6 +323,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
   async run(): Promise<void> {
     const targetInterface = this.#obi;
     const targetOperationKey = this.#operationKey;
+    const targetBindingKey = this.#bindingKey;
     const operation =
       this.#obi && this.#operationKey
         ? this.#obi.operations[this.#operationKey]
@@ -285,7 +368,8 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     await this.cancel();
     if (
       this.#obi !== targetInterface ||
-      this.#operationKey !== targetOperationKey
+      this.#operationKey !== targetOperationKey ||
+      this.#bindingKey !== targetBindingKey
     ) {
       return;
     }
@@ -355,7 +439,9 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
         kind: "open",
         input: {
           interface: targetInterface,
-          operation: targetOperationKey,
+          ...(targetBindingKey
+            ? { binding: targetBindingKey }
+            : { operation: targetOperationKey }),
           ...(targetContext ? { context: targetContext } : {}),
         },
       };
@@ -412,18 +498,16 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
   }
 
   protected render(): void {
-    const root = this.renderRoot;
+    const root = this.#contentRoot;
     if (!root) return;
-    renderStatic(
-      root,
-      `<style>${baseStyles}${styles}</style>
-       <section class="container" part="container" aria-label="Operation invocation workbench">
+    root.innerHTML =
+      `<section class="container" part="container" aria-label="Operation invocation workbench">
          <header>
            <div>
              <p class="eyebrow">Invocation</p>
              <h2></h2>
            </div>
-           <span class="status" part="status" role="status"></span>
+           <span class="status" part="status"></span>
          </header>
          <div class="empty" part="empty"></div>
          <div class="workspace">
@@ -432,6 +516,8 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
                <h3>Input</h3>
                <div class="input-options">
                  <span class="input-hint"></span>
+                 <button class="format-input subtle" part="format-input" type="button">Format JSON</button>
+                 <button class="reset-input subtle" part="reset-input" type="button">Reset starter</button>
                  <label>
                    <span class="sr-only">Input cardinality</span>
                    <select class="input-mode" part="input-mode" aria-label="Input cardinality">
@@ -450,14 +536,22 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
            <section class="output-column">
              <div class="section-heading">
                <h3>Output</h3>
-               <span class="output-count"></span>
+               <div class="output-options">
+                 <span class="output-count"></span>
+                 <button class="clear-output subtle" part="clear-output" type="button">Clear</button>
+               </div>
              </div>
-             <pre part="output" aria-live="polite"></pre>
-             <div class="error" part="error" role="alert"></div>
+             <pre part="output"></pre>
+             <div class="error" part="error" role="alert">
+               <p class="error-summary"></p>
+               <details>
+                 <summary>Technical details</summary>
+                 <pre class="error-detail"></pre>
+               </details>
+             </div>
            </section>
          </div>
-       </section>`,
-    );
+       </section>`;
 
     const operation =
       this.#obi && this.#operationKey
@@ -472,19 +566,34 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     const inputMode = root.querySelector(
       ".input-mode",
     ) as HTMLSelectElement | null;
+    const formatInput = root.querySelector(
+      ".format-input",
+    ) as HTMLButtonElement | null;
+    const resetInput = root.querySelector(
+      ".reset-input",
+    ) as HTMLButtonElement | null;
     const runButton = root.querySelector(".run") as HTMLButtonElement | null;
     const cancelButton = root.querySelector(
       ".cancel",
     ) as HTMLButtonElement | null;
     const output = root.querySelector("pre");
     const outputCount = root.querySelector(".output-count");
+    const clearOutput = root.querySelector(
+      ".clear-output",
+    ) as HTMLButtonElement | null;
     const error = root.querySelector(".error") as HTMLElement | null;
+    const errorSummary = root.querySelector(".error-summary");
+    const errorDetail = root.querySelector(".error-detail");
+    const errorDetails = error?.querySelector("details");
+    const statusMessage = this.#running
+      ? "Running"
+      : this.#bindingKey && this.#dependency.status === "available"
+        ? `Ready · ${this.#bindingKey}`
+        : this.#dependency.message;
 
     if (heading) heading.textContent = this.#operationKey ?? "No operation";
     if (status) {
-      status.textContent = this.#running
-        ? "Running"
-        : this.#dependency.message;
+      status.textContent = statusMessage;
       status.className = `status ${this.#dependency.status}`;
     }
 
@@ -496,6 +605,8 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
           : "Assign an OBI document and operation key.";
       }
       if (workspace) workspace.hidden = true;
+      this.#announceStatus(statusMessage);
+      this.#announceOutputCount();
       return;
     }
 
@@ -513,6 +624,26 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       textarea.addEventListener("input", () => {
         this.#inputTouched = true;
         this.#inputText = textarea.value;
+        this.#emitInputChange();
+      });
+      textarea.addEventListener("keydown", event => {
+        if (
+          event.key === "Enter" &&
+          (event.metaKey || event.ctrlKey) &&
+          !this.#running
+        ) {
+          event.preventDefault();
+          void this.run();
+          return;
+        }
+        if (event.key !== "Tab" || this.#running) return;
+        event.preventDefault();
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        textarea.setRangeText("  ", start, end, "end");
+        this.#inputTouched = true;
+        this.#inputText = textarea.value;
+        this.#emitInputChange();
       });
     }
     if (inputMode) {
@@ -521,7 +652,20 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       inputMode.value = this.#inputMode;
       inputMode.addEventListener("change", () => {
         this.inputMode = inputMode.value as OperationInputMode;
+        this.#emitInputChange();
       });
+    }
+    if (formatInput) {
+      formatInput.hidden = !hasInput;
+      formatInput.disabled = this.#running || !this.#inputText.trim();
+      formatInput.addEventListener("click", () => this.formatInput());
+    }
+    if (resetInput) {
+      resetInput.hidden = !hasInput;
+      resetInput.disabled =
+        this.#running ||
+        !sampleFromSchema(operation.input, this.#obi).available;
+      resetInput.addEventListener("click", () => this.resetInputToSchema());
     }
     if (inputHint) {
       inputHint.textContent = hasInput
@@ -561,15 +705,40 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
           ? ""
           : `${this.#outputCount} value${this.#outputCount === 1 ? "" : "s"}`;
     }
+    if (clearOutput) {
+      clearOutput.hidden =
+        this.#outputCount === 0 && !this.#frameError && !this.#runtimeError;
+      clearOutput.disabled = this.#running;
+      clearOutput.addEventListener("click", () => this.clearOutput());
+    }
     if (error) {
       const currentError = this.#frameError ?? this.#runtimeError;
       error.hidden = !currentError;
-      error.textContent = currentError
-        ? "code" in currentError
-          ? `${currentError.code}: ${currentError.message}`
-          : currentError.message
-        : "";
+      const presentation = currentError
+        ? presentInvocationError(currentError)
+        : null;
+      if (errorSummary) {
+        errorSummary.textContent = presentation?.summary ?? "";
+      }
+      if (errorDetail) {
+        errorDetail.textContent = presentation?.detail ?? "";
+      }
+      if (errorDetails) {
+        errorDetails.hidden = !presentation?.detail;
+      }
+      this.#announceStatus(
+        currentError && presentation
+          ? `Invocation failed. ${presentation.summary}`
+          : this.#running
+            ? "Invocation running."
+            : this.#outputCount > 0
+              ? `Invocation complete. ${this.#outputCount} output ${
+                  this.#outputCount === 1 ? "value" : "values"
+                } received.`
+              : statusMessage,
+      );
     }
+    this.#announceOutputCount();
   }
 
   #resetInput(): void {
@@ -581,14 +750,43 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       this.#inputText = "";
       return;
     }
-    if (!this.#inputTouched) this.#inputText = "";
+    if (!this.#inputTouched) {
+      const sample = sampleFromSchema(operation.input, this.#obi);
+      this.#inputText =
+        sample.available ? (JSON.stringify(sample.value, null, 2) ?? "") : "";
+    }
   }
 
   #clearResult(): void {
     this.#outputs = [];
     this.#outputCount = 0;
+    this.#lastAnnouncedOutputCount = 0;
     this.#frameError = null;
     this.#runtimeError = null;
+  }
+
+  #announceStatus(message: string): void {
+    if (!this.#statusAnnouncer || message === this.#lastStatusAnnouncement) {
+      return;
+    }
+    this.#lastStatusAnnouncement = message;
+    this.#statusAnnouncer.textContent = message;
+  }
+
+  #announceOutputCount(): void {
+    if (
+      !this.#outputAnnouncer ||
+      this.#outputCount === this.#lastAnnouncedOutputCount
+    ) {
+      return;
+    }
+    this.#lastAnnouncedOutputCount = this.#outputCount;
+    this.#outputAnnouncer.textContent =
+      this.#outputCount === 0
+        ? ""
+        : `${this.#outputCount} output ${
+            this.#outputCount === 1 ? "value" : "values"
+          } received.`;
   }
 
   #resolveDependency(): void {
@@ -668,6 +866,267 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       message: this.#dependency.message,
     });
   }
+
+  #emitInputChange(): void {
+    if (!this.#operationKey) return;
+    this.emit<InvocationInputChangeDetail>("ob-input-change", {
+      operationKey: this.#operationKey,
+      text: this.#inputText,
+      mode: this.#inputMode,
+    });
+  }
+}
+
+function presentInvocationError(
+  error: OperationFrameError | Error,
+): { summary: string; detail: string } {
+  if (!("code" in error)) {
+    return { summary: error.message, detail: "" };
+  }
+
+  const summary =
+    error.code === "CONTEXT_REQUIRED"
+      ? "This operation needs credentials or other invocation context."
+      : error.code === "ERR_VALIDATION_FAILED"
+        ? "A value did not match the operation contract."
+        : error.code === "ERR_TIMEOUT"
+          ? "The operation timed out."
+          : error.code === "ERR_CANCELLED"
+            ? "The operation was cancelled."
+            : error.code === "ERR_CONNECT_FAILED" ||
+                error.code === "ERR_UNAVAILABLE"
+              ? "The target could not be reached."
+              : "The operation could not be completed.";
+  return {
+    summary,
+    detail: `${error.code}: ${error.message}`,
+  };
+}
+
+type SchemaSample =
+  | { available: true; value: unknown }
+  | { available: false };
+
+function sampleFromSchema(
+  schema: unknown,
+  root: OBInterface | null,
+  seen = new Set<unknown>(),
+  depth = 0,
+): SchemaSample {
+  if (schema === true) return { available: true, value: null };
+  if (
+    schema === false ||
+    schema === null ||
+    typeof schema !== "object" ||
+    Array.isArray(schema) ||
+    depth > 12 ||
+    seen.has(schema)
+  ) {
+    return { available: false };
+  }
+  seen.add(schema);
+  const value = schema as Record<string, unknown>;
+
+  if (Object.hasOwn(value, "const")) {
+    return { available: true, value: structuredClone(value.const) };
+  }
+  if (Array.isArray(value.enum) && value.enum.length > 0) {
+    return { available: true, value: structuredClone(value.enum[0]) };
+  }
+  if (Object.hasOwn(value, "default")) {
+    return { available: true, value: structuredClone(value.default) };
+  }
+  if (Array.isArray(value.examples) && value.examples.length > 0) {
+    return { available: true, value: structuredClone(value.examples[0]) };
+  }
+  if (typeof value.$ref === "string") {
+    const resolved = resolveLocalReference(root, value.$ref);
+    if (resolved !== undefined) {
+      return sampleFromSchema(resolved, root, seen, depth + 1);
+    }
+  }
+  if (Array.isArray(value.allOf)) {
+    let combined: unknown;
+    let hasCombined = false;
+    for (const alternative of value.allOf) {
+      const sample = sampleFromSchema(
+        alternative,
+        root,
+        new Set(seen),
+        depth + 1,
+      );
+      if (!sample.available) return { available: false };
+      if (!hasCombined) {
+        combined = structuredClone(sample.value);
+        hasCombined = true;
+      } else if (isRecord(combined) && isRecord(sample.value)) {
+        combined = { ...combined, ...sample.value };
+      } else if (JSON.stringify(combined) !== JSON.stringify(sample.value)) {
+        return { available: false };
+      }
+    }
+    // An empty allOf imposes no constraint, so null is a valid conservative
+    // starter. A non-empty allOf must produce compatible evidence above.
+    return { available: true, value: hasCombined ? combined : null };
+  }
+  for (const keyword of ["oneOf", "anyOf"] as const) {
+    const alternatives = value[keyword];
+    if (!Array.isArray(alternatives)) continue;
+    for (const alternative of alternatives) {
+      const sample = sampleFromSchema(alternative, root, seen, depth + 1);
+      if (sample.available) return sample;
+    }
+  }
+
+  const types = Array.isArray(value.type) ? value.type : [value.type];
+  if (
+    [
+      "not",
+      "if",
+      "dependentSchemas",
+      "dependentRequired",
+      "patternProperties",
+      "propertyNames",
+      "contains",
+    ].some(keyword => Object.hasOwn(value, keyword))
+  ) {
+    return { available: false };
+  }
+  if (types.includes("object") || isRecord(value.properties)) {
+    const properties = isRecord(value.properties) ? value.properties : {};
+    const required = new Set(
+      Array.isArray(value.required)
+        ? value.required.filter(
+            (entry): entry is string => typeof entry === "string",
+          )
+        : [],
+    );
+    const result: Record<string, unknown> = {};
+    for (const key of required) {
+      if (!Object.hasOwn(properties, key)) return { available: false };
+    }
+    for (const [key, propertySchema] of Object.entries(properties)) {
+      const sample = sampleFromSchema(
+        propertySchema,
+        root,
+        new Set(seen),
+        depth + 1,
+      );
+      if (required.has(key) && !sample.available) {
+        return { available: false };
+      }
+      if (sample.available && (required.has(key) || hasSuggestedValue(propertySchema))) {
+        result[key] = sample.value;
+      }
+    }
+    return { available: true, value: result };
+  }
+  if (types.includes("array")) {
+    const minimum =
+      typeof value.minItems === "number" && value.minItems > 0
+        ? Math.ceil(value.minItems)
+        : 0;
+    if (minimum === 0) return { available: true, value: [] };
+    const itemSchema = value.items;
+    if (itemSchema === undefined) return { available: false };
+    const item = sampleFromSchema(itemSchema, root, new Set(seen), depth + 1);
+    return item.available
+      ? {
+          available: true,
+          value: Array.from({ length: minimum }, () =>
+            structuredClone(item.value),
+          ),
+        }
+      : { available: false };
+  }
+  if (types.includes("string")) {
+    if (typeof value.pattern === "string") return { available: false };
+    const minimum =
+      typeof value.minLength === "number" && value.minLength > 0
+        ? Math.ceil(value.minLength)
+        : 0;
+    if (
+      typeof value.maxLength === "number" &&
+      minimum > Math.floor(value.maxLength)
+    ) {
+      return { available: false };
+    }
+    return { available: true, value: "x".repeat(minimum) };
+  }
+  if (types.includes("integer")) {
+    const floor =
+      typeof value.exclusiveMinimum === "number"
+        ? Math.floor(value.exclusiveMinimum) + 1
+        : typeof value.minimum === "number"
+          ? Math.ceil(value.minimum)
+          : 0;
+    const ceiling =
+      typeof value.exclusiveMaximum === "number"
+        ? Math.ceil(value.exclusiveMaximum) - 1
+        : typeof value.maximum === "number"
+          ? Math.floor(value.maximum)
+          : Number.POSITIVE_INFINITY;
+    return floor <= ceiling
+      ? { available: true, value: floor }
+      : { available: false };
+  }
+  if (types.includes("number")) {
+    const exclusiveMinimum =
+      typeof value.exclusiveMinimum === "number"
+        ? value.exclusiveMinimum
+        : null;
+    const floor =
+      exclusiveMinimum !== null
+        ? exclusiveMinimum +
+          Math.max(1, Math.abs(exclusiveMinimum)) * Number.EPSILON
+        : typeof value.minimum === "number"
+          ? value.minimum
+          : 0;
+    const maximum =
+      typeof value.exclusiveMaximum === "number"
+        ? value.exclusiveMaximum
+        : typeof value.maximum === "number"
+          ? value.maximum
+          : Number.POSITIVE_INFINITY;
+    const validMaximum =
+      typeof value.exclusiveMaximum === "number"
+        ? floor < maximum
+        : floor <= maximum;
+    return validMaximum
+      ? { available: true, value: floor }
+      : { available: false };
+  }
+  if (types.includes("boolean")) return { available: true, value: false };
+  if (types.includes("null")) return { available: true, value: null };
+  return { available: false };
+}
+
+function hasSuggestedValue(schema: unknown): boolean {
+  if (!isRecord(schema)) return false;
+  return (
+    Object.hasOwn(schema, "default") ||
+    Object.hasOwn(schema, "const") ||
+    (Array.isArray(schema.examples) && schema.examples.length > 0) ||
+    (Array.isArray(schema.enum) && schema.enum.length > 0)
+  );
+}
+
+function resolveLocalReference(
+  root: OBInterface | null,
+  ref: string,
+): unknown {
+  if (!root || !ref.startsWith("#/")) return undefined;
+  let current: unknown = root;
+  for (const rawToken of ref.slice(2).split("/")) {
+    if (!isRecord(current)) return undefined;
+    const token = rawToken.replace(/~1/g, "/").replace(/~0/g, "~");
+    current = current[token];
+  }
+  return current;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 export interface OperationWorkbenchElement {
@@ -693,6 +1152,24 @@ declare global {
 }
 
 const styles = `
+  .render-root {
+    height: 100%;
+    min-height: 0;
+  }
+
+  .live-announcers,
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
   .container {
     min-height: 18rem;
     padding: calc(var(--ob-space) * 1.5);
@@ -701,7 +1178,7 @@ const styles = `
     border-radius: var(--ob-radius);
   }
 
-  header, .section-heading, .actions, .input-options {
+  header, .section-heading, .actions, .input-options, .output-options {
     display: flex;
     gap: var(--ob-space);
     align-items: center;
@@ -771,6 +1248,10 @@ const styles = `
     justify-content: flex-end;
   }
 
+  .output-options {
+    justify-content: flex-end;
+  }
+
   .input-mode {
     min-height: 1.8rem;
     padding: 0.2rem 0.35rem;
@@ -810,6 +1291,14 @@ const styles = `
     cursor: pointer;
   }
 
+  button.subtle {
+    min-height: 1.8rem;
+    padding: 0.2rem 0.42rem;
+    color: var(--ob-color-text-muted);
+    background: var(--ob-color-background);
+    font-size: 0.68rem;
+  }
+
   button:disabled {
     cursor: not-allowed;
     opacity: 0.48;
@@ -827,9 +1316,40 @@ const styles = `
   }
 
   .error {
-    padding: 0.55rem 0;
+    padding: 0.65rem 0.75rem;
+    margin-top: var(--ob-space);
     color: var(--ob-color-danger);
     font-size: 0.78rem;
+    background: color-mix(in srgb, var(--ob-color-danger) 7%, var(--ob-color-background));
+    border: 1px solid color-mix(in srgb, var(--ob-color-danger) 22%, var(--ob-color-border));
+    border-radius: var(--ob-radius);
+  }
+
+  .error-summary {
+    margin: 0;
+    font-weight: 600;
+  }
+
+  .error details {
+    margin-top: 0.4rem;
+    color: var(--ob-color-text-muted);
+  }
+
+  .error summary {
+    cursor: pointer;
+    font-size: 0.72rem;
+  }
+
+  .error-detail {
+    max-height: 10rem;
+    min-height: 0;
+    padding: 0.55rem;
+    margin: 0.4rem 0 0;
+    overflow: auto;
+    color: var(--ob-color-text);
+    white-space: pre-wrap;
+    background: var(--ob-color-surface);
+    border-radius: calc(var(--ob-radius) * 0.8);
   }
 
   .empty {

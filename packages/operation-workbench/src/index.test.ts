@@ -26,9 +26,13 @@ const LOCAL_BINDING_SPEC = "example.local-operation-invoker@1";
 
 class LocalOperationInvokerBinding implements BindingInvoker {
   readonly receivedInputs: unknown[] = [];
+  readonly receivedTargets: Array<{
+    operation?: string;
+    binding?: string;
+  }> = [];
 
   constructor(
-    private readonly mode: "complete" | "hang" | "many" = "complete",
+    private readonly mode: "complete" | "hang" | "many" | "error" = "complete",
   ) {}
 
   bindingSpecs(): BindingSpecInfo[] {
@@ -53,10 +57,18 @@ class LocalOperationInvokerBinding implements BindingInvoker {
     >,
   ): Promise<void> {
     let targetOperation = "";
+    let targetBinding = "";
     let targetInput: unknown;
     for await (const frame of invocation.inputs()) {
       if (frame.kind === "open") {
         targetOperation = frame.input.operation ?? "";
+        targetBinding = frame.input.binding ?? "";
+        this.receivedTargets.push({
+          ...(frame.input.operation
+            ? { operation: frame.input.operation }
+            : {}),
+          ...(frame.input.binding ? { binding: frame.input.binding } : {}),
+        });
       } else if (frame.kind === "input") {
         targetInput = frame.value;
         this.receivedInputs.push(frame.value);
@@ -77,10 +89,22 @@ class LocalOperationInvokerBinding implements BindingInvoker {
       });
       return;
     }
+    if (this.mode === "error") {
+      await invocation.emitOutput({
+        kind: "error",
+        error: {
+          code: "ERR_VALIDATION_FAILED",
+          category: "validation",
+          message: "output validation failed at /name",
+        },
+      });
+      invocation.closeOutput();
+      return;
+    }
     const values =
       this.mode === "many"
         ? [1, 2, 3]
-        : [{ targetOperation, targetInput }];
+        : [{ targetOperation, targetBinding, targetInput }];
     for (const value of values) {
       await invocation.emitOutput({ kind: "output", value });
     }
@@ -128,6 +152,131 @@ afterEach(() => {
 });
 
 describe("OperationWorkbenchElement", () => {
+  it("derives conservative starter input from the operation schema", async () => {
+    const element = document.createElement(
+      OPERATION_WORKBENCH_TAG,
+    ) as OperationWorkbenchElement;
+    element.obi = {
+      ...targetOBI,
+      operations: {
+        echo: {
+          input: {
+            type: "object",
+            properties: {
+              message: { type: "string" },
+              limit: { type: "integer", default: 10 },
+              optional: { type: "boolean" },
+            },
+            required: ["message"],
+          },
+        },
+      },
+    };
+    element.operationKey = "echo";
+    document.body.append(element);
+    await settled();
+
+    expect(JSON.parse(element.inputText)).toEqual({
+      message: "",
+      limit: 10,
+    });
+  });
+
+  it("refuses to invent a starter for required constraints it cannot satisfy", async () => {
+    const element = document.createElement(
+      OPERATION_WORKBENCH_TAG,
+    ) as OperationWorkbenchElement;
+    element.obi = {
+      ...targetOBI,
+      operations: {
+        echo: {
+          input: {
+            type: "object",
+            properties: {
+              code: { type: "string", pattern: "^[A-Z]{3}-[0-9]+$" },
+            },
+            required: ["code"],
+          },
+        },
+      },
+    };
+    element.operationKey = "echo";
+    document.body.append(element);
+    await settled();
+
+    expect(element.inputText).toBe("");
+    expect(element.resetInputToSchema()).toBe(false);
+    expect(
+      element.shadowRoot?.querySelector<HTMLButtonElement>(".reset-input")
+        ?.disabled,
+    ).toBe(true);
+  });
+
+  it("uses primitive allOf evidence without comparing it to an invented object", async () => {
+    const element = document.createElement(
+      OPERATION_WORKBENCH_TAG,
+    ) as OperationWorkbenchElement;
+    element.obi = {
+      ...targetOBI,
+      operations: {
+        echo: {
+          input: {
+            allOf: [{ type: "string", minLength: 3 }],
+          },
+        },
+      },
+    };
+    element.operationKey = "echo";
+    document.body.append(element);
+    await settled();
+
+    expect(JSON.parse(element.inputText)).toBe("xxx");
+  });
+
+  it("refuses contradictory string length constraints", async () => {
+    const element = document.createElement(
+      OPERATION_WORKBENCH_TAG,
+    ) as OperationWorkbenchElement;
+    element.obi = {
+      ...targetOBI,
+      operations: {
+        echo: {
+          input: { type: "string", minLength: 4, maxLength: 3 },
+        },
+      },
+    };
+    element.operationKey = "echo";
+    document.body.append(element);
+    await settled();
+
+    expect(element.inputText).toBe("");
+    expect(element.resetInputToSchema()).toBe(false);
+  });
+
+  it("formats and resets input while emitting typed input change intent", async () => {
+    const element = document.createElement(
+      OPERATION_WORKBENCH_TAG,
+    ) as OperationWorkbenchElement;
+    element.obi = targetOBI;
+    element.operationKey = "echo";
+    element.inputText = '{"message":"hello"}';
+    const changed = vi.fn();
+    element.addEventListener("ob-input-change", changed);
+    document.body.append(element);
+    await settled();
+
+    expect(element.formatInput()).toBe(true);
+    expect(element.inputText).toBe('{\n  "message": "hello"\n}');
+    expect(changed.mock.calls[0]?.[0].detail).toEqual({
+      operationKey: "echo",
+      text: '{\n  "message": "hello"\n}',
+      mode: "single",
+    });
+
+    expect(element.resetInputToSchema()).toBe(true);
+    expect(JSON.parse(element.inputText)).toEqual({ message: "" });
+  });
+
   it("resolves the published Operation Invoker requirement and drives frames", async () => {
     const invoker = new OperationInvoker([
       new LocalOperationInvokerBinding(),
@@ -151,6 +300,9 @@ describe("OperationWorkbenchElement", () => {
     element.addEventListener("ob-output", output);
     element.addEventListener("ob-invocation-complete", complete);
     document.body.append(element);
+    const statusAnnouncer = element.shadowRoot?.querySelector(
+      ".status-announcer",
+    );
     await waitFor(() =>
       element.shadowRoot?.querySelector(".status")?.textContent === "Ready",
     );
@@ -160,12 +312,48 @@ describe("OperationWorkbenchElement", () => {
     expect(output).toHaveBeenCalledTimes(1);
     expect((output.mock.calls[0]?.[0] as CustomEvent).detail.value).toEqual({
       targetOperation: "echo",
+      targetBinding: "",
       targetInput: { message: "hello" },
     });
     expect(complete).toHaveBeenCalledTimes(1);
+    expect(
+      element.shadowRoot?.querySelector(".status-announcer"),
+    ).toBe(statusAnnouncer);
+    expect(statusAnnouncer?.textContent).toBe(
+      "Invocation complete. 1 output value received.",
+    );
     expect(element.shadowRoot?.querySelector("pre")?.textContent).toContain(
       '"message": "hello"',
     );
+  });
+
+  it("invokes an explicitly selected binding without also naming an operation", async () => {
+    const binding = new LocalOperationInvokerBinding();
+    const environment = new OperationEnvironment([
+      {
+        interface: operationInvokerCandidate(),
+        invoker: new OperationInvoker([binding]),
+      },
+    ]);
+    const element = document.createElement(
+      OPERATION_WORKBENCH_TAG,
+    ) as OperationWorkbenchElement;
+    element.obi = targetOBI;
+    element.operationKey = "echo";
+    element.bindingKey = "echo.http";
+    element.inputText = '{"message":"routed"}';
+    element.operationSource = environment;
+    document.body.append(element);
+    await waitFor(() =>
+      element.shadowRoot
+        ?.querySelector(".status")
+        ?.textContent?.includes("echo.http"),
+    );
+
+    await element.run();
+
+    expect(binding.receivedTargets).toEqual([{ binding: "echo.http" }]);
+    expect(element.bindingKey).toBe("echo.http");
   });
 
   it("distinguishes ambiguity from unavailability", async () => {
@@ -318,7 +506,44 @@ describe("OperationWorkbenchElement", () => {
       { message: "two" },
     ]);
   });
+
+  it("summarizes contract failures while retaining exact technical evidence", async () => {
+    const environment = new OperationEnvironment([
+      {
+        interface: operationInvokerCandidate(),
+        invoker: new OperationInvoker([
+          new LocalOperationInvokerBinding("error"),
+        ]),
+      },
+    ]);
+    const element = document.createElement(
+      OPERATION_WORKBENCH_TAG,
+    ) as OperationWorkbenchElement;
+    element.obi = targetOBI;
+    element.operationKey = "echo";
+    element.inputText = '{"message":"valid input"}';
+    element.operationSource = environment;
+    document.body.append(element);
+    await waitFor(() =>
+      element.shadowRoot?.querySelector(".status")?.textContent === "Ready",
+    );
+
+    await element.run();
+    await settled();
+
+    expect(
+      element.shadowRoot?.querySelector(".error-summary")?.textContent,
+    ).toBe("A value did not match the operation contract.");
+    expect(
+      element.shadowRoot?.querySelector(".error-detail")?.textContent,
+    ).toContain("ERR_VALIDATION_FAILED:");
+  });
 });
+
+async function settled(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
 
 async function waitFor(predicate: () => boolean | undefined): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {

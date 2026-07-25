@@ -35,8 +35,10 @@ test("plain HTML composes explorer, detail, and invocation", async ({
   await expect(workbench.locator(".status")).toHaveText("Ready");
 
   await workbench.locator(".run").click();
-  await expect(workbench.locator("pre")).toContainText("local-result");
-  await expect(workbench.locator("pre")).toContainText(
+  await expect(workbench.locator('pre[part~="output"]')).toContainText(
+    "local-result",
+  );
+  await expect(workbench.locator('pre[part~="output"]')).toContainText(
     "Ship reusable elements",
   );
 

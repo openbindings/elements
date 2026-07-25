@@ -6,10 +6,13 @@ Read-only detail view for one operation in an OBI.
 
 - `obi: OBInterface | null`
 - `operationKey: string | null`
+- `selectedBindingKey: string | null` — controls the pressed state of a binding
+  choice without selecting a route on behalf of the application
 
 ## Events
 
-- `ob-binding-select` — `CustomEvent<{ bindingKey, binding }>`
+- `ob-binding-select` — `CustomEvent<{ bindingKey, binding }>` emitted when the
+  user explicitly chooses one binding
 
 The package augments `HTMLElementTagNameMap` and types the listener payload on
 `OperationDetailElement`.

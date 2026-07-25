@@ -62,6 +62,34 @@ describe("OBIExplorerElement", () => {
     expect(buttons).toHaveLength(1);
     expect(buttons?.[0]?.textContent).toContain("createPet");
   });
+
+  it("keeps long interface prose collapsible so operations remain primary", async () => {
+    const element = document.createElement(OBI_EXPLORER_TAG) as OBIExplorerElement;
+    element.obi = {
+      ...obi,
+      description: "A deliberately detailed interface description. ".repeat(8),
+    };
+    document.body.append(element);
+    await settled();
+
+    const description = element.shadowRoot?.querySelector(".description");
+    const toggle = element.shadowRoot?.querySelector<HTMLButtonElement>(
+      ".description-toggle",
+    );
+    expect(description?.classList.contains("expanded")).toBe(false);
+    expect(toggle?.textContent).toBe("Show more");
+
+    toggle?.click();
+    await settled();
+    expect(
+      element.shadowRoot
+        ?.querySelector(".description")
+        ?.classList.contains("expanded"),
+    ).toBe(true);
+    expect(
+      element.shadowRoot?.querySelector(".description-toggle")?.textContent,
+    ).toBe("Show less");
+  });
 });
 
 async function settled(): Promise<void> {

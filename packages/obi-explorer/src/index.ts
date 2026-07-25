@@ -20,6 +20,7 @@ export class OBIExplorerElement extends OpenBindingsElement {
   #obi: OBInterface | null = null;
   #selectedOperation: string | null = null;
   #filter = "";
+  #descriptionExpanded = false;
 
   get obi(): OBInterface | null {
     return this.#obi;
@@ -28,6 +29,7 @@ export class OBIExplorerElement extends OpenBindingsElement {
   set obi(value: OBInterface | null) {
     if (value === this.#obi) return;
     this.#obi = value;
+    this.#descriptionExpanded = false;
     if (
       this.#selectedOperation &&
       !Object.hasOwn(value?.operations ?? {}, this.#selectedOperation)
@@ -79,7 +81,10 @@ export class OBIExplorerElement extends OpenBindingsElement {
            </div>
            <span class="count" aria-label="Operation count"></span>
          </header>
-         <p class="description"></p>
+         <div class="description-block">
+           <p class="description"></p>
+           <button class="description-toggle" type="button"></button>
+         </div>
          <label class="filter-label">
            <span class="sr-only">Filter operations</span>
            <input part="filter" type="search" placeholder="Filter operations" />
@@ -92,6 +97,12 @@ export class OBIExplorerElement extends OpenBindingsElement {
     const title = root.querySelector("h2");
     const version = root.querySelector(".version");
     const description = root.querySelector(".description") as HTMLElement | null;
+    const descriptionBlock = root.querySelector(
+      ".description-block",
+    ) as HTMLElement | null;
+    const descriptionToggle = root.querySelector(
+      ".description-toggle",
+    ) as HTMLButtonElement | null;
     const count = root.querySelector(".count");
     const input = root.querySelector("input");
     const empty = root.querySelector(".empty") as HTMLElement | null;
@@ -101,7 +112,7 @@ export class OBIExplorerElement extends OpenBindingsElement {
       if (title) title.textContent = "No interface";
       if (version) version.textContent = "";
       if (count) count.textContent = "0";
-      if (description) description.hidden = true;
+      if (descriptionBlock) descriptionBlock.hidden = true;
       if (input) input.disabled = true;
       if (empty) {
         empty.hidden = false;
@@ -121,8 +132,28 @@ export class OBIExplorerElement extends OpenBindingsElement {
         .join(" · ");
     }
     if (description) {
-      description.hidden = !this.#obi.description;
       description.textContent = this.#obi.description ?? "";
+      description.classList.toggle("expanded", this.#descriptionExpanded);
+    }
+    const descriptionCanCollapse = (this.#obi.description?.length ?? 0) > 180;
+    if (descriptionBlock) {
+      descriptionBlock.hidden = !this.#obi.description;
+    }
+    if (descriptionToggle) {
+      descriptionToggle.hidden = !descriptionCanCollapse;
+      descriptionToggle.textContent = this.#descriptionExpanded
+        ? "Show less"
+        : "Show more";
+      descriptionToggle.setAttribute(
+        "aria-label",
+        this.#descriptionExpanded
+          ? "Collapse interface description"
+          : "Show full interface description",
+      );
+      descriptionToggle.addEventListener("click", () => {
+        this.#descriptionExpanded = !this.#descriptionExpanded;
+        this.requestRender();
+      });
     }
 
     const operations = Object.entries(this.#obi.operations).sort(([a], [b]) =>
@@ -262,8 +293,37 @@ const styles = `
     font-size: 0.72rem;
   }
 
-  .description {
+  .description-block {
     margin: var(--ob-space) 0;
+  }
+
+  .description {
+    display: -webkit-box;
+    margin: 0;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 4;
+  }
+
+  .description.expanded {
+    display: block;
+    overflow: visible;
+  }
+
+  .description-toggle {
+    width: auto;
+    margin-top: 0.25rem;
+    padding: 0.1rem 0;
+    color: var(--ob-color-accent);
+    font-size: 0.72rem;
+    background: transparent;
+    border: 0;
+    border-radius: 0.2rem;
+  }
+
+  .description-toggle:hover {
+    text-decoration: underline;
+    background: transparent;
   }
 
   .count {

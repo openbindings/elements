@@ -9,16 +9,31 @@ operation requirements only when they need behavior outside themselves. An
 application owns its implementation candidates, selection preferences,
 credentials, persistence, routing, and trust policy.
 
-The first vertical slice contains:
+The public package set contains:
 
 - `@openbindings/ui-core`
 - `@openbindings/obi-explorer`
+- `@openbindings/obi-editor`
+- `@openbindings/interface-sources`
 - `@openbindings/operation-detail`
 - `@openbindings/operation-workbench`
+- `@openbindings/operation-tabs`
+- `@openbindings/operation-graph-model`
+- `@openbindings/operation-graph-viewer`
+- `@openbindings/operation-graph-editor`
+
+The packages remain independent. For example, a documentation site can use
+the explorer, detail, source inspector, and graph viewer without shipping
+invocation or graph-authoring code. An application can use the tab strip for
+any keyed sessions; it has no OpenBindings dependency.
 
 The reference workbench is served by `ob start`. It obtains the server's OBI
 from `/.well-known/openbindings`, supplies its published Operation Invoker
 contract as an implementation, and uses that operation to invoke every target.
+The composition adds target-scoped operation sessions, resizable panels, a
+JSON/YAML interface draft, source and binding inspection, and separate
+operation-graph viewing and editing. Edits remain local until an explicit host
+action applies them; public elements only emit intent.
 The browser carrier for `ob start` itself is deliberately local to the
 application: `openbindings.asyncapi@1` refuses reply-bearing WebSocket receive
 operations, so the workbench does not pretend the server's frame stream is a
@@ -62,7 +77,5 @@ browser-safe SDK invoker containing only the binding families the application
 needs, an `ob start` delegate, or another compatible provider. The element's
 contract does not change.
 
-See [the consumer guide](docs/consumer-guide.md) and
-[the design boundaries](docs/design.md). [Current scope](docs/status.md)
-records the intentionally separate follow-up elements and the one open
-`ob start` carrier design question.
+See [the consumer guide](docs/consumer-guide.md), [the design
+boundaries](docs/design.md), and [current scope](docs/status.md).

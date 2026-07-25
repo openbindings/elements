@@ -1,27 +1,29 @@
 # Current scope
 
-This first vertical slice proves the element model with three independently
-usable public elements and the minimal shared plumbing they need:
+The current package set covers the reusable pieces needed to compose an
+interface workbench:
 
-- OBI exploration;
-- operation contract inspection;
-- operation invocation through a published Operation Invoker requirement;
+- OBI exploration and operation contract inspection;
+- conservative, cancellable operation invocation through a published
+  Operation Invoker requirement;
+- application-owned operation tabs with keyboard and pointer reordering;
+- JSON/YAML OBI draft editing and interface source/binding inspection;
+- a framework-neutral operation-graph model;
+- separate read-only graph viewing and patch-intent graph editing;
 - a real `ob start` application composed from those elements.
 
-It deliberately does not make the package set look more complete than it is.
-The following Panjir-inspired surfaces remain focused follow-up loops:
+The package set intentionally does not include:
 
-- a JSON/YAML OBI source editor;
-- an interface-level source and binding view;
-- a read-only operation graph viewer;
-- a separately shipped operation graph editor over the viewer's shared model
-  and renderer;
-- dedicated framework-consumer fixtures and an independent assistive
-  technology audit.
+- a framework, application router, global delegate registry, or host shell;
+- credential discovery, persistence, artifact fetching, or trust policy;
+- automatic source-file saving or graph execution;
+- a combined graph viewer/editor package;
+- framework wrappers whose API could drift from the Custom Element contract.
 
-The graph viewer and editor should not be collapsed into one element. The
-viewer is reusable anywhere a graph is displayed; the editor adds mutation
-without forcing authoring code into read-only consumers.
+Those responsibilities remain with the application or with separately
+specified OpenBindings operations. Dedicated framework-consumer fixtures and
+an independent assistive-technology audit remain valuable follow-up evidence;
+they are not prerequisites for using the browser-native contracts.
 
 ## Open carrier question
 

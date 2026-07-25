@@ -7,10 +7,17 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packages = [
   "ui-core",
+  "obi-editor",
   "obi-explorer",
+  "interface-sources",
   "operation-detail",
+  "operation-graph-model",
+  "operation-graph-viewer",
+  "operation-graph-editor",
+  "operation-tabs",
   "operation-workbench",
 ];
+const packagesWithoutDefine = new Set(["ui-core", "operation-graph-model"]);
 const temporary = await mkdtemp(resolve(tmpdir(), "openbindings-elements-pack-"));
 const tarballs = resolve(temporary, "tarballs");
 await mkdir(tarballs);
@@ -34,7 +41,7 @@ try {
       "package/dist/index.js",
       "package/dist/index.d.ts",
     ];
-    if (packageName !== "ui-core") {
+    if (!packagesWithoutDefine.has(packageName)) {
       expected.push("package/dist/define.js", "package/dist/define.d.ts");
     }
 

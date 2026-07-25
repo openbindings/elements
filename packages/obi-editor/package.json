@@ -1,0 +1,38 @@
+{
+  "name": "@openbindings/obi-editor",
+  "version": "0.1.0",
+  "description": "Framework-neutral JSON and YAML editor for OpenBindings interface documents",
+  "type": "module",
+  "sideEffects": ["./dist/define.js"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./define": {
+      "types": "./dist/define.d.ts",
+      "default": "./dist/define.js"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsup src/index.ts src/define.ts --format esm --dts --clean",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@openbindings/ui-core": "workspace:^",
+    "yaml": "^2.8.1"
+  },
+  "peerDependencies": {
+    "@openbindings/sdk": "^0.2.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/openbindings/elements.git",
+    "directory": "packages/obi-editor"
+  }
+}

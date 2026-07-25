@@ -16,7 +16,7 @@
     "browser:imports": "node scripts/verify-browser-imports.mjs",
     "ssr:imports": "node scripts/verify-ssr-imports.mjs",
     "sync:requirements": "node scripts/sync-requirements.mjs",
-    "build:workbench": "pnpm --filter @openbindings/ob-start-workbench build"
+    "build:workbench": "pnpm --filter @openbindings/ob-start-workbench... build"
   },
   "devDependencies": {
     "@openbindings/sdk": "link:../openbindings-ts/packages/sdk",
