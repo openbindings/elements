@@ -89,6 +89,18 @@ const target: OBInterface = {
       },
       output: { type: "object" },
     },
+    // A third operation so keyboard navigation has somewhere to go; sorted
+    // render order is tasks.create, tasks.delete, tasks.list.
+    "tasks.delete": {
+      description: "Delete one task",
+      tags: ["write"],
+      input: {
+        type: "object",
+        properties: { id: { type: "string" } },
+        required: ["id"],
+      },
+      output: { type: "object" },
+    },
   },
 };
 

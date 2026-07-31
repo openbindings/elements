@@ -161,6 +161,54 @@ test("the workbench layout is adjustable, accessible, and persistent", async ({
   );
 });
 
+test("the exec split is adjustable from the session gutter and persists", async ({
+  page,
+}) => {
+  // Wide enough that the invocation area clears the element's 36rem
+  // narrow-fallback threshold and actually renders the split cockpit.
+  await page.setViewportSize({ width: 1760, height: 900 });
+  await page.goto("/#token=test-token");
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+  // Pick an operation WITH an input schema so the input editor renders —
+  // the default describe session declares no input and hides it.
+  await page
+    .locator('ob-obi-explorer [part~="operation"]')
+    .filter({ hasText: "validateInterface" })
+    .click();
+  const workbench = page.locator("ob-operation-workbench:not([hidden])");
+  await expect(workbench.locator("h2")).toHaveText(
+    "openbindings.ob.validateInterface",
+  );
+  const gutter = workbench.locator('[part~="layout-gutter"]');
+  await expect(gutter).toHaveAttribute("role", "separator");
+  const before = await gutter.getAttribute("aria-valuenow");
+  await gutter.focus();
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  const after = await gutter.getAttribute("aria-valuenow");
+  expect(Number(after)).toBeLessThan(Number(before));
+  // Input and output render side by side in split mode.
+  const boxes = await workbench.evaluate(el => {
+    const root = el.shadowRoot!;
+    const input = root.querySelector("ob-json-editor")!.getBoundingClientRect();
+    const output = root.querySelector('[part~="output-view"]')!.getBoundingClientRect();
+    return {
+      inputRight: input.right,
+      outputLeft: output.left,
+      // Columns overlap vertically when they share a row.
+      overlapY: Math.min(input.bottom, output.bottom) - Math.max(input.top, output.top),
+    };
+  });
+  expect(boxes.outputLeft).toBeGreaterThanOrEqual(boxes.inputRight - 1);
+  expect(boxes.overlapY).toBeGreaterThan(0);
+  await page.reload();
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+  const restored = page
+    .locator("ob-operation-workbench:not([hidden])")
+    .locator('[part~="layout-gutter"]');
+  await expect(restored).toHaveAttribute("aria-valuenow", String(after));
+});
+
 test("document, source, and graph elements compose through explicit local drafts", async ({
   page,
 }) => {
@@ -505,4 +553,67 @@ test("the complete primary flow remains usable without horizontal overflow on mo
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
+});
+
+test("multi-binding operations default to the author's preferred binding and run one-click — including through an operation graph", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto("/#token=test-token");
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+
+  await page.locator("#target-url").fill("http://127.0.0.1:20392");
+  await page.locator("#resolve-target").click();
+  await expect(page.locator("#current-target-label")).toHaveText(
+    "http://127.0.0.1:20392",
+    { timeout: 20_000 },
+  );
+
+  const explorer = page.locator("ob-obi-explorer");
+  const workbench = page.locator("ob-operation-workbench:not([hidden])");
+
+  // getMenu: five bindings, restApi carries the highest author preference.
+  await explorer
+    .locator('[part~="operation"]')
+    .filter({ hasText: "getMenu" })
+    .click();
+  await expect(workbench.locator("h2")).toHaveText("getMenu");
+  const select = workbench.locator('select[part~="binding-select"]');
+  await expect(select).toHaveValue("getMenu.restApi");
+  await expect(page.locator("#bootstrap-message")).toContainText(
+    "author's preferred binding",
+  );
+  await workbench.locator("button.run").click();
+  await expect(workbench.locator('pre[part~="output"]')).toContainText(
+    "Schema Latte",
+    { timeout: 15_000 },
+  );
+  await expect(workbench.locator(".error")).toBeHidden();
+
+  // placeAndTrack: a graph operation whose inner steps (placeOrder,
+  // orderUpdates) resolve through the derived configuration.selection.
+  await explorer
+    .locator('[part~="operation"]')
+    .filter({ hasText: "placeAndTrack" })
+    .click();
+  const graphSession = page.locator("ob-operation-workbench:not([hidden])");
+  await expect(graphSession.locator("h2")).toHaveText("placeAndTrack");
+  const input = graphSession.locator("ob-json-editor").first();
+  await input.evaluate((el, value) => {
+    const editor = el as HTMLElement & { value: string };
+    const textarea = el.shadowRoot!.querySelector("textarea")!;
+    textarea.value = value;
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  }, '{"customer":"E2E","drink":"Schema Latte","size":"v2"}');
+  await graphSession.locator("button.run").click();
+  // The output view renders each stream value as its own block.
+  await expect(graphSession.locator('pre[part~="output"]').first()).toContainText(
+    '"status": "received"',
+    { timeout: 30_000 },
+  );
+  await expect(graphSession.locator('pre[part~="output"]').last()).toContainText(
+    '"status": "ready"',
+    { timeout: 60_000 },
+  );
+  await expect(graphSession.locator(".error")).toBeHidden();
 });

@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="data:," />
+    <style>
+      /* Rev-10 fixture: app-style host sizing. The pane gives the element a
+         definite height; the element must propagate it in split mode. */
+      body { margin: 0; }
+      #stage { width: 1000px; height: 700px; }
+      #stage ob-operation-workbench { display: block; width: 100%; height: 100%; }
+      /* Bare document-flow embed: no definite height anywhere. */
+      #flow ob-operation-workbench { display: block; }
+    </style>
+  </head>
+  <body>
+    <div id="stage"><ob-operation-workbench id="split-workbench"></ob-operation-workbench></div>
+    <div id="flow"><ob-operation-workbench id="flow-workbench"></ob-operation-workbench></div>
+    <script type="module">
+      import "@openbindings/operation-workbench/define";
+      const obi = {
+        openbindings: "0.2.0",
+        name: "fixture",
+        operations: {
+          ping: {
+            description: "ping",
+            input: {
+              type: "object",
+              properties: { message: { type: "string" } },
+            },
+            output: { type: "object" },
+          },
+        },
+      };
+      for (const id of ["split-workbench", "flow-workbench"]) {
+        const el = document.getElementById(id);
+        el.obi = obi;
+        el.operationKey = "ping";
+        el.layout = "split";
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      window.fixtureReady = true;
+    </script>
+  </body>
+</html>

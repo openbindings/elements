@@ -96,8 +96,17 @@ importers:
         specifier: workspace:^
         version: link:../ui-core
 
+  packages/json-editor:
+    dependencies:
+      '@openbindings/ui-core':
+        specifier: workspace:^
+        version: link:../ui-core
+
   packages/obi-editor:
     dependencies:
+      '@openbindings/json-editor':
+        specifier: workspace:^
+        version: link:../json-editor
       '@openbindings/ui-core':
         specifier: workspace:^
         version: link:../ui-core
@@ -148,6 +157,9 @@ importers:
 
   packages/operation-workbench:
     dependencies:
+      '@openbindings/json-editor':
+        specifier: workspace:^
+        version: link:../json-editor
       '@openbindings/ui-core':
         specifier: workspace:^
         version: link:../ui-core

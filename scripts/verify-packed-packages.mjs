@@ -8,6 +8,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packages = [
   "ui-core",
   "obi-editor",
+  "json-editor",
   "obi-explorer",
   "interface-sources",
   "operation-detail",

@@ -208,6 +208,7 @@ const defaultWorkspaceLayout: WorkspaceLayout = {
   railWidth: 352,
   detailRatio: 0.45,
   sourceWidth: 420,
+  execSplit: 0.5,
 };
 let sessionToken = tokenFromFragment() || restoreSessionToken();
 let obInterface: OBInterface | null = null;
@@ -229,6 +230,21 @@ let contextChallenge: ContextRequiredDetails | null = null;
 let retryAfterContext = false;
 let resolveAttempt = 0;
 let preflightAttempt = 0;
+/**
+ * Preflight is advisory: it asks `ob` whether an operation would need
+ * additional context before you run it. It is also expensive — the request
+ * embeds the whole interface document, and the SDK compiles the invoker's
+ * schema synchronously before the call leaves the page, which put roughly a
+ * second of blocking work on every click that reached it.
+ *
+ * Two things fix that without changing what the user sees. The result only
+ * depends on (interface, operation, binding, context), so an unchanged tuple
+ * reuses the previous answer; and when a real preflight is needed it is
+ * scheduled after paint, so selecting a tab is never waiting on it.
+ */
+let preflightKey: string | null = null;
+let preflightTimer: ReturnType<typeof setTimeout> | null = null;
+const preflightCache = new Map<string, ContextRequiredDetails | null>();
 let workspaceLayout = restoreWorkspaceLayout();
 if (
   !workspaceLayout.explorer &&
@@ -255,7 +271,29 @@ detail.addEventListener("ob-binding-select", event => {
   detail.selectedBindingKey = event.detail.bindingKey;
   bootstrapMessage.textContent = `Using binding ${event.detail.bindingKey}.`;
   refreshGraphSurface();
-  void preflightTarget();
+  schedulePreflight();
+});
+
+// One shared exec split across sessions: any session's resize becomes the
+// workspace ratio, applied everywhere and persisted with the rest of the
+// layout (the element never persists; that policy lives here).
+invocationSessions.addEventListener("ob-layout-change", event => {
+  const layoutEvent = event as CustomEvent<{ splitRatio: number }>;
+  workspaceLayout.execSplit = layoutEvent.detail.splitRatio;
+  for (const invocation of invocationByOperation.values()) {
+    invocation.splitRatio = workspaceLayout.execSplit;
+  }
+  persistWorkspaceLayout();
+});
+
+// The invocation element's own compact selector emits the same intent event;
+// keep the contract view and graph surface in sync with it.
+invocationSessions.addEventListener("ob-binding-select", event => {
+  const detailEvent = event as CustomEvent<{ bindingKey: string }>;
+  detail.selectedBindingKey = detailEvent.detail.bindingKey;
+  bootstrapMessage.textContent = `Using binding ${detailEvent.detail.bindingKey}.`;
+  refreshGraphSurface();
+  schedulePreflight();
 });
 
 operationTabs.addEventListener("ob-tab-activate", event => {
@@ -346,7 +384,7 @@ interfaceSources.addEventListener("ob-binding-select", event => {
   if (invocation) invocation.bindingKey = event.detail.bindingKey;
   detail.selectedBindingKey = event.detail.bindingKey;
   refreshGraphSurface();
-  void preflightTarget();
+  schedulePreflight();
 });
 
 interfaceSources.addEventListener("ob-source-refresh", event => {
@@ -468,7 +506,7 @@ requirementForm.addEventListener("submit", event => {
   retryAfterContext = false;
   const invocation = activeInvocation();
   if (shouldRetry && invocation) void invocation.run();
-  else void preflightTarget();
+  else schedulePreflight();
 });
 
 tokenForm.addEventListener("submit", event => {
@@ -485,7 +523,7 @@ tokenForm.addEventListener("submit", event => {
   renderSessionState();
   applyTargetContext();
   publishOBImplementation();
-  void preflightTarget();
+  schedulePreflight();
   bootstrapMessage.textContent = sessionToken
     ? "Workbench session connected. The credential will not be forwarded to targets."
     : "No session token is configured.";
@@ -525,7 +563,7 @@ targetContextForm.addEventListener("submit", event => {
     hideContextChallenge();
     bootstrapMessage.textContent =
       "Target context applied to invocations for the selected interface.";
-    void preflightTarget();
+    schedulePreflight();
   } catch (error) {
     bootstrapMessage.textContent = errorText(error);
     targetContextInput.focus();
@@ -584,6 +622,9 @@ for (const control of [showExplorer, showDetail, showInvocation, showSource]) {
 
 resetLayoutButton.addEventListener("click", () => {
   workspaceLayout = { ...defaultWorkspaceLayout };
+  for (const invocation of invocationByOperation.values()) {
+    invocation.splitRatio = workspaceLayout.execSplit;
+  }
   applyWorkspaceLayout();
   persistWorkspaceLayout();
 });
@@ -815,6 +856,8 @@ async function invokeThroughOB<I, O>(
 
 function setTarget(obi: OBInterface, label: string, sessionID: string): void {
   preflightAttempt += 1;
+  preflightKey = null;
+  preflightCache.clear();
   hideContextChallenge();
   for (const key of [...openOperationKeys]) removeOperationSession(key);
   openOperationKeys = [];
@@ -878,7 +921,9 @@ function updateCurrentTarget(obi: OBInterface, label: string): void {
     invocation.context = effectiveTargetContext();
     const bindingKey = invocation.bindingKey;
     const binding = bindingKey ? obi.bindings?.[bindingKey] : null;
-    if (!binding || binding.operation !== key) invocation.bindingKey = null;
+    if (!binding || binding.operation !== key) {
+      invocation.bindingKey = preferredBindingKey(obi, key);
+    }
   }
 
   for (const key of [...graphDraftByBinding.keys()]) {
@@ -933,6 +978,19 @@ function updateCurrentTarget(obi: OBInterface, label: string): void {
 
 function activateOperation(operationKey: string): void {
   if (!targetInterface?.operations[operationKey]) return;
+
+  // Selecting an operation that is already open focuses its existing tab and
+  // its existing session — input text, output, binding choice and any running
+  // invocation are all keyed by operation, so a second tab for the same
+  // operation would alias the same state rather than give you a second draft.
+  // Re-running the activation path here also meant a redundant preflight
+  // round trip on every click, which is most of why switching felt slow.
+  if (selectedOperationKey === operationKey && openOperationKeys.includes(operationKey)) {
+    focusOperationTab(operationKey);
+    return;
+  }
+
+
   const invocation = ensureOperationSession(operationKey);
   if (!openOperationKeys.includes(operationKey)) {
     openOperationKeys.push(operationKey);
@@ -949,7 +1007,7 @@ function activateOperation(operationKey: string): void {
   updateOperationDeepLink(operationKey);
   describeBindingChoices(operationKey);
   refreshGraphSurface();
-  void preflightTarget();
+  schedulePreflight();
 }
 
 function ensureOperationSession(
@@ -962,6 +1020,9 @@ function ensureOperationSession(
   ) as OperationWorkbenchElement;
   invocation.obi = targetInterface;
   invocation.operationKey = operationKey;
+  invocation.layout = "split";
+  invocation.splitRatio = workspaceLayout.execSplit;
+  invocation.bindingKey = preferredBindingKey(targetInterface, operationKey);
   invocation.operationSource = operationEnvironment;
   invocation.context = effectiveTargetContext();
   invocation.hidden = true;
@@ -1009,15 +1070,25 @@ function closeOperation(operationKey: string): void {
   const wasActive = selectedOperationKey === operationKey;
   removeOperationSession(operationKey);
   openOperationKeys.splice(index, 1);
+
   if (wasActive) {
+    // Prefer the tab that slid into this slot, else the new last tab.
     const neighbor =
       openOperationKeys[Math.min(index, openOperationKeys.length - 1)] ?? null;
-    if (neighbor) activateOperation(neighbor);
-    else showNoActiveOperation();
-  } else {
-    renderOperationTabs();
-    persistOperationTabs();
+    if (neighbor) {
+      // activateOperation renders and persists on its own.
+      activateOperation(neighbor);
+      return;
+    }
+    showNoActiveOperation();
   }
+
+  // Closing the final tab took the `wasActive` branch with no neighbor, which
+  // used to fall out of the function without redrawing the strip or updating
+  // storage — so the last tab appeared to be unclosable, and reloading
+  // brought it back.
+  renderOperationTabs();
+  persistOperationTabs();
 }
 
 function removeOperationSession(operationKey: string): void {
@@ -1043,6 +1114,14 @@ function activeInvocation(): OperationWorkbenchElement | null {
   return selectedOperationKey
     ? invocationByOperation.get(selectedOperationKey) ?? null
     : null;
+}
+
+function focusOperationTab(operationKey: string): void {
+  operationTabs.shadowRoot
+    ?.querySelector<HTMLElement>(
+      `.tab-shell[data-tab-key="${CSS.escape(operationKey)}"] .tab-button`,
+    )
+    ?.focus();
 }
 
 function renderOperationTabs(): void {
@@ -1127,12 +1206,23 @@ function updateOperationDeepLink(operationKey: string | null): void {
   const url = new URL(globalThis.location.href);
   if (operationKey) url.searchParams.set("operation", operationKey);
   else url.searchParams.delete("operation");
-  globalThis.history.replaceState(
-    null,
-    "",
-    `${url.pathname}${url.search}${url.hash}`,
-  );
+  // A same-task replaceState that changes the URL while the discovery fetch is
+  // finalizing tags that request net::ERR_ABORTED in devtools. Skip no-op
+  // writes, and defer real ones to a macrotask (latest wins) so the write
+  // never lands in the fetch's finalization task (WB reason code obs 1b).
+  if (url.href === globalThis.location.href) return;
+  pendingDeepLink = `${url.pathname}${url.search}${url.hash}`;
+  globalThis.setTimeout(() => {
+    if (pendingDeepLink === null) return;
+    const target = pendingDeepLink;
+    pendingDeepLink = null;
+    if (globalThis.location.href !== new URL(target, globalThis.location.href).href) {
+      globalThis.history.replaceState(null, "", target);
+    }
+  }, 0);
 }
+
+let pendingDeepLink: string | null = null;
 
 function describeBindingChoices(operationKey: string): void {
   if (!targetInterface) return;
@@ -1140,10 +1230,93 @@ function describeBindingChoices(operationKey: string): void {
     ([, binding]) => binding.operation === operationKey,
   );
   if (choices.length > 1) {
-    bootstrapMessage.textContent = `${choices.length} bindings implement this operation. Choose one in the operation contract when you need an explicit route.`;
+    const preferred = preferredBindingKey(targetInterface, operationKey);
+    bootstrapMessage.textContent = preferred
+      ? `Running via ${preferred} — the author's preferred binding. Change it next to Run.`
+      : `${choices.length} bindings implement this operation and the author expressed no preference — choose one next to Run before invoking.`;
   } else {
     bootstrapMessage.textContent = "";
   }
+}
+
+/**
+ * Application binding policy, per the core schema's own terms: `preference`
+ * is an author signal ("higher is more preferred; equal values express no
+ * ordering; omission states no preference") and "the specification defines
+ * no selection algorithm" — selection is application policy (agent-primer
+ * §invocation). This application's policy: default to the author's unique
+ * most-preferred non-deprecated binding; where the signal expresses no
+ * unique order (tie at the top, or no preferences at all), default nothing
+ * and ask the user.
+ */
+function preferredBindingKey(
+  obi: OBInterface | null,
+  operationKey: string,
+): string | null {
+  const ordered = orderedBindingChoices(obi, operationKey);
+  return ordered.length > 0 ? ordered[0]! : null;
+}
+
+/**
+ * The strictly-ordered prefix of an operation's preference ranking: sorted
+ * descending, truncated at the first tie (equal values express no ordering,
+ * so ordering past a tie would invent policy the author didn't state).
+ * Deprecated bindings never enter the default ranking.
+ */
+function orderedBindingChoices(
+  obi: OBInterface | null,
+  operationKey: string,
+): string[] {
+  if (!obi) return [];
+  const ranked: Array<{ key: string; preference: number }> = [];
+  for (const [key, binding] of Object.entries(obi.bindings ?? {})) {
+    if (binding.operation !== operationKey) continue;
+    if (binding.deprecated) continue;
+    if (typeof binding.preference !== "number") continue;
+    ranked.push({ key, preference: binding.preference });
+  }
+  ranked.sort((a, b) => b.preference - a.preference);
+  const ordered: string[] = [];
+  for (let i = 0; i < ranked.length; i += 1) {
+    if (i + 1 < ranked.length && ranked[i]!.preference === ranked[i + 1]!.preference) {
+      if (i === 0) return [];
+      break;
+    }
+    ordered.push(ranked[i]!.key);
+  }
+  return ordered;
+}
+
+/**
+ * Ordered caller choice for every operation with a strict preference
+ * ranking, merged into invocation context as `configuration.selection` —
+ * the contract's channel for binding choice that also reaches nested
+ * operation-graph steps (a graph's inner operations resolve against the
+ * same list). A selection the user supplied in the raw context editor is
+ * theirs; the derived list never overrides it.
+ */
+function withPreferenceSelection(
+  context: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  if (!targetInterface) return context;
+  const existing = (context?.configuration ?? null) as
+    | { selection?: unknown }
+    | null;
+  if (Array.isArray(existing?.selection) && existing.selection.length > 0) {
+    return context;
+  }
+  const selection: string[] = [];
+  for (const operationKey of Object.keys(targetInterface.operations ?? {})) {
+    selection.push(...orderedBindingChoices(targetInterface, operationKey));
+  }
+  if (selection.length === 0) return context;
+  return {
+    ...(context ?? {}),
+    configuration: {
+      ...(typeof existing === "object" && existing !== null ? existing : {}),
+      selection,
+    },
+  };
 }
 
 function setArtifactPane(pane: "document" | "sources" | "graph"): void {
@@ -1566,9 +1739,11 @@ function applyTargetContext(): void {
 }
 
 function effectiveTargetContext(): Record<string, unknown> | null {
-  return targetInterface === obInterface && sessionToken
-    ? { ...(targetContext ?? {}), bearerToken: sessionToken }
-    : targetContext;
+  const base =
+    targetInterface === obInterface && sessionToken
+      ? { ...(targetContext ?? {}), bearerToken: sessionToken }
+      : targetContext;
+  return withPreferenceSelection(base);
 }
 
 function clearTargetContext(): void {
@@ -1579,13 +1754,40 @@ function clearTargetContext(): void {
   hideContextChallenge();
   bootstrapMessage.textContent =
     "Target context cleared. Public operations can still be invoked.";
-  void preflightTarget();
+  schedulePreflight();
 }
 
 function renderTargetContextState(): void {
   targetContextStatus.textContent = targetContext
     ? "Context is configured for the selected target."
     : "No target credentials configured.";
+}
+
+/**
+ * Schedules the advisory preflight off the interaction that requested it.
+ * Coalesces bursts (a switch touches several call sites) into one run.
+ */
+function schedulePreflight(): void {
+  if (preflightTimer !== null) return;
+  preflightTimer = setTimeout(() => {
+    preflightTimer = null;
+    void preflightTarget();
+  }, 0);
+}
+
+/** Identity of everything the preflight answer depends on. */
+function currentPreflightKey(): string | null {
+  const operation = selectedOperationKey;
+  if (!targetInterface || !operation) return null;
+  const binding = activeInvocation()?.bindingKey ?? "";
+  const context = effectiveTargetContext();
+  return [
+    targetLabel,
+    operation,
+    binding,
+    context ? stableHash(JSON.stringify(context)) : "",
+    sessionToken ? stableHash(sessionToken) : "",
+  ].join("\u0000");
 }
 
 async function preflightTarget(): Promise<void> {
@@ -1597,6 +1799,17 @@ async function preflightTarget(): Promise<void> {
     hideContextChallenge();
     return;
   }
+
+  const key = currentPreflightKey();
+  if (key !== null && key === preflightKey) return;
+  if (key !== null && preflightCache.has(key)) {
+    preflightKey = key;
+    const cached = preflightCache.get(key) ?? null;
+    if (cached) showContextChallenge(cached);
+    else hideContextChallenge();
+    return;
+  }
+
   const attempt = ++preflightAttempt;
   try {
     const context = effectiveTargetContext();
@@ -1622,6 +1835,10 @@ async function preflightTarget(): Promise<void> {
       return;
     }
     const parsed = parseContextRequiredDetails(details);
+    if (key !== null) {
+      preflightKey = key;
+      preflightCache.set(key, parsed);
+    }
     if (parsed) {
       retryAfterContext = false;
       showContextChallenge(parsed);
@@ -1885,6 +2102,7 @@ interface WorkspaceLayout {
   railWidth: number;
   detailRatio: number;
   sourceWidth: number;
+  execSplit: number;
 }
 
 function applyWorkspaceLayout(): void {
@@ -1977,6 +2195,10 @@ function restoreWorkspaceLayout(): WorkspaceLayout {
         typeof parsed.sourceWidth === "number"
           ? clamp(parsed.sourceWidth, 300, 720)
           : defaultWorkspaceLayout.sourceWidth,
+      execSplit:
+        typeof parsed.execSplit === "number"
+          ? clamp(parsed.execSplit, 0.2, 0.8)
+          : defaultWorkspaceLayout.execSplit,
     };
   } catch {
     return { ...defaultWorkspaceLayout };

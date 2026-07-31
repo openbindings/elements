@@ -71,13 +71,17 @@ describe("OperationTabsElement", () => {
       '.tab-button[data-focus-key="two"]',
     );
     one?.focus();
-    one?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+    one?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
     expect(element.shadowRoot?.activeElement).toBe(two);
-    two?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    two?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     two?.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "ArrowRight", altKey: true }),
+      new KeyboardEvent("keydown", {
+        key: "ArrowRight",
+        altKey: true,
+        bubbles: true,
+      }),
     );
-    two?.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete" }));
+    two?.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
 
     expect(activate.mock.calls[0]?.[0].detail).toEqual({ key: "two" });
     expect(reorder.mock.calls[0]?.[0].detail).toEqual({
@@ -105,6 +109,48 @@ describe("OperationTabsElement", () => {
         "tabindex",
       ),
     ).toBe("0");
+  });
+
+  it("keeps a keyboard entry point when activeKey matches no tab", async () => {
+    const element = document.createElement(
+      OPERATION_TABS_TAG,
+    ) as OperationTabsElement;
+    element.tabs = [{ key: "a" }, { key: "b" }];
+    element.activeKey = "gone";
+    document.body.append(element);
+    await settled();
+
+    const stops = [
+      ...(element.shadowRoot?.querySelectorAll<HTMLButtonElement>(
+        '[role="tab"]',
+      ) ?? []),
+    ].map(button => button.tabIndex);
+    expect(stops).toContain(0);
+    // Still a single stop, per the ARIA tabs pattern.
+    expect(stops.filter(stop => stop === 0)).toHaveLength(1);
+  });
+
+  it("keeps close buttons out of the tab order but discoverable", async () => {
+    const element = document.createElement(
+      OPERATION_TABS_TAG,
+    ) as OperationTabsElement;
+    element.tabs = [{ key: "a", label: "Alpha" }, { key: "b" }];
+    element.activeKey = "a";
+    document.body.append(element);
+    await settled();
+
+    const closes = [
+      ...(element.shadowRoot?.querySelectorAll<HTMLButtonElement>(".close") ??
+        []),
+    ];
+    expect(closes).toHaveLength(2);
+    for (const close of closes) expect(close.tabIndex).toBe(-1);
+    expect(closes[0]?.getAttribute("aria-label")).toBe(
+      "Close Alpha, Delete closes",
+    );
+    expect(closes[1]?.getAttribute("aria-label")).toBe(
+      "Close b, Delete closes",
+    );
   });
 
   it("exposes touch-friendly active-tab reordering without mutating tabs", async () => {
@@ -137,3 +183,103 @@ async function settled(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
 }
+
+describe("OperationTabsElement overflow affordances", () => {
+  /**
+   * jsdom performs no layout, so scroll geometry is stubbed. The logic under
+   * test is the mapping from geometry to behaviour, which is exactly what
+   * broke: an overflowing strip that offered no way to reach the hidden tabs.
+   */
+  function stubGeometry(
+    list: HTMLElement,
+    { scrollWidth, clientWidth }: { scrollWidth: number; clientWidth: number },
+  ): void {
+    Object.defineProperty(list, "scrollWidth", {
+      configurable: true,
+      get: () => scrollWidth,
+    });
+    Object.defineProperty(list, "clientWidth", {
+      configurable: true,
+      get: () => clientWidth,
+    });
+  }
+
+  async function mount(): Promise<{
+    element: OperationTabsElement;
+    list: HTMLElement;
+    container: HTMLElement;
+  }> {
+    const element = document.createElement(
+      OPERATION_TABS_TAG,
+    ) as OperationTabsElement;
+    element.tabs = Array.from({ length: 12 }, (_, i) => ({ key: `op${i}` }));
+    element.activeKey = "op0";
+    document.body.append(element);
+    await settled();
+    const root = element.shadowRoot!;
+    return {
+      element,
+      list: root.querySelector(".tab-list")!,
+      container: root.querySelector(".container")!,
+    };
+  }
+
+  it("turns a vertical wheel into horizontal scrolling when it overflows", async () => {
+    const { list } = await mount();
+    stubGeometry(list, { scrollWidth: 2000, clientWidth: 500 });
+    list.scrollLeft = 0;
+
+    list.dispatchEvent(
+      new WheelEvent("wheel", { deltaY: 180, bubbles: true, cancelable: true }),
+    );
+
+    expect(list.scrollLeft).toBe(180);
+  });
+
+  it("leaves horizontal intent and non-overflowing strips alone", async () => {
+    const { list } = await mount();
+
+    stubGeometry(list, { scrollWidth: 400, clientWidth: 500 });
+    list.scrollLeft = 0;
+    list.dispatchEvent(
+      new WheelEvent("wheel", { deltaY: 180, bubbles: true, cancelable: true }),
+    );
+    expect(list.scrollLeft).toBe(0);
+
+    // A trackpad swipe already scrolls horizontally; hijacking it would double.
+    stubGeometry(list, { scrollWidth: 2000, clientWidth: 500 });
+    list.dispatchEvent(
+      new WheelEvent("wheel", {
+        deltaX: 200,
+        deltaY: 40,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    expect(list.scrollLeft).toBe(0);
+  });
+
+  it("reports which edges hide tabs so they can be faded", async () => {
+    const { element, list, container } = await mount();
+    stubGeometry(list, { scrollWidth: 2000, clientWidth: 500 });
+
+    list.scrollLeft = 0;
+    list.dispatchEvent(new Event("scroll"));
+    expect(container.getAttribute("data-overflow")).toBe("end");
+
+    list.scrollLeft = 700;
+    list.dispatchEvent(new Event("scroll"));
+    expect(container.getAttribute("data-overflow")).toBe("both");
+
+    list.scrollLeft = 1500;
+    list.dispatchEvent(new Event("scroll"));
+    expect(container.getAttribute("data-overflow")).toBe("start");
+
+    stubGeometry(list, { scrollWidth: 400, clientWidth: 500 });
+    list.scrollLeft = 0;
+    list.dispatchEvent(new Event("scroll"));
+    expect(container.getAttribute("data-overflow")).toBe("none");
+
+    element.remove();
+  });
+});

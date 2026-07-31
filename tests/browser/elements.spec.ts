@@ -89,6 +89,48 @@ test("narrow layouts preserve independent element usability", async ({
   ).toBeEditable();
 });
 
+test("operation list is one Tab stop with arrow-key navigation", async ({
+  page,
+}) => {
+  const explorer = page.locator("ob-obi-explorer");
+  const detail = page.locator("ob-operation-detail");
+  const filter = explorer.locator('input[type="search"]');
+
+  // Tab from the filter input lands on the list's single roving stop.
+  await filter.focus();
+  await page.keyboard.press("Tab");
+  const focusedKey = () =>
+    explorer.evaluate(el =>
+      el.shadowRoot?.activeElement?.closest<HTMLElement>("li[data-ob-key]")
+        ?.dataset.obKey,
+    );
+  await expect.poll(focusedKey).toBe("tasks.create");
+  const tabStops = await explorer.evaluate(
+    el =>
+      [...el.shadowRoot!.querySelectorAll('[part~="operation"]')].filter(
+        button => (button as HTMLElement).tabIndex === 0,
+      ).length,
+  );
+  expect(tabStops).toBe(1);
+
+  // ArrowDown twice then Enter selects the third visible operation.
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(focusedKey).toBe("tasks.list");
+  await page.keyboard.press("Enter");
+  await expect(detail.locator("h2")).toHaveText("tasks.list");
+  await expect(
+    explorer.locator('[part~="operation"]').filter({ hasText: "tasks.list" }),
+  ).toHaveAttribute("aria-current", "true");
+
+  // Tab again leaves the whole list in one step.
+  await page.keyboard.press("Tab");
+  const focusedHost = await page.evaluate(() =>
+    document.activeElement?.tagName.toLowerCase(),
+  );
+  expect(focusedHost).not.toBe("ob-obi-explorer");
+});
+
 test("filtering preserves keyboard focus and uses native button semantics", async ({
   page,
 }) => {
@@ -109,4 +151,93 @@ test("filtering preserves keyboard focus and uses native button semantics", asyn
     "aria-current",
     "true",
   );
+});
+
+test("editor focus indicator draws on the frame, not the inner overlay textarea", async ({
+  page,
+}) => {
+  // The json-editor's real <textarea> is a transparent overlay inset past the
+  // gutter and sized to the content — a focus ring on IT draws a floating box
+  // mid-editor (glaring in dark themes). Focus must present on the frame.
+  const probe = await page.evaluate(() => {
+    const workbench = document.querySelector("ob-operation-workbench")!;
+    const editor = workbench.shadowRoot!.querySelector("ob-json-editor")!;
+    const textarea = editor.shadowRoot!.querySelector("textarea")!;
+    const frame = editor.shadowRoot!.querySelector('[part~="frame"]')!;
+    textarea.focus();
+    return {
+      textareaShadow: getComputedStyle(textarea).boxShadow,
+      frameShadow: getComputedStyle(frame).boxShadow,
+    };
+  });
+  expect(probe.textareaShadow).toBe("none");
+  expect(probe.frameShadow).not.toBe("none");
+});
+
+test("tag chips read as chips on unselected rows — bordered, not bare text", async ({
+  page,
+}) => {
+  // Chip background (surface-strong) is near-invisible against plain row
+  // backgrounds; a border must carry the pill shape on every row, not only
+  // when a selected row's tint happens to provide contrast.
+  const probe = await page.evaluate(() => {
+    const explorer = document.querySelector("ob-obi-explorer")!;
+    const chip = explorer.shadowRoot!.querySelector(".tags span");
+    if (!chip) return null;
+    const cs = getComputedStyle(chip);
+    return { borderStyle: cs.borderTopStyle, borderWidth: cs.borderTopWidth };
+  });
+  expect(probe).not.toBeNull();
+  expect(probe!.borderStyle).toBe("solid");
+  expect(probe!.borderWidth).not.toBe("0px");
+});
+
+test("split layout fills the height the host gives the element", async ({
+  page,
+}) => {
+  // Rev-10 defect: in split mode the editor and output view stayed
+  // content-height boxes with dead space below, ignoring the host's height.
+  await page.goto("/split-layout.html");
+  await page.waitForFunction(
+    () => (window as unknown as { fixtureReady?: boolean }).fixtureReady === true,
+  );
+
+  const measure = () =>
+    page.evaluate(() => {
+      const root = document.getElementById("split-workbench")!.shadowRoot!;
+      const rect = (selector: string) =>
+        root.querySelector(selector)!.getBoundingClientRect();
+      const container = root.querySelector(".container")!;
+      return {
+        editor: rect(".input-editor").height,
+        output: rect(".output-view").height,
+        outputBottom: rect(".output-view").bottom,
+        workspaceBottom: rect(".workspace").bottom,
+        scrollDelta: container.scrollHeight - container.clientHeight,
+      };
+    });
+
+  const small = await measure();
+  // (b) The output view's bottom lands on the exec grid's bottom.
+  expect(Math.abs(small.workspaceBottom - small.outputBottom)).toBeLessThanOrEqual(8);
+  // (c) The cockpit itself does not scroll.
+  expect(small.scrollDelta).toBeLessThanOrEqual(1);
+
+  await page.evaluate(() => {
+    document.getElementById("stage")!.style.height = "950px";
+  });
+  const large = await measure();
+  // (a) Both panes grow with the host.
+  expect(large.editor - small.editor).toBeGreaterThan(200);
+  expect(large.output - small.output).toBeGreaterThan(200);
+  expect(Math.abs(large.workspaceBottom - large.outputBottom)).toBeLessThanOrEqual(8);
+  expect(large.scrollDelta).toBeLessThanOrEqual(1);
+
+  // (5) Without a definite host height the cockpit keeps a usable floor
+  // (22rem = 352px) instead of collapsing.
+  const flowHeight = await page.evaluate(() => {
+    const root = document.getElementById("flow-workbench")!.shadowRoot!;
+    return root.querySelector(".workspace")!.getBoundingClientRect().height;
+  });
+  expect(flowHeight).toBeGreaterThanOrEqual(350);
 });

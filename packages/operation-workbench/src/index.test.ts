@@ -9,6 +9,7 @@ import {
 import { OperationEnvironment } from "@openbindings/ui-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
+  OperationFrameError,
   OperationInvokerInputFrame,
   OperationInvokerOutputFrame,
 } from "./frames.js";
@@ -16,6 +17,7 @@ import { operationInvokerInterface } from "./requirement.js";
 import {
   OPERATION_WORKBENCH_TAG,
   OperationWorkbenchElement,
+  presentInvocationError,
 } from "./index.js";
 
 if (!customElements.get(OPERATION_WORKBENCH_TAG)) {
@@ -33,6 +35,11 @@ class LocalOperationInvokerBinding implements BindingInvoker {
 
   constructor(
     private readonly mode: "complete" | "hang" | "many" | "error" = "complete",
+    private readonly errorFrame: OperationFrameError = {
+      code: "ERR_VALIDATION_FAILED",
+      category: "validation",
+      message: "output validation failed at /name",
+    },
   ) {}
 
   bindingSpecs(): BindingSpecInfo[] {
@@ -90,14 +97,7 @@ class LocalOperationInvokerBinding implements BindingInvoker {
       return;
     }
     if (this.mode === "error") {
-      await invocation.emitOutput({
-        kind: "error",
-        error: {
-          code: "ERR_VALIDATION_FAILED",
-          category: "validation",
-          message: "output validation failed at /name",
-        },
-      });
+      await invocation.emitOutput({ kind: "error", error: this.errorFrame });
       invocation.closeOutput();
       return;
     }
@@ -427,6 +427,17 @@ describe("OperationWorkbenchElement", () => {
     await waitFor(() =>
       element.shadowRoot?.querySelector(".status")?.textContent === "Ready",
     );
+    // A cancelled run never settles timing: no duration chip, no stale
+    // output blocks, and the placeholder returns.
+    expect(
+      element.shadowRoot?.querySelector<HTMLElement>(".output-timing")?.hidden,
+    ).toBe(true);
+    expect(
+      element.shadowRoot?.querySelectorAll(".output-item").length,
+    ).toBe(0);
+    expect(
+      element.shadowRoot?.querySelector(".output-notice")?.textContent,
+    ).toBe("No output yet.");
   });
 
   it("bounds retained streaming output without dropping output events", async () => {
@@ -464,10 +475,15 @@ describe("OperationWorkbenchElement", () => {
       outputs: [2, 3],
       outputCount: 3,
       truncated: true,
+      durationMs: expect.any(Number),
     });
-    expect(element.shadowRoot?.querySelector("pre")?.textContent).toContain(
-      "Showing the last 2 of 3 values.",
-    );
+    expect(
+      element.shadowRoot?.querySelector(".output-notice")?.textContent,
+    ).toBe("Showing the last 2 of 3 values.");
+    const items = element.shadowRoot?.querySelectorAll(".output-item") ?? [];
+    expect(items.length).toBe(2);
+    expect(items[0]?.querySelector("summary")?.textContent).toContain("#2");
+    expect(items[1]?.querySelector("summary")?.textContent).toContain("#3");
   });
 
   it("keeps one array input distinct from an explicit input sequence", async () => {
@@ -533,10 +549,1072 @@ describe("OperationWorkbenchElement", () => {
 
     expect(
       element.shadowRoot?.querySelector(".error-summary")?.textContent,
-    ).toBe("A value did not match the operation contract.");
+    ).toBe(
+      "A value did not match the operation contract. output validation failed at /name",
+    );
     expect(
       element.shadowRoot?.querySelector(".error-detail")?.textContent,
     ).toContain("ERR_VALIDATION_FAILED:");
+  });
+
+  it("renders the category-first summary with the server message visible", async () => {
+    const environment = new OperationEnvironment([
+      {
+        interface: operationInvokerCandidate(),
+        invoker: new OperationInvoker([
+          new LocalOperationInvokerBinding("error", {
+            code: "ERR_AUTH_REJECTED",
+            category: "auth",
+            message: "upstream returned 401",
+          }),
+        ]),
+      },
+    ]);
+    const element = document.createElement(
+      OPERATION_WORKBENCH_TAG,
+    ) as OperationWorkbenchElement;
+    element.obi = targetOBI;
+    element.operationKey = "echo";
+    element.inputText = '{"message":"valid input"}';
+    element.operationSource = environment;
+    document.body.append(element);
+    await waitFor(() =>
+      element.shadowRoot?.querySelector(".status")?.textContent === "Ready",
+    );
+
+    await element.run();
+    await settled();
+
+    expect(
+      element.shadowRoot?.querySelector(".error-summary")?.textContent,
+    ).toBe("The target rejected the supplied credentials. upstream returned 401");
+  });
+
+  it("un-hides the workspace when the operation arrives after mount", async () => {
+    const environment = new OperationEnvironment([
+      {
+        interface: operationInvokerCandidate(),
+        invoker: new OperationInvoker([new LocalOperationInvokerBinding()]),
+      },
+    ]);
+    const element = document.createElement(
+      OPERATION_WORKBENCH_TAG,
+    ) as OperationWorkbenchElement;
+    document.body.append(element);
+    await settled();
+    const workspace =
+      element.shadowRoot?.querySelector<HTMLElement>(".workspace");
+    expect(workspace?.hidden).toBe(true);
+
+    element.obi = targetOBI;
+    element.operationKey = "echo";
+    element.operationSource = environment;
+    await waitFor(() =>
+      element.shadowRoot?.querySelector(".status")?.textContent === "Ready",
+    );
+
+    expect(workspace?.hidden).toBe(false);
+    expect(
+      element.shadowRoot?.querySelector<HTMLElement>(".empty")?.hidden,
+    ).toBe(true);
+    const run = element.shadowRoot?.querySelector<HTMLButtonElement>(".run");
+    expect(run).toBeTruthy();
+    expect(run?.disabled).toBe(false);
+  });
+});
+
+describe("presentInvocationError", () => {
+  const categoryCases: Array<{
+    category: string;
+    code: string;
+    copy: string;
+  }> = [
+    {
+      category: "auth",
+      code: "ERR_AUTH_REJECTED",
+      copy: "The target rejected the supplied credentials.",
+    },
+    {
+      category: "service",
+      code: "ERR_SERVICE_ERROR",
+      copy: "The target returned an error.",
+    },
+    {
+      category: "transient",
+      code: "ERR_UNAVAILABLE",
+      copy: "The target or invoker could not be reached — retrying may help.",
+    },
+    {
+      category: "protocol",
+      code: "ERR_PROTOCOL",
+      copy: "The invocation violated the invoker protocol contract.",
+    },
+    {
+      category: "permanent",
+      code: "ERR_BINDING_NOT_FOUND",
+      copy: "The operation failed permanently — retrying will not help.",
+    },
+    {
+      category: "validation",
+      code: "ERR_VALIDATION_FAILED",
+      copy: "A value did not match the operation contract.",
+    },
+    {
+      category: "unsupported",
+      code: "ERR_UNSUPPORTED",
+      copy: "The invoker does not support this operation.",
+    },
+    {
+      category: "cancelled",
+      code: "ERR_CANCELLED",
+      copy: "The operation was cancelled.",
+    },
+    {
+      category: "canceled",
+      code: "ERR_CANCELLED",
+      copy: "The operation was cancelled.",
+    },
+    {
+      category: "context",
+      code: "CONTEXT_REQUIRED",
+      copy: "This operation needs credentials or other invocation context.",
+    },
+  ];
+
+  for (const { category, code, copy } of categoryCases) {
+    it(`classifies the "${category}" category ahead of the code and appends the server message`, () => {
+      const presented = presentInvocationError({
+        code,
+        category,
+        message: "upstream detail",
+      });
+      expect(presented.summary).toBe(`${copy} upstream detail`);
+    });
+  }
+
+  it("keeps category summaries distinguishable and non-empty", () => {
+    const summaries = categoryCases
+      .filter(entry => entry.category !== "canceled")
+      .map(
+        entry =>
+          presentInvocationError({
+            code: entry.code,
+            category: entry.category,
+            message: "",
+          }).summary,
+      );
+    for (const summary of summaries) {
+      expect(summary.trim().length).toBeGreaterThan(0);
+    }
+    expect(new Set(summaries).size).toBe(summaries.length);
+  });
+
+  it("presents the category copy alone when the server message is empty", () => {
+    expect(
+      presentInvocationError({
+        code: "ERR_SERVICE_ERROR",
+        category: "service",
+        message: "",
+      }).summary,
+    ).toBe("The target returned an error.");
+  });
+
+  it("never renders an empty summary for an error it cannot describe", () => {
+    const undescribed = "The invoker reported an error it did not describe.";
+    expect(
+      presentInvocationError({} as OperationFrameError).summary,
+    ).toBe(undescribed);
+    expect(presentInvocationError(new Error("")).summary).toBe(undescribed);
+    expect(
+      presentInvocationError({
+        code: "ERR_MYSTERY",
+        category: "",
+        message: "",
+      }).summary,
+    ).toBe("The operation could not be completed.");
+  });
+
+  it("attributes ERR_CONNECT_FAILED to the invoker transport, not the target", () => {
+    const presented = presentInvocationError({
+      code: "ERR_CONNECT_FAILED",
+      category: "transient",
+      message: "fetch failed",
+    });
+    expect(presented.summary).toContain(
+      "Could not reach the operation invoker.",
+    );
+    expect(presented.summary).toContain("session credential");
+    expect(presented.summary).toContain("fetch failed");
+    expect(presented.summary.toLowerCase()).not.toContain("the target");
+  });
+});
+
+describe("binding selector", () => {
+  const multiBindingOBI: OBInterface = {
+    openbindings: "0.2.0",
+    name: "Target",
+    operations: {
+      echo: {
+        aliases: ["echoAlias"],
+        input: {
+          type: "object",
+          properties: { message: { type: "string" } },
+          required: ["message"],
+        },
+        output: { type: "object" },
+      },
+      other: {},
+    },
+    sources: {
+      s: { bindingSpec: "example.http@1", content: {} },
+    },
+    bindings: {
+      "echo.legacy": { operation: "echo", source: "s", deprecated: true },
+      "echo.http": { operation: "echo", source: "s", preference: 10 },
+      "echo.ws": { operation: "echo", source: "s", preference: 5 },
+      "echo.alt": { operation: "echo", source: "s" },
+      "echo.aliased": { operation: "echoAlias", source: "s" },
+      "other.http": { operation: "other", source: "s", preference: 99 },
+    },
+  };
+
+  function mountedSelector(obi: OBInterface = multiBindingOBI): {
+    element: OperationWorkbenchElement;
+    select: () => HTMLSelectElement | null;
+    bar: () => HTMLElement | null;
+  } {
+    const element = document.createElement(
+      OPERATION_WORKBENCH_TAG,
+    ) as OperationWorkbenchElement;
+    element.obi = obi;
+    element.operationKey = "echo";
+    document.body.append(element);
+    return {
+      element,
+      select: () =>
+        element.shadowRoot?.querySelector<HTMLSelectElement>(
+          ".binding-select",
+        ) ?? null,
+      bar: () =>
+        element.shadowRoot?.querySelector<HTMLElement>(".binding-bar") ?? null,
+    };
+  }
+
+  it("renders the selector only when the operation has two or more bindings", async () => {
+    const multi = mountedSelector();
+    await settled();
+    expect(multi.select()).toBeTruthy();
+    expect(multi.bar()?.hidden).toBe(false);
+
+    const single = mountedSelector({
+      ...multiBindingOBI,
+      bindings: {
+        "echo.http": { operation: "echo", source: "s", preference: 10 },
+        "other.http": { operation: "other", source: "s" },
+      },
+    });
+    await settled();
+    expect(single.bar()?.hidden).toBe(true);
+
+    const none = mountedSelector({ ...multiBindingOBI, bindings: {} });
+    await settled();
+    expect(none.bar()?.hidden).toBe(true);
+  });
+
+  it("orders options by descending preference, missing preference last then lexicographic, annotating deprecation", async () => {
+    const { select } = mountedSelector();
+    await settled();
+    const options = Array.from(select()?.options ?? []).filter(
+      option => option.value !== "",
+    );
+    expect(options.map(option => option.value)).toEqual([
+      "echo.http",
+      "echo.ws",
+      "echo.aliased",
+      "echo.alt",
+      "echo.legacy",
+    ]);
+    expect(
+      options.find(option => option.value === "echo.legacy")?.textContent,
+    ).toBe("echo.legacy · deprecated");
+    expect(
+      options.find(option => option.value === "echo.http")?.textContent,
+    ).toBe("echo.http");
+  });
+
+  it("shows a placeholder while bindingKey is null and drops it once a binding is chosen", async () => {
+    const { element, select } = mountedSelector();
+    await settled();
+    const placeholder = Array.from(select()?.options ?? []).find(
+      option => option.value === "",
+    );
+    expect(placeholder?.textContent).toBe("choose a binding…");
+    expect(select()?.value).toBe("");
+
+    element.bindingKey = "echo.ws";
+    await settled();
+    expect(select()?.value).toBe("echo.ws");
+    expect(
+      Array.from(select()?.options ?? []).some(option => option.value === ""),
+    ).toBe(false);
+  });
+
+  it("reflects programmatic bindingKey assignment without emitting or announcing", async () => {
+    const { element, select } = mountedSelector();
+    const selected = vi.fn();
+    element.addEventListener("ob-binding-select", selected);
+    await settled();
+    const announcer = element.shadowRoot?.querySelector(".status-announcer");
+    const announced = announcer?.textContent;
+
+    element.bindingKey = "echo.http";
+    await settled();
+
+    expect(select()?.value).toBe("echo.http");
+    expect(selected).not.toHaveBeenCalled();
+    expect(announcer?.textContent).toBe(announced);
+  });
+
+  it("falls back to the placeholder for a stale or unknown bindingKey", async () => {
+    const { element, select } = mountedSelector();
+    element.bindingKey = "echo.retired";
+    await settled();
+    expect(select()?.value).toBe("");
+    expect(
+      Array.from(select()?.options ?? []).find(option => option.value === "")
+        ?.textContent,
+    ).toBe("choose a binding…");
+  });
+
+  it("commits a user change to the property and emits exactly one ob-binding-select", async () => {
+    const { element, select } = mountedSelector();
+    const selected = vi.fn();
+    element.addEventListener("ob-binding-select", selected);
+    await settled();
+
+    const node = select();
+    expect(node).toBeTruthy();
+    node!.value = "echo.ws";
+    node!.dispatchEvent(new Event("change", { bubbles: true }));
+    await settled();
+
+    expect(element.bindingKey).toBe("echo.ws");
+    expect(selected).toHaveBeenCalledTimes(1);
+    expect(selected.mock.calls[0]?.[0].detail).toEqual({
+      bindingKey: "echo.ws",
+      binding: { operation: "echo", source: "s", preference: 5 },
+    });
+  });
+
+  it("names the selector for assistive technology and disables it while running", async () => {
+    const environment = new OperationEnvironment([
+      {
+        interface: operationInvokerCandidate(),
+        invoker: new OperationInvoker([
+          new LocalOperationInvokerBinding("hang"),
+        ]),
+      },
+    ]);
+    const { element, select } = mountedSelector();
+    element.bindingKey = "echo.http";
+    element.inputText = '{"message":"hold"}';
+    element.operationSource = environment;
+    await waitFor(() =>
+      element.shadowRoot
+        ?.querySelector(".status")
+        ?.textContent?.includes("echo.http"),
+    );
+    expect(select()?.getAttribute("aria-label")).toBe("Binding for echo");
+    expect(select()?.disabled).toBe(false);
+    // The visible pill reads "Ready · echo.http", but the live region speaks
+    // only dependency and run state — reflection is not announced.
+    expect(
+      element.shadowRoot?.querySelector(".status-announcer")?.textContent,
+    ).toBe("Ready");
+
+    const running = element.run();
+    await waitFor(() =>
+      element.shadowRoot?.querySelector(".status")?.textContent === "Running",
+    );
+    expect(select()?.disabled).toBe(true);
+
+    await element.cancel();
+    await running;
+    await settled();
+    expect(select()?.disabled).toBe(false);
+  });
+
+  it("carries the binding chosen through the selector in the open frame", async () => {
+    const binding = new LocalOperationInvokerBinding();
+    const environment = new OperationEnvironment([
+      {
+        interface: operationInvokerCandidate(),
+        invoker: new OperationInvoker([binding]),
+      },
+    ]);
+    const { element, select } = mountedSelector();
+    element.inputText = '{"message":"routed"}';
+    element.operationSource = environment;
+    await waitFor(() =>
+      element.shadowRoot?.querySelector(".status")?.textContent === "Ready",
+    );
+
+    const node = select();
+    node!.value = "echo.ws";
+    node!.dispatchEvent(new Event("change", { bubbles: true }));
+    await settled();
+    await element.run();
+
+    expect(binding.receivedTargets).toEqual([{ binding: "echo.ws" }]);
+  });
+});
+
+/**
+ * A binding the test drives frame by frame: outputs are released only when
+ * the test pushes them, so intermediate stream states are observable.
+ */
+class GatedStreamBinding implements BindingInvoker {
+  #emit:
+    | ((frame: OperationInvokerOutputFrame) => Promise<void>)
+    | null = null;
+  #finish: (() => void) | null = null;
+
+  bindingSpecs(): BindingSpecInfo[] {
+    return [{ bindingSpec: LOCAL_BINDING_SPEC }];
+  }
+
+  async push(value: unknown): Promise<void> {
+    try {
+      await this.#emit?.({ kind: "output", value });
+    } catch {
+      // Pushing into a cancelled invocation is part of what the stale-frame
+      // tests exercise; the rejection itself is irrelevant to them.
+    }
+  }
+
+  async finish(): Promise<void> {
+    try {
+      await this.#emit?.({ kind: "complete" });
+    } catch {
+      // See push().
+    }
+    this.#finish?.();
+  }
+
+  invokeBinding<I = unknown, O = unknown>(
+    _args: BindingInvocationArgs,
+  ): InvocationImpl<I, O> {
+    const invocation = new InvocationImpl<
+      OperationInvokerInputFrame,
+      OperationInvokerOutputFrame
+    >();
+    queueMicrotask(() => void this.drive(invocation));
+    return invocation as unknown as InvocationImpl<I, O>;
+  }
+
+  private async drive(
+    invocation: InvocationImpl<
+      OperationInvokerInputFrame,
+      OperationInvokerOutputFrame
+    >,
+  ): Promise<void> {
+    for await (const frame of invocation.inputs()) {
+      if (frame.kind === "close") break;
+    }
+    invocation.closeInput();
+    this.#emit = frame => invocation.emitOutput(frame);
+    await new Promise<void>(resolve => {
+      this.#finish = resolve;
+      if (invocation.signal.aborted) resolve();
+      else
+        invocation.signal.addEventListener("abort", () => resolve(), {
+          once: true,
+        });
+    });
+    if (!invocation.signal.aborted) invocation.closeOutput();
+  }
+}
+
+async function mountGated(binding: GatedStreamBinding): Promise<{
+  element: OperationWorkbenchElement;
+  items: () => NodeListOf<Element>;
+  notice: () => HTMLElement | null;
+  count: () => HTMLElement | null;
+  timing: () => HTMLElement | null;
+}> {
+  const environment = new OperationEnvironment([
+    {
+      interface: operationInvokerCandidate(),
+      invoker: new OperationInvoker([binding]),
+    },
+  ]);
+  const element = document.createElement(
+    OPERATION_WORKBENCH_TAG,
+  ) as OperationWorkbenchElement;
+  element.obi = targetOBI;
+  element.operationKey = "echo";
+  element.inputText = '{"message":"stream"}';
+  element.operationSource = environment;
+  document.body.append(element);
+  await waitFor(() =>
+    element.shadowRoot?.querySelector(".status")?.textContent === "Ready",
+  );
+  const root = element.shadowRoot!;
+  return {
+    element,
+    items: () => root.querySelectorAll(".output-item"),
+    notice: () => root.querySelector<HTMLElement>(".output-notice"),
+    count: () => root.querySelector<HTMLElement>(".output-count"),
+    timing: () => root.querySelector<HTMLElement>(".output-timing"),
+  };
+}
+
+describe("output view v2", () => {
+  it("renders one array-valued output as a single bare block, distinct from a streamed pair", async () => {
+    const single = new GatedStreamBinding();
+    const a = await mountGated(single);
+    const runA = a.element.run();
+    await waitFor(() =>
+      a.element.shadowRoot?.querySelector(".status")?.textContent ===
+        "Running",
+    );
+    await single.push([1, 2]);
+    await waitFor(() => a.items().length === 1);
+    await single.finish();
+    await runA;
+    await settled();
+
+    expect(a.items().length).toBe(1);
+    expect(a.count()?.textContent).toBe("1 value");
+    // A single value renders directly: no disclosure chrome.
+    expect(a.items()[0]?.querySelector("summary")?.hidden).toBe(true);
+    expect(
+      a.items()[0]?.querySelector(".output-value")?.textContent?.trimStart(),
+    ).toMatch(/^\[/);
+
+    const pair = new GatedStreamBinding();
+    const b = await mountGated(pair);
+    const runB = b.element.run();
+    await waitFor(() =>
+      b.element.shadowRoot?.querySelector(".status")?.textContent ===
+        "Running",
+    );
+    await pair.push(1);
+    await pair.push(2);
+    await waitFor(() => b.items().length === 2);
+    await pair.finish();
+    await runB;
+    await settled();
+
+    expect(b.items().length).toBe(2);
+    expect(b.count()?.textContent).toBe("2 values");
+    const summaries = Array.from(b.items()).map(item =>
+      item.querySelector("summary"),
+    );
+    expect(summaries[0]?.hidden).toBe(false);
+    expect(summaries[1]?.hidden).toBe(false);
+    expect(summaries[0]?.textContent).toContain("#1");
+    expect(summaries[1]?.textContent).toContain("#2");
+  });
+
+  it("appends per frame with stable node identity (O(new frame) rendering)", async () => {
+    const binding = new GatedStreamBinding();
+    const { element, items } = await mountGated(binding);
+    element.maxDisplayedOutputs = 2;
+    const run = element.run();
+    await waitFor(() =>
+      element.shadowRoot?.querySelector(".status")?.textContent === "Running",
+    );
+
+    await binding.push({ frame: 1 });
+    await waitFor(() => items().length === 1);
+    const first = items()[0]!;
+    const firstValue = first.querySelector(".output-value")!;
+    const firstText = firstValue.textContent;
+
+    await binding.push({ frame: 2 });
+    await waitFor(() => items().length === 2);
+    // The first block is the same node with the same rendered text — no
+    // rebuild, no re-stringify of already-displayed values.
+    expect(items()[0]).toBe(first);
+    expect(items()[0]?.querySelector(".output-value")).toBe(firstValue);
+    expect(firstValue.textContent).toBe(firstText);
+    const second = items()[1]!;
+
+    await binding.push({ frame: 3 });
+    await waitFor(() =>
+      items().length === 2 &&
+      items()[1]?.querySelector("summary")?.textContent?.includes("#3") ===
+        true,
+    );
+    // Retention evicted frame 1; frame 2's node survived by identity.
+    expect(items()[0]).toBe(second);
+
+    await binding.finish();
+    await run;
+  });
+
+  it("records stream offsets from the first frame and settles a total duration chip", async () => {
+    let fakeNow = 1000;
+    vi.spyOn(performance, "now").mockImplementation(() => fakeNow);
+
+    const single = new GatedStreamBinding();
+    const a = await mountGated(single);
+    const runA = a.element.run();
+    await waitFor(() =>
+      a.element.shadowRoot?.querySelector(".status")?.textContent ===
+        "Running",
+    );
+    await single.push({ ok: true });
+    await waitFor(() => a.items().length === 1);
+    fakeNow = 1213;
+    await single.finish();
+    await runA;
+    await settled();
+
+    expect(a.timing()?.hidden).toBe(false);
+    expect(a.timing()?.textContent).toBe("213ms");
+    expect(a.count()?.textContent).toBe("1 value");
+
+    fakeNow = 0;
+    const stream = new GatedStreamBinding();
+    const b = await mountGated(stream);
+    const runB = b.element.run();
+    await waitFor(() =>
+      b.element.shadowRoot?.querySelector(".status")?.textContent ===
+        "Running",
+    );
+    await stream.push(1);
+    await waitFor(() => b.items().length === 1);
+    fakeNow = 1200;
+    await stream.push(2);
+    await waitFor(() => b.items().length === 2);
+    fakeNow = 1400;
+    await stream.finish();
+    await runB;
+    await settled();
+
+    const summaries = Array.from(b.items()).map(
+      item => item.querySelector("summary")?.textContent ?? "",
+    );
+    expect(summaries[0]).toContain("+0ms");
+    expect(summaries[1]).toContain("+1.2s");
+    expect(b.timing()?.textContent).toBe("1.4s");
+  });
+
+  it("reads as live progress while streaming and settles on terminal", async () => {
+    const binding = new GatedStreamBinding();
+    const { element, count, timing } = await mountGated(binding);
+    const announcer = element.shadowRoot?.querySelector(".status-announcer");
+    const run = element.run();
+    await waitFor(() =>
+      element.shadowRoot?.querySelector(".status")?.textContent === "Running",
+    );
+
+    await binding.push(1);
+    await binding.push(2);
+    await waitFor(() => count()?.textContent === "2 values · streaming…");
+    expect(timing()?.hidden).toBe(true);
+    expect(announcer?.textContent).toBe(
+      "Invocation running. 2 values so far.",
+    );
+
+    await binding.finish();
+    await run;
+    await settled();
+    expect(count()?.textContent).toBe("2 values");
+    expect(timing()?.hidden).toBe(false);
+    expect(announcer?.textContent).toBe(
+      "Invocation complete. 2 output values received.",
+    );
+  });
+
+  it("preserves manual collapse state across subsequent appends", async () => {
+    const binding = new GatedStreamBinding();
+    const { element, items } = await mountGated(binding);
+    const run = element.run();
+    await waitFor(() =>
+      element.shadowRoot?.querySelector(".status")?.textContent === "Running",
+    );
+
+    await binding.push(1);
+    await binding.push(2);
+    await waitFor(() => items().length === 2);
+    const first = items()[0] as HTMLDetailsElement;
+    expect(first.open).toBe(true);
+    first.open = false;
+
+    await binding.push(3);
+    await waitFor(() => items().length === 3);
+    expect(items()[0]).toBe(first);
+    expect((items()[0] as HTMLDetailsElement).open).toBe(false);
+
+    await binding.finish();
+    await run;
+  });
+
+  it("copies a bare value for one output and a JSON array for many, never timing labels", async () => {
+    const writes: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: (text: string) => {
+          writes.push(text);
+          return Promise.resolve();
+        },
+      },
+    });
+
+    const single = new GatedStreamBinding();
+    const a = await mountGated(single);
+    const copyButton = a.element.shadowRoot?.querySelector<HTMLButtonElement>(
+      ".copy-output",
+    );
+    expect(copyButton).toBeTruthy();
+    expect(copyButton?.hidden).toBe(true);
+    const runA = a.element.run();
+    await waitFor(() =>
+      a.element.shadowRoot?.querySelector(".status")?.textContent ===
+        "Running",
+    );
+    await single.push({ answer: 42 });
+    await single.finish();
+    await runA;
+    await settled();
+
+    expect(copyButton?.hidden).toBe(false);
+    // Fake timers wrap the copy so the ~1.6s "Copied" revert is observable.
+    vi.useFakeTimers();
+    try {
+      expect(await a.element.copyOutput()).toBe(true);
+      expect(JSON.parse(writes[0]!)).toEqual({ answer: 42 });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(copyButton?.textContent).toBe("Copied");
+      expect(copyButton?.getAttribute("aria-label")).toBe("Copied");
+      vi.advanceTimersByTime(1700);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(copyButton?.textContent).toBe("Copy");
+      expect(copyButton?.getAttribute("aria-label")).toBe(
+        "Copy output as JSON",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const stream = new GatedStreamBinding();
+    const b = await mountGated(stream);
+    const runB = b.element.run();
+    await waitFor(() =>
+      b.element.shadowRoot?.querySelector(".status")?.textContent ===
+        "Running",
+    );
+    await stream.push({ n: 1 });
+    await stream.push({ n: 2 });
+    await stream.finish();
+    await runB;
+    await settled();
+
+    expect(await b.element.copyOutput()).toBe(true);
+    expect(JSON.parse(writes[1]!)).toEqual([{ n: 1 }, { n: 2 }]);
+  });
+
+  it("never renders frames or timings from a cancelled run", async () => {
+    const binding = new GatedStreamBinding();
+    const { element, items, timing, notice } = await mountGated(binding);
+    const run = element.run();
+    await waitFor(() =>
+      element.shadowRoot?.querySelector(".status")?.textContent === "Running",
+    );
+    await binding.push(1);
+    await waitFor(() => items().length === 1);
+
+    await element.cancel();
+    await binding.push(2);
+    await binding.finish();
+    await run;
+    await settled();
+
+    // The stale run's later frames never render, and no duration settles.
+    expect(items().length).toBe(1);
+    expect(timing()?.hidden).toBe(true);
+
+    element.clearOutput();
+    await settled();
+    expect(items().length).toBe(0);
+    expect(timing()?.hidden).toBe(true);
+    expect(notice()?.textContent).toBe("No output yet.");
+  });
+});
+
+describe("formatDuration", () => {
+  it("scales durations devtools-style", async () => {
+    const mod = (await import("./index.js")) as unknown as {
+      formatDuration?: (ms: number) => string;
+    };
+    const formatDuration = mod.formatDuration;
+    expect(typeof formatDuration).toBe("function");
+    expect(formatDuration!(0)).toBe("0ms");
+    expect(formatDuration!(213)).toBe("213ms");
+    expect(formatDuration!(999.4)).toBe("999ms");
+    // The branch is chosen after rounding, so 999.6ms is 1s, never "1000ms".
+    expect(formatDuration!(999.6)).toBe("1s");
+    expect(formatDuration!(1234)).toBe("1.2s");
+    // Trailing .0 is trimmed.
+    expect(formatDuration!(2000)).toBe("2s");
+    expect(formatDuration!(59949)).toBe("59.9s");
+    // 59.96s rounds past the minute boundary and must not read "60s".
+    expect(formatDuration!(59960)).toBe("1m 0s");
+    expect(formatDuration!(83000)).toBe("1m 23s");
+    expect(formatDuration!(-5)).toBe("0ms");
+    expect(formatDuration!(Number.NaN)).toBe("0ms");
+  });
+});
+
+describe("split layout", () => {
+  function mountLayout(): {
+    element: OperationWorkbenchElement;
+    workspace: () => HTMLElement | null;
+    gutter: () => HTMLElement | null;
+  } {
+    const element = document.createElement(
+      OPERATION_WORKBENCH_TAG,
+    ) as OperationWorkbenchElement;
+    element.obi = targetOBI;
+    element.operationKey = "echo";
+    document.body.append(element);
+    const root = element.shadowRoot!;
+    return {
+      element,
+      workspace: () => root.querySelector<HTMLElement>(".workspace"),
+      gutter: () => root.querySelector<HTMLElement>(".layout-gutter"),
+    };
+  }
+
+  it("defaults to stacked and toggles split without rebuilding the editor or output blocks", async () => {
+    const binding = new GatedStreamBinding();
+    const { element, items } = await mountGated(binding);
+    const run = element.run();
+    await waitFor(() =>
+      element.shadowRoot?.querySelector(".status")?.textContent === "Running",
+    );
+    await binding.push(1);
+    await binding.push(2);
+    await waitFor(() => items().length === 2);
+    await binding.finish();
+    await run;
+    await settled();
+
+    expect(element.layout).toBe("stacked");
+    const root = element.shadowRoot!;
+    const workspace = root.querySelector<HTMLElement>(".workspace")!;
+    const gutter = root.querySelector<HTMLElement>(".layout-gutter")!;
+    expect(workspace.classList.contains("split")).toBe(false);
+    expect(gutter.hidden).toBe(true);
+
+    const editor = root.querySelector(".input-editor")!;
+    const firstItem = items()[0]!;
+    const firstPre = firstItem.querySelector("pre")!;
+
+    element.layout = "split";
+    await settled();
+    expect(workspace.classList.contains("split")).toBe(true);
+    // The container joins the fill chain in split mode (height propagation).
+    expect(root.querySelector(".container")?.classList.contains("split")).toBe(
+      true,
+    );
+    expect(gutter.hidden).toBe(false);
+    // Geometry only: the editor and output nodes survive by identity.
+    expect(root.querySelector(".input-editor")).toBe(editor);
+    expect(items()[0]).toBe(firstItem);
+    expect(items()[0]?.querySelector("pre")).toBe(firstPre);
+
+    element.layout = "stacked";
+    await settled();
+    expect(workspace.classList.contains("split")).toBe(false);
+    expect(root.querySelector(".container")?.classList.contains("split")).toBe(
+      false,
+    );
+    expect(gutter.hidden).toBe(true);
+    expect(root.querySelector(".input-editor")).toBe(editor);
+    expect(items()[0]).toBe(firstItem);
+
+    // The layout attribute is a parse-time convenience for the same property.
+    element.setAttribute("layout", "split");
+    expect(element.layout).toBe("split");
+    expect(() => {
+      (element as unknown as { layout: string }).layout = "diagonal";
+    }).toThrow(TypeError);
+  });
+
+  it("clamps splitRatio, reflects it in the grid template and separator aria, and never echoes assignment", async () => {
+    const { element, workspace, gutter } = mountLayout();
+    const changed = vi.fn();
+    element.addEventListener("ob-layout-change", changed);
+    element.layout = "split";
+    await settled();
+
+    expect(element.splitRatio).toBe(0.5);
+    const node = gutter()!;
+    expect(node.getAttribute("role")).toBe("separator");
+    expect(node.getAttribute("aria-orientation")).toBe("vertical");
+    expect(node.getAttribute("aria-label")).toBe("Resize input and output");
+    expect(node.getAttribute("tabindex")).toBe("0");
+    expect(node.getAttribute("aria-valuemin")).toBe("20");
+    expect(node.getAttribute("aria-valuemax")).toBe("80");
+    expect(node.getAttribute("aria-valuenow")).toBe("50");
+
+    element.splitRatio = 0.65;
+    await settled();
+    expect(workspace()?.style.getPropertyValue("--_ob-split-input")).toBe(
+      "0.65fr",
+    );
+    expect(workspace()?.style.getPropertyValue("--_ob-split-output")).toBe(
+      "0.35fr",
+    );
+    expect(node.getAttribute("aria-valuenow")).toBe("65");
+
+    element.splitRatio = 0.95;
+    expect(element.splitRatio).toBe(0.8);
+    element.splitRatio = 0.01;
+    expect(element.splitRatio).toBe(0.2);
+    expect(() => {
+      element.splitRatio = Number.NaN;
+    }).toThrow(TypeError);
+    // Programmatic assignment never echoes.
+    expect(changed).not.toHaveBeenCalled();
+  });
+
+  it("resizes with keyboard steps and bounds, emitting ob-layout-change per effective step", async () => {
+    const { element, gutter } = mountLayout();
+    element.layout = "split";
+    await settled();
+    const changed = vi.fn();
+    element.addEventListener("ob-layout-change", changed);
+    const node = gutter()!;
+    const press = (key: string) =>
+      node.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+
+    press("ArrowRight");
+    expect(element.splitRatio).toBe(0.52);
+    press("ArrowLeft");
+    expect(element.splitRatio).toBe(0.5);
+    press("Home");
+    expect(element.splitRatio).toBe(0.2);
+    press("End");
+    expect(element.splitRatio).toBe(0.8);
+    // A step that cannot move (already at the bound) does not emit.
+    press("End");
+    expect(element.splitRatio).toBe(0.8);
+
+    expect(changed).toHaveBeenCalledTimes(4);
+    expect(
+      changed.mock.calls.map(
+        call => (call[0] as CustomEvent<{ splitRatio: number }>).detail,
+      ),
+    ).toEqual([
+      { splitRatio: 0.52 },
+      { splitRatio: 0.5 },
+      { splitRatio: 0.2 },
+      { splitRatio: 0.8 },
+    ]);
+  });
+
+  it("drags with pointer capture and emits a single ob-layout-change at drag end", async () => {
+    const { element, workspace, gutter } = mountLayout();
+    element.layout = "split";
+    await settled();
+    const changed = vi.fn();
+    element.addEventListener("ob-layout-change", changed);
+    const node = gutter()!;
+    const body = workspace()!;
+    body.getBoundingClientRect = () =>
+      ({ left: 0, width: 600, top: 0, height: 400 }) as DOMRect;
+    const capture = vi.fn();
+    const release = vi.fn();
+    (node as unknown as Record<string, unknown>).setPointerCapture = capture;
+    (node as unknown as Record<string, unknown>).releasePointerCapture =
+      release;
+
+    const pointer = (type: string, clientX: number) => {
+      const event = new MouseEvent(type, { bubbles: true, clientX, button: 0 });
+      Object.defineProperty(event, "pointerId", { value: 7 });
+      node.dispatchEvent(event);
+    };
+
+    pointer("pointerdown", 300);
+    expect(capture).toHaveBeenCalledWith(7);
+    pointer("pointermove", 180);
+    expect(element.splitRatio).toBe(0.3);
+    // No event while the drag is still in progress.
+    expect(changed).not.toHaveBeenCalled();
+    pointer("pointerup", 180);
+    expect(release).toHaveBeenCalledWith(7);
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(
+      (changed.mock.calls[0]?.[0] as CustomEvent<{ splitRatio: number }>)
+        .detail,
+    ).toEqual({ splitRatio: 0.3 });
+
+    // A drag that never moves ends silently.
+    pointer("pointerdown", 200);
+    pointer("pointerup", 200);
+    expect(changed).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to stacked below 36rem and restores split when wide, preserving the property", async () => {
+    const observed: Array<{
+      callback: (entries: Array<{ contentRect: { width: number } }>) => void;
+      observe: ReturnType<typeof vi.fn>;
+      disconnect: ReturnType<typeof vi.fn>;
+    }> = [];
+    class StubResizeObserver {
+      observe = vi.fn();
+      unobserve = vi.fn();
+      disconnect = vi.fn();
+      #callback: (
+        entries: Array<{ contentRect: { width: number } }>,
+      ) => void;
+      constructor(
+        callback: (entries: Array<{ contentRect: { width: number } }>) => void,
+      ) {
+        this.#callback = callback;
+        observed.push({
+          callback: entries => this.#callback(entries),
+          observe: this.observe,
+          disconnect: this.disconnect,
+        });
+      }
+    }
+    vi.stubGlobal("ResizeObserver", StubResizeObserver);
+    try {
+      const { element, workspace, gutter } = mountLayout();
+      element.layout = "split";
+      await settled();
+      expect(observed.length).toBe(1);
+      expect(observed[0]!.observe).toHaveBeenCalledWith(workspace());
+      expect(workspace()?.classList.contains("split")).toBe(true);
+
+      observed[0]!.callback([{ contentRect: { width: 500 } }]);
+      await settled();
+      expect(workspace()?.classList.contains("split")).toBe(false);
+      expect(workspace()?.classList.contains("narrow")).toBe(true);
+      expect(gutter()?.hidden).toBe(true);
+      // Presentation falls back; the property is preserved.
+      expect(element.layout).toBe("split");
+
+      observed[0]!.callback([{ contentRect: { width: 900 } }]);
+      await settled();
+      expect(workspace()?.classList.contains("split")).toBe(true);
+      expect(workspace()?.classList.contains("narrow")).toBe(false);
+      expect(gutter()?.hidden).toBe(false);
+
+      element.remove();
+      expect(observed[0]!.disconnect).toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

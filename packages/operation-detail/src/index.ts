@@ -3,7 +3,9 @@ import {
   OpenBindingsElement,
   baseStyles,
   formatJSON,
-  renderStatic,
+  type Refs,
+  reconcile,
+  setTextIfChanged,
 } from "@openbindings/ui-core";
 
 export const OPERATION_DETAIL_TAG = "ob-operation-detail";
@@ -21,6 +23,11 @@ export class OperationDetailElement extends OpenBindingsElement {
   #obi: OBInterface | null = null;
   #operationKey: string | null = null;
   #selectedBindingKey: string | null = null;
+  // True until the next successful render of the bindings disclosure applies
+  // the default open state. Raised only when the operation identity changes,
+  // so a user's manual toggle survives every other re-render (selection
+  // changes, document refreshes) instead of snapping back to the default.
+  #bindingsOpenStale = true;
 
   get obi(): OBInterface | null {
     return this.#obi;
@@ -40,6 +47,7 @@ export class OperationDetailElement extends OpenBindingsElement {
     if (value === this.#operationKey) return;
     this.#operationKey = value;
     this.#selectedBindingKey = null;
+    this.#bindingsOpenStale = true;
     this.requestRender();
   }
 
@@ -53,185 +61,223 @@ export class OperationDetailElement extends OpenBindingsElement {
     this.requestRender();
   }
 
-  protected render(): void {
-    const root = this.renderRoot;
-    if (!root) return;
+  protected override bind(refs: Refs): void {
+    // One delegated listener for the binding list; the buttons themselves are
+    // recreated whenever the operation changes, so per-button closures would
+    // be re-allocated on every switch.
+    refs.require(".binding-list").addEventListener("click", event => {
+      const key = (event.target as HTMLElement | null)?.closest<HTMLElement>(
+        "button[data-binding-key]",
+      )?.dataset.bindingKey;
+      const binding = key ? this.#obi?.bindings?.[key] : undefined;
+      if (!key || !binding) return;
+      this.#selectedBindingKey = key;
+      this.requestRender();
+      this.emit<BindingSelectDetail>("ob-binding-select", {
+        bindingKey: key,
+        binding,
+      });
+    });
+  }
 
-    renderStatic(
-      root,
-      `<style>${baseStyles}${styles}</style>
-       <article class="container" part="container">
-         <div class="empty" part="empty"></div>
-         <div class="content">
-           <header part="header">
-             <div>
-               <p class="eyebrow">Operation</p>
-               <h2></h2>
-             </div>
-             <div class="flags" part="metadata"></div>
-           </header>
-           <p class="description"></p>
-           <section class="aliases">
-             <h3>Aliases</h3>
-             <div class="alias-list"></div>
-           </section>
-           <section class="bindings">
-             <h3>Bindings</h3>
-             <div class="binding-list" part="binding-list"></div>
-           </section>
-           <section class="examples" part="examples">
-             <h3>Examples</h3>
-             <div class="example-list"></div>
-           </section>
-           <div class="schemas">
-             <section part="input-schema">
-               <h3>Input schema (as declared)</h3>
-               <pre class="input-schema"></pre>
-             </section>
-             <section part="output-schema">
-               <h3>Output schema (as declared)</h3>
-               <pre class="output-schema"></pre>
-             </section>
-           </div>
-         </div>
-       </article>`,
-    );
+  protected render(): void {
+    const refs = this.shell(SHELL, baseStyles, styles);
+    if (!refs) return;
 
     const operation =
       this.#obi && this.#operationKey
         ? this.#obi.operations[this.#operationKey]
         : undefined;
-    const empty = root.querySelector(".empty") as HTMLElement | null;
-    const content = root.querySelector(".content") as HTMLElement | null;
+    const empty = refs.require(".empty");
+    const content = refs.require(".content");
 
     if (!this.#obi || !this.#operationKey || !operation) {
-      if (empty) {
-        empty.textContent = this.#obi
+      empty.hidden = false;
+      setTextIfChanged(
+        empty,
+        this.#obi
           ? "Select an operation to inspect its contract."
-          : "Assign an OBI document and operation key.";
-      }
-      if (content) content.hidden = true;
+          : "Assign an OBI document and operation key.",
+      );
+      content.hidden = true;
       return;
     }
 
-    if (empty) empty.hidden = true;
-    const heading = root.querySelector("h2");
-    if (heading) heading.textContent = this.#operationKey;
+    empty.hidden = true;
+    content.hidden = false;
+    setTextIfChanged(refs.require("h2"), this.#operationKey);
 
-    const flags = root.querySelector(".flags");
-    for (const [label, active] of [
-      ["Idempotent", operation.idempotent === true],
-      ["Deprecated", operation.deprecated === true],
-    ] as const) {
-      if (!active || !flags) continue;
-      const flag = document.createElement("span");
-      flag.textContent = label;
-      if (label === "Deprecated") flag.className = "danger";
-      flags.append(flag);
-    }
-    for (const tag of operation.tags ?? []) {
-      if (!flags) break;
-      const flag = document.createElement("span");
-      flag.textContent = tag;
-      flags.append(flag);
-    }
+    // Keys are namespaced (flag:*, tag:<index>) rather than raw labels: a tag
+    // named "Idempotent" or a duplicate tag string is a legal document and
+    // must not collide in reconcile, which rejects duplicate keys.
+    const flagLabels = [
+      ...(operation.idempotent === true
+        ? [["flag:idempotent", "Idempotent", ""] as const]
+        : []),
+      ...(operation.deprecated === true
+        ? [["flag:deprecated", "Deprecated", "danger"] as const]
+        : []),
+      ...(operation.tags ?? []).map(
+        (tag, index) => [`tag:${index}`, tag, ""] as const,
+      ),
+    ];
+    reconcile(refs.require(".flags"), flagLabels, {
+      key: ([key]) => key,
+      create: () => document.createElement("span"),
+      update: (node, [, label, className]) => {
+        setTextIfChanged(node, label);
+        node.className = className;
+      },
+    });
 
-    const description = root.querySelector(".description") as HTMLElement | null;
-    if (description) {
-      description.hidden = !operation.description;
-      description.textContent = operation.description ?? "";
-    }
+    const description = refs.require(".description");
+    description.hidden = !operation.description;
+    setTextIfChanged(description, operation.description ?? "");
 
-    const aliases = root.querySelector(".aliases") as HTMLElement | null;
-    const aliasList = root.querySelector(".alias-list");
-    if (aliases) aliases.hidden = !operation.aliases?.length;
-    for (const alias of operation.aliases ?? []) {
-      const code = document.createElement("code");
-      code.textContent = alias;
-      aliasList?.append(code);
-    }
+    const aliasValues = operation.aliases ?? [];
+    refs.require(".aliases").hidden = aliasValues.length === 0;
+    reconcile(refs.require(".alias-list"), aliasValues, {
+      // Index-keyed: duplicate alias strings are the document's problem to
+      // flag, not a reason to abort the render.
+      key: (_alias, index) => `alias:${index}`,
+      create: () => document.createElement("code"),
+      update: (node, alias) => setTextIfChanged(node, alias),
+    });
 
     const bindingEntries = Object.entries(this.#obi.bindings ?? {})
       .filter(([, binding]) => binding.operation === this.#operationKey)
       .sort(([a], [b]) => a.localeCompare(b));
-    const bindings = root.querySelector(".bindings") as HTMLElement | null;
-    const bindingList = root.querySelector(".binding-list");
-    if (bindings) bindings.hidden = bindingEntries.length === 0;
-    for (const [bindingKey, binding] of bindingEntries) {
-      const button = document.createElement("button");
-      const key = document.createElement("span");
-      const family = document.createElement("span");
-      const source = this.#obi.sources?.[binding.source];
-      button.type = "button";
-      button.setAttribute("part", "binding");
-      button.classList.toggle("selected", bindingKey === this.#selectedBindingKey);
-      button.setAttribute(
-        "aria-pressed",
-        String(bindingKey === this.#selectedBindingKey),
-      );
-      key.className = "binding-key";
-      key.textContent = bindingKey;
-      family.className = "binding-family";
-      family.textContent = source
-        ? `${source.bindingSpec} · ${binding.source}`
-        : binding.source;
-      button.append(key, family);
-      button.addEventListener("click", () => {
-        this.#selectedBindingKey = bindingKey;
-        this.requestRender();
-        this.emit<BindingSelectDetail>("ob-binding-select", {
-          bindingKey,
-          binding,
-        });
-      });
-      bindingList?.append(button);
+    refs.require(".bindings").hidden = bindingEntries.length === 0;
+    // The default only lands when the operation identity changed; every other
+    // pass leaves `open` alone so a manual toggle (and focus inside the body,
+    // which reconcile already preserves) survives re-renders.
+    if (this.#bindingsOpenStale) {
+      this.#bindingsOpenStale = false;
+      refs.require<HTMLDetailsElement>(".bindings details").open =
+        bindingEntries.length <= 2;
     }
+    setTextIfChanged(
+      refs.require(".bindings-count"),
+      `Bindings · ${bindingEntries.length}`,
+    );
+    const selectedHere =
+      this.#selectedBindingKey !== null &&
+      bindingEntries.some(([key]) => key === this.#selectedBindingKey);
+    setTextIfChanged(
+      refs.require(".bindings-via"),
+      selectedHere ? ` · via ${this.#selectedBindingKey}` : "",
+    );
+    reconcile(refs.require(".binding-list"), bindingEntries, {
+      key: ([bindingKey]) => bindingKey,
+      create: () => createBindingButton(),
+      update: (node, [bindingKey, binding]) => {
+        const source = this.#obi?.sources?.[binding.source];
+        const selected = bindingKey === this.#selectedBindingKey;
+        node.dataset.bindingKey = bindingKey;
+        node.classList.toggle("selected", selected);
+        node.setAttribute("aria-pressed", String(selected));
+        setTextIfChanged(node.querySelector(".binding-key")!, bindingKey);
+        setTextIfChanged(
+          node.querySelector(".binding-family")!,
+          source ? `${source.bindingSpec} · ${binding.source}` : binding.source,
+        );
+      },
+    });
 
     const exampleEntries = Object.entries(operation.examples ?? {}).sort(
       ([a], [b]) => a.localeCompare(b),
     );
-    const examples = root.querySelector(".examples") as HTMLElement | null;
-    const exampleList = root.querySelector(".example-list");
-    if (examples) examples.hidden = exampleEntries.length === 0;
-    for (const [exampleKey, example] of exampleEntries) {
-      const article = document.createElement("article");
-      const heading = document.createElement("h4");
-      heading.textContent = exampleKey;
-      article.append(heading);
+    refs.require(".examples").hidden = exampleEntries.length === 0;
+    reconcile(refs.require(".example-list"), exampleEntries, {
+      key: ([exampleKey]) => exampleKey,
+      create: () => document.createElement("article"),
+      update: (node, [exampleKey, example]) => {
+        const parts: Node[] = [];
+        const heading = document.createElement("h4");
+        heading.textContent = exampleKey;
+        parts.push(heading);
+        if (example.description) {
+          const paragraph = document.createElement("p");
+          paragraph.textContent = example.description;
+          parts.push(paragraph);
+        }
+        for (const direction of ["input", "output"] as const) {
+          if (!Object.hasOwn(example, direction)) continue;
+          const label = document.createElement("span");
+          label.className = "example-direction";
+          label.textContent = direction;
+          const value = document.createElement("pre");
+          value.textContent = formatJSON(example[direction]);
+          parts.push(label, value);
+        }
+        node.replaceChildren(...parts);
+      },
+    });
 
-      if (example.description) {
-        const description = document.createElement("p");
-        description.textContent = example.description;
-        article.append(description);
-      }
-      for (const direction of ["input", "output"] as const) {
-        if (!Object.hasOwn(example, direction)) continue;
-        const label = document.createElement("span");
-        const value = document.createElement("pre");
-        label.className = "example-direction";
-        label.textContent = direction;
-        value.textContent = formatJSON(example[direction]);
-        article.append(label, value);
-      }
-      exampleList?.append(article);
-    }
-
-    const inputSchema = root.querySelector(".input-schema");
-    const outputSchema = root.querySelector(".output-schema");
-    if (inputSchema) {
-      inputSchema.textContent =
-        operation.input === undefined
-          ? "No input schema"
-          : formatJSON(operation.input);
-    }
-    if (outputSchema) {
-      outputSchema.textContent =
-        operation.output === undefined
-          ? "No output schema"
-          : formatJSON(operation.output);
-    }
+    setTextIfChanged(
+      refs.require(".input-schema"),
+      operation.input === undefined ? "No input schema" : formatJSON(operation.input),
+    );
+    setTextIfChanged(
+      refs.require(".output-schema"),
+      operation.output === undefined
+        ? "No output schema"
+        : formatJSON(operation.output),
+    );
   }
 }
+
+function createBindingButton(): HTMLElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.setAttribute("part", "binding");
+  const key = document.createElement("span");
+  key.className = "binding-key";
+  const family = document.createElement("span");
+  family.className = "binding-family";
+  button.append(key, family);
+  return button;
+}
+
+const SHELL = `
+  <article class="container" part="container">
+    <div class="empty" part="empty"></div>
+    <div class="content">
+      <header part="header">
+        <div>
+          <p class="eyebrow">Operation</p>
+          <h2></h2>
+        </div>
+        <div class="flags" part="metadata"></div>
+      </header>
+      <p class="description"></p>
+      <section class="aliases">
+        <h3>Aliases</h3>
+        <div class="alias-list"></div>
+      </section>
+      <section class="bindings">
+        <details>
+          <summary part="bindings-summary"><span class="bindings-count"></span><span class="bindings-via"></span></summary>
+          <div class="binding-list" part="binding-list"></div>
+        </details>
+      </section>
+      <section class="examples" part="examples">
+        <h3>Examples</h3>
+        <div class="example-list"></div>
+      </section>
+      <div class="schemas">
+        <section part="input-schema">
+          <h3>Input schema (as declared)</h3>
+          <pre class="input-schema"></pre>
+        </section>
+        <section part="output-schema">
+          <h3>Output schema (as declared)</h3>
+          <pre class="output-schema"></pre>
+        </section>
+      </div>
+    </div>
+  </article>
+`;
 
 export interface OperationDetailElement {
   addEventListener<K extends keyof OperationDetailEventMap>(
@@ -259,16 +305,16 @@ const styles = `
   .container {
     height: 100%;
     overflow: auto;
-    padding: calc(var(--ob-space) * 1.5);
-    background: var(--ob-color-background);
-    border: 1px solid var(--ob-color-border);
-    border-radius: var(--ob-radius);
+    padding: calc(var(--_ob-space) * 1.5);
+    background: var(--_ob-color-background);
+    border: 1px solid var(--_ob-color-border);
+    border-radius: var(--_ob-radius);
   }
 
   header {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--ob-space);
+    gap: var(--_ob-space);
     align-items: start;
     justify-content: space-between;
   }
@@ -278,7 +324,7 @@ const styles = `
   }
 
   .eyebrow {
-    color: var(--ob-color-text-muted);
+    color: var(--_ob-color-text-muted);
     font-size: 0.68rem;
     font-weight: 700;
     letter-spacing: 0.08em;
@@ -287,13 +333,13 @@ const styles = `
 
   h2 {
     overflow-wrap: anywhere;
-    font-family: var(--ob-font-mono);
+    font-family: var(--_ob-font-mono);
     font-size: 1.05rem;
   }
 
   h3 {
     margin-bottom: 0.45rem;
-    color: var(--ob-color-text-muted);
+    color: var(--_ob-color-text-muted);
     font-size: 0.72rem;
     letter-spacing: 0.05em;
     text-transform: uppercase;
@@ -301,8 +347,8 @@ const styles = `
 
   .description {
     max-width: 72ch;
-    margin-top: var(--ob-space);
-    color: var(--ob-color-text-muted);
+    margin-top: var(--_ob-space);
+    color: var(--_ob-color-text-muted);
   }
 
   .flags, .alias-list {
@@ -313,17 +359,37 @@ const styles = `
 
   .flags span, code {
     padding: 0.12rem 0.38rem;
-    background: var(--ob-color-surface-strong);
+    background: color-mix(in srgb, var(--_ob-color-surface-strong) 70%, transparent);
+    border: 1px solid var(--_ob-color-border);
     border-radius: 999px;
     font-size: 0.7rem;
   }
 
   .flags .danger {
-    color: var(--ob-color-danger);
+    color: var(--_ob-color-danger);
   }
 
   section {
-    margin-top: calc(var(--ob-space) * 1.5);
+    margin-top: calc(var(--_ob-space) * 1.5);
+  }
+
+  .bindings summary {
+    color: var(--_ob-color-text-muted);
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+
+  .bindings details[open] summary {
+    margin-bottom: 0.45rem;
+  }
+
+  /* Binding keys are case-sensitive identifiers; keep them verbatim. */
+  .bindings-via {
+    font-family: var(--_ob-font-mono);
+    letter-spacing: normal;
+    text-transform: none;
   }
 
   .binding-list {
@@ -334,15 +400,15 @@ const styles = `
   .example-list {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr));
-    gap: var(--ob-space);
+    gap: var(--_ob-space);
   }
 
   .example-list article {
     min-width: 0;
-    padding: var(--ob-space);
-    background: var(--ob-color-surface);
-    border: 1px solid var(--ob-color-border);
-    border-radius: var(--ob-radius);
+    padding: var(--_ob-space);
+    background: var(--_ob-color-surface);
+    border: 1px solid var(--_ob-color-border);
+    border-radius: var(--_ob-radius);
   }
 
   .example-list h4,
@@ -352,19 +418,19 @@ const styles = `
 
   .example-list h4 {
     overflow-wrap: anywhere;
-    font: 650 0.78rem / 1.4 var(--ob-font-mono);
+    font: 650 0.78rem / 1.4 var(--_ob-font-mono);
   }
 
   .example-list p {
     margin-top: 0.25rem;
-    color: var(--ob-color-text-muted);
+    color: var(--_ob-color-text-muted);
     font-size: 0.74rem;
   }
 
   .example-direction {
     display: block;
     margin: 0.65rem 0 0.25rem;
-    color: var(--ob-color-text-muted);
+    color: var(--_ob-color-text-muted);
     font-size: 0.68rem;
     font-weight: 700;
     text-transform: uppercase;
@@ -383,49 +449,49 @@ const styles = `
     width: 100%;
     padding: 0.55rem 0.65rem;
     text-align: left;
-    background: var(--ob-color-surface);
-    border: 1px solid var(--ob-color-border);
-    border-radius: var(--ob-radius);
+    background: var(--_ob-color-surface);
+    border: 1px solid var(--_ob-color-border);
+    border-radius: var(--_ob-radius);
     cursor: pointer;
   }
 
   .binding-list button:hover {
-    background: var(--ob-color-surface-strong);
+    background: var(--_ob-color-surface-strong);
   }
 
   .binding-list button.selected {
-    background: color-mix(in srgb, var(--ob-color-accent) 9%, var(--ob-color-background));
-    border-color: color-mix(in srgb, var(--ob-color-accent) 35%, var(--ob-color-border));
+    background: color-mix(in srgb, var(--_ob-color-accent) 9%, var(--_ob-color-background));
+    border-color: color-mix(in srgb, var(--_ob-color-accent) 35%, var(--_ob-color-border));
   }
 
   .binding-key {
     overflow-wrap: anywhere;
-    font-family: var(--ob-font-mono);
+    font-family: var(--_ob-font-mono);
     font-size: 0.75rem;
     font-weight: 650;
   }
 
   .binding-family {
-    color: var(--ob-color-text-muted);
+    color: var(--_ob-color-text-muted);
     font-size: 0.72rem;
   }
 
   .schemas {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
-    gap: var(--ob-space);
+    gap: var(--_ob-space);
   }
 
   pre {
     max-height: 24rem;
-    padding: var(--ob-space);
+    padding: var(--_ob-space);
     margin: 0;
     overflow: auto;
-    color: var(--ob-color-text);
-    font: 0.74rem / 1.5 var(--ob-font-mono);
-    background: var(--ob-color-surface);
-    border: 1px solid var(--ob-color-border);
-    border-radius: var(--ob-radius);
+    color: var(--_ob-color-text);
+    font: 0.74rem / 1.5 var(--_ob-font-mono);
+    background: var(--_ob-color-surface);
+    border: 1px solid var(--_ob-color-border);
+    border-radius: var(--_ob-radius);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
@@ -434,7 +500,7 @@ const styles = `
     display: grid;
     min-height: 12rem;
     place-items: center;
-    color: var(--ob-color-text-muted);
+    color: var(--_ob-color-text-muted);
     text-align: center;
   }
 `;

@@ -14,6 +14,7 @@ The public package set contains:
 - `@openbindings/ui-core`
 - `@openbindings/obi-explorer`
 - `@openbindings/obi-editor`
+- `@openbindings/json-editor`
 - `@openbindings/interface-sources`
 - `@openbindings/operation-detail`
 - `@openbindings/operation-workbench`

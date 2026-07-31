@@ -1,7 +1,9 @@
 import {
   OpenBindingsElement,
+  type Refs,
   baseStyles,
-  renderStatic,
+  reconcile,
+  setTextIfChanged,
 } from "@openbindings/ui-core";
 
 export const OPERATION_TABS_TAG = "ob-operation-tabs";
@@ -29,10 +31,24 @@ export interface OperationTabsEventMap {
   "ob-tabs-close-all": CustomEvent<Record<string, never>>;
 }
 
+/**
+ * The open-operation tab strip.
+ *
+ * Tabs are reconciled by key rather than rebuilt, so a tab that survives a
+ * state change keeps its DOM node — and with it focus, scroll offset within
+ * the strip, and any in-flight drag. Rebuilding the strip on every unrelated
+ * state change used to reset all three, which reads as "the tab was re-added"
+ * even when the model never changed.
+ *
+ * Pointer and keyboard handling is delegated from the container, so listener
+ * count is constant regardless of how many tabs are open.
+ */
 export class OperationTabsElement extends OpenBindingsElement {
   #tabs: OperationTab[] = [];
   #activeKey: string | null = null;
   #dragKey: string | null = null;
+  #scrolledKey: string | null = null;
+  #resizeObserver: ResizeObserver | null = null;
 
   get tabs(): readonly OperationTab[] {
     return this.#tabs;
@@ -40,7 +56,7 @@ export class OperationTabsElement extends OpenBindingsElement {
 
   set tabs(value: readonly OperationTab[]) {
     const seen = new Set<string>();
-    this.#tabs = (value ?? []).flatMap(tab => {
+    const next = (value ?? []).flatMap(tab => {
       const key = tab.key?.trim();
       if (!key || seen.has(key)) return [];
       seen.add(key);
@@ -53,6 +69,10 @@ export class OperationTabsElement extends OpenBindingsElement {
         },
       ];
     });
+    // The application rebuilds this array on every state change, so compare
+    // contents: an unchanged model must not cost a render.
+    if (sameTabs(next, this.#tabs)) return;
+    this.#tabs = next;
     this.requestRender();
   }
 
@@ -67,136 +87,226 @@ export class OperationTabsElement extends OpenBindingsElement {
     this.requestRender();
   }
 
-  protected override render(): void {
-    const root = this.renderRoot;
-    if (!root) return;
-    const focusedKey =
-      root.activeElement instanceof HTMLElement
-        ? root.activeElement.closest<HTMLElement>("[data-tab-key]")?.dataset
-            .tabKey ?? null
-        : null;
-    const html = this.#tabs.length
-      ? this.#tabs.map(tab => this.#tabTemplate(tab)).join("")
-      : `<p class="empty" part="empty">No operations open</p>`;
-    renderStatic(
-      root,
-      `<style>${baseStyles}${styles}</style>
-       <div class="container" part="container">
-         <div class="tab-list" part="tab-list" role="tablist" aria-label="Open operations">
-           ${html}
-         </div>
-         <details class="menu" part="menu" ${this.#tabs.length ? "" : "hidden"}>
-           <summary aria-label="Operation tab actions" title="Operation tab actions">•••</summary>
-           <div class="menu-popover">
-             <button type="button" data-action="move-left"${
-               !this.#canMoveActive(-1) ? " disabled" : ""
-             }>Move active tab left</button>
-             <button type="button" data-action="move-right"${
-               !this.#canMoveActive(1) ? " disabled" : ""
-             }>Move active tab right</button>
-             <button type="button" data-action="close-unselected"${
-               this.#tabs.length < 2 ? " disabled" : ""
-             }>Close other tabs</button>
-             <button type="button" data-action="close-all">Close all tabs</button>
-           </div>
-         </details>
-       </div>`,
-    );
+  protected override bind(refs: Refs): void {
+    const list = refs.require(".tab-list");
 
-    for (const shell of root.querySelectorAll<HTMLElement>(".tab-shell")) {
-      const key = shell.dataset.tabKey;
-      if (!key) continue;
-      const button = shell.querySelector<HTMLButtonElement>(".tab-button");
-      const close = shell.querySelector<HTMLButtonElement>(".close");
-      button?.addEventListener("click", () => this.#activate(key));
-      button?.addEventListener("keydown", event =>
-        this.#handleTabKeydown(event, key),
-      );
-      close?.addEventListener("click", event => {
+    list.addEventListener("click", event => {
+      const target = event.target as HTMLElement | null;
+      const key = target?.closest<HTMLElement>(".tab-shell")?.dataset.tabKey;
+      if (!key) return;
+      if (target?.closest(".close")) {
         event.stopPropagation();
         this.emit("ob-tab-close", { key });
-      });
-      shell.addEventListener("dragstart", event => {
-        this.#dragKey = key;
-        shell.classList.add("dragging");
-        event.dataTransfer?.setData("text/plain", key);
-        if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-      });
-      shell.addEventListener("dragend", () => {
-        this.#dragKey = null;
-        shell.classList.remove("dragging");
-      });
-      shell.addEventListener("dragover", event => {
-        if (!this.#dragKey || this.#dragKey === key) return;
-        event.preventDefault();
-        if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-        shell.classList.add("drop-target");
-      });
-      shell.addEventListener("dragleave", () =>
-        shell.classList.remove("drop-target"),
+        return;
+      }
+      if (target?.closest(".tab-button")) this.emit("ob-tab-activate", { key });
+    });
+
+    list.addEventListener("keydown", event => {
+      const key = (event.target as HTMLElement | null)?.closest<HTMLElement>(
+        ".tab-shell",
+      )?.dataset.tabKey;
+      if (key) this.#handleTabKeydown(event, key);
+    });
+
+    list.addEventListener("dragstart", event => {
+      const shell = (event.target as HTMLElement | null)?.closest<HTMLElement>(
+        ".tab-shell",
       );
-      shell.addEventListener("drop", event => {
+      const key = shell?.dataset.tabKey;
+      if (!shell || !key) return;
+      this.#dragKey = key;
+      shell.classList.add("dragging");
+      event.dataTransfer?.setData("text/plain", key);
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+    });
+
+    list.addEventListener("dragend", () => {
+      this.#dragKey = null;
+      for (const shell of list.querySelectorAll(".tab-shell")) {
+        shell.classList.remove("dragging", "drop-target");
+      }
+    });
+
+    list.addEventListener("dragover", event => {
+      const shell = (event.target as HTMLElement | null)?.closest<HTMLElement>(
+        ".tab-shell",
+      );
+      const key = shell?.dataset.tabKey;
+      if (!shell || !key || !this.#dragKey || this.#dragKey === key) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      shell.classList.add("drop-target");
+    });
+
+    list.addEventListener("dragleave", event => {
+      (event.target as HTMLElement | null)
+        ?.closest<HTMLElement>(".tab-shell")
+        ?.classList.remove("drop-target");
+    });
+
+    list.addEventListener("drop", event => {
+      const shell = (event.target as HTMLElement | null)?.closest<HTMLElement>(
+        ".tab-shell",
+      );
+      const key = shell?.dataset.tabKey;
+      if (!shell || !key) return;
+      event.preventDefault();
+      shell.classList.remove("drop-target");
+      const source =
+        this.#dragKey || event.dataTransfer?.getData("text/plain") || "";
+      this.#requestMove(source, key);
+    });
+
+    // A horizontally overflowing strip has no affordance on its own: macOS
+    // hides overlay scrollbars at rest, and a vertical wheel does nothing over
+    // a horizontal scroller. Translate wheel delta, and mark which edges have
+    // more content so the fades can show it.
+    list.addEventListener(
+      "wheel",
+      event => {
+        if (list.scrollWidth <= list.clientWidth) return;
+        // Respect genuine horizontal intent (trackpad swipe, shift+wheel).
+        if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+        if (event.deltaY === 0) return;
         event.preventDefault();
-        shell.classList.remove("drop-target");
-        const source =
-          this.#dragKey || event.dataTransfer?.getData("text/plain") || "";
-        this.#requestMove(source, key);
-      });
+        list.scrollLeft += event.deltaY;
+      },
+      { passive: false },
+    );
+
+    list.addEventListener("scroll", () => this.#updateOverflow(), {
+      passive: true,
+    });
+
+    if (typeof ResizeObserver === "function") {
+      this.#resizeObserver = new ResizeObserver(() => this.#updateOverflow());
+      this.#resizeObserver.observe(list);
     }
 
-    root
-      .querySelector<HTMLButtonElement>('[data-action="move-left"]')
-      ?.addEventListener("click", () => this.#requestActiveMove(-1));
-    root
-      .querySelector<HTMLButtonElement>('[data-action="move-right"]')
-      ?.addEventListener("click", () => this.#requestActiveMove(1));
-    root
-      .querySelector<HTMLButtonElement>('[data-action="close-unselected"]')
-      ?.addEventListener("click", () =>
-        this.emit("ob-tabs-close-unselected", {}),
-      );
-    root
-      .querySelector<HTMLButtonElement>('[data-action="close-all"]')
-      ?.addEventListener("click", () => this.emit("ob-tabs-close-all", {}));
-
-    if (focusedKey) {
-      this.#buttonFor(focusedKey)?.focus();
-    }
-    const active = root.querySelector<HTMLElement>(".tab-shell.active");
-    active?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    refs.require(".menu-popover").addEventListener("click", event => {
+      const action = (event.target as HTMLElement | null)?.closest<HTMLElement>(
+        "[data-action]",
+      )?.dataset.action;
+      if (!action) return;
+      refs.find<HTMLDetailsElement>(".menu")?.removeAttribute("open");
+      if (action === "move-left") this.#requestActiveMove(-1);
+      else if (action === "move-right") this.#requestActiveMove(1);
+      else if (action === "close-unselected") {
+        this.emit("ob-tabs-close-unselected", {});
+      } else if (action === "close-all") this.emit("ob-tabs-close-all", {});
+    });
   }
 
-  #tabTemplate(tab: OperationTab): string {
+  protected override render(): void {
+    const refs = this.shell(SHELL, baseStyles, styles);
+    if (!refs) return;
+
+    const list = refs.require(".tab-list");
+    refs.require(".empty").hidden = this.#tabs.length > 0;
+
+    // Computed once per render: when activeKey is stale (set, but matching no
+    // tab), the first tab must still take the tab stop — otherwise every
+    // button is tabIndex=-1 and the strip is unreachable by keyboard.
+    const hasActive =
+      this.#activeKey !== null &&
+      this.#tabs.some(tab => tab.key === this.#activeKey);
+    reconcile(list, this.#tabs, {
+      key: tab => tab.key,
+      create: tab => createTab(tab.key),
+      update: (node, tab) => this.#updateTab(node, tab, hasActive),
+    });
+
+    refs.require(".menu").hidden = this.#tabs.length === 0;
+    setDisabled(refs, '[data-action="move-left"]', !this.#canMoveActive(-1));
+    setDisabled(refs, '[data-action="move-right"]', !this.#canMoveActive(1));
+    setDisabled(refs, '[data-action="close-unselected"]', this.#tabs.length < 2);
+
+    // scrollIntoView forces a synchronous layout, so it runs only when the
+    // selection actually moved — not on every unrelated state change such as
+    // an invocation starting or finishing.
+    if (this.#activeKey !== this.#scrolledKey) {
+      this.#scrolledKey = this.#activeKey;
+      list
+        .querySelector<HTMLElement>(".tab-shell.active")
+        ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    }
+
+    this.#updateOverflow();
+  }
+
+  /**
+   * Records which edges have hidden tabs, so the container can fade them.
+   * Reading scroll geometry forces layout, so this runs on render, scroll and
+   * resize only — never per tab.
+   */
+  #updateOverflow(): void {
+    const refs = this.shell(SHELL, baseStyles, styles);
+    const list = refs?.find(".tab-list");
+    const container = refs?.find(".container");
+    if (!list || !container) return;
+    const max = list.scrollWidth - list.clientWidth;
+    // Sub-pixel layout means the end is never exactly reached.
+    const start = list.scrollLeft > 1;
+    const end = list.scrollLeft < max - 1;
+    const state = start && end ? "both" : start ? "start" : end ? "end" : "none";
+    if (container.getAttribute("data-overflow") !== state) {
+      container.setAttribute("data-overflow", state);
+    }
+  }
+
+  disconnectedCallback(): void {
+    this.#resizeObserver?.disconnect();
+    this.#resizeObserver = null;
+  }
+
+  #updateTab(node: HTMLElement, tab: OperationTab, hasActive: boolean): void {
     const active = tab.key === this.#activeKey;
-    const label = escapeHTML(tab.label || tab.key);
-    const key = escapeHTML(tab.key);
-    const status = tab.running
-      ? `<span class="status running" part="status" aria-label="Invocation running" title="Invocation running"></span>`
-      : tab.dirty
-        ? `<span class="status dirty" part="status" aria-label="Unsaved changes" title="Unsaved changes"></span>`
-        : "";
-    return `<div class="tab-shell${active ? " active" : ""}" data-tab-key="${key}" draggable="true" part="tab${active ? " active-tab" : ""}">
-      <button
-        class="tab-button"
-        type="button"
-        role="tab"
-        aria-selected="${active}"
-        tabindex="${active || (!this.#activeKey && this.#tabs[0]?.key === tab.key) ? "0" : "-1"}"
-        data-focus-key="${key}"
-        title="${label}"
-      >${status}<span class="label">${label}</span></button>
-      <button class="close" part="close" type="button" aria-label="Close ${label}" title="Close ${label}">×</button>
-    </div>`;
-  }
+    const label = tab.label || tab.key;
 
-  #activate(key: string): void {
-    this.emit("ob-tab-activate", { key });
+    node.dataset.tabKey = tab.key;
+    node.classList.toggle("active", active);
+    node.setAttribute("part", active ? "tab active-tab" : "tab");
+
+    const button = node.querySelector<HTMLButtonElement>(".tab-button");
+    if (button) {
+      button.setAttribute("aria-selected", String(active));
+      // Exactly one tab sits in the tab sequence; the rest are reached with
+      // arrow keys, per the WAI-ARIA tabs pattern. Whenever no tab matches
+      // activeKey — null or stale — tab 0 takes the stop.
+      button.tabIndex =
+        active || (!hasActive && this.#tabs[0]?.key === tab.key) ? 0 : -1;
+      button.title = label;
+    }
+
+    const labelNode = node.querySelector(".label");
+    if (labelNode) setTextIfChanged(labelNode, label);
+
+    const status = node.querySelector<HTMLElement>(".status");
+    if (status) {
+      const state = tab.running ? "running" : tab.dirty ? "dirty" : "";
+      status.hidden = !state;
+      status.className = `status${state ? ` ${state}` : ""}`;
+      if (state) {
+        const text =
+          state === "running" ? "Invocation running" : "Unsaved changes";
+        status.setAttribute("aria-label", text);
+        status.title = text;
+      }
+    }
+
+    const close = node.querySelector<HTMLButtonElement>(".close");
+    if (close) {
+      close.setAttribute("aria-label", `Close ${label}, Delete closes`);
+      close.title = `Close ${label}`;
+    }
   }
 
   #handleTabKeydown(event: KeyboardEvent, key: string): void {
     const keys = this.#tabs.map(tab => tab.key);
     const index = keys.indexOf(key);
     if (index < 0) return;
+
     if (
       event.altKey &&
       (event.key === "ArrowLeft" || event.key === "ArrowRight")
@@ -216,28 +326,31 @@ export class OperationTabsElement extends OpenBindingsElement {
     }
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      this.#activate(key);
+      this.emit("ob-tab-activate", { key });
       return;
     }
+
     let target = index;
-    if (event.key === "ArrowLeft") target = (index - 1 + keys.length) % keys.length;
-    else if (event.key === "ArrowRight")
-      target = (index + 1) % keys.length;
+    if (event.key === "ArrowLeft") {
+      target = (index - 1 + keys.length) % keys.length;
+    } else if (event.key === "ArrowRight") target = (index + 1) % keys.length;
     else if (event.key === "Home") target = 0;
     else if (event.key === "End") target = keys.length - 1;
     else return;
     event.preventDefault();
     const nextKey = keys[target];
-    if (!nextKey) return;
-    this.#buttonFor(nextKey)?.focus();
+    if (nextKey) this.#buttonFor(nextKey)?.focus();
   }
 
-  #buttonFor(key: string): HTMLButtonElement | undefined {
-    return [
-      ...(this.renderRoot?.querySelectorAll<HTMLButtonElement>(
-        ".tab-button",
-      ) ?? []),
-    ].find(button => button.dataset.focusKey === key);
+  #buttonFor(key: string): HTMLButtonElement | null {
+    for (const shell of this.renderRoot?.querySelectorAll<HTMLElement>(
+      ".tab-shell",
+    ) ?? []) {
+      if (shell.dataset.tabKey === key) {
+        return shell.querySelector<HTMLButtonElement>(".tab-button");
+      }
+    }
+    return null;
   }
 
   #requestMove(source: string, target: string): void {
@@ -268,6 +381,63 @@ export class OperationTabsElement extends OpenBindingsElement {
   }
 }
 
+function sameTabs(
+  next: readonly OperationTab[],
+  previous: readonly OperationTab[],
+): boolean {
+  if (next.length !== previous.length) return false;
+  return next.every((tab, index) => {
+    const other = previous[index];
+    return (
+      other !== undefined &&
+      tab.key === other.key &&
+      tab.label === other.label &&
+      Boolean(tab.dirty) === Boolean(other.dirty) &&
+      Boolean(tab.running) === Boolean(other.running)
+    );
+  });
+}
+
+function createTab(key: string): HTMLElement {
+  const shell = document.createElement("div");
+  shell.className = "tab-shell";
+  shell.dataset.tabKey = key;
+  shell.draggable = true;
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "tab-button";
+  button.setAttribute("role", "tab");
+  button.dataset.focusKey = key;
+
+  const status = document.createElement("span");
+  status.className = "status";
+  status.setAttribute("part", "status");
+  status.hidden = true;
+
+  const label = document.createElement("span");
+  label.className = "label";
+  button.append(status, label);
+
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "close";
+  close.setAttribute("part", "close");
+  close.textContent = "×";
+  // Out of the tab sequence: the ARIA tabs pattern is a single stop, and
+  // Delete already closes from the focused tab. The aria-label announces the
+  // Delete affordance so it stays discoverable.
+  close.tabIndex = -1;
+
+  shell.append(button, close);
+  return shell;
+}
+
+function setDisabled(refs: Refs, selector: string, disabled: boolean): void {
+  const node = refs.find<HTMLButtonElement>(selector);
+  if (node) node.disabled = disabled;
+}
+
 export interface OperationTabsElement {
   addEventListener<K extends keyof OperationTabsEventMap>(
     type: K,
@@ -290,14 +460,21 @@ declare global {
   }
 }
 
-function escapeHTML(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
+const SHELL = `
+  <div class="container" part="container">
+    <div class="tab-list" part="tab-list" role="tablist" aria-label="Open operations"></div>
+    <p class="empty" part="empty">No operations open</p>
+    <details class="menu" part="menu">
+      <summary aria-label="Operation tab actions" title="Operation tab actions">•••</summary>
+      <div class="menu-popover">
+        <button type="button" data-action="move-left">Move active tab left</button>
+        <button type="button" data-action="move-right">Move active tab right</button>
+        <button type="button" data-action="close-unselected">Close other tabs</button>
+        <button type="button" data-action="close-all">Close all tabs</button>
+      </div>
+    </details>
+  </div>
+`;
 
 const styles = `
   :host {
@@ -310,9 +487,66 @@ const styles = `
     grid-template-columns: minmax(0, 1fr) auto;
     min-width: 0;
     height: 100%;
-    background: var(--ob-color-surface);
-    border: 1px solid var(--ob-color-border);
-    border-radius: var(--ob-radius);
+    background: var(--_ob-color-surface);
+    border: 1px solid var(--_ob-color-border);
+    border-radius: var(--_ob-radius);
+  }
+
+  .container {
+    position: relative;
+  }
+
+  /*
+   * Fades mark tabs that are scrolled out of view. They sit above the strip
+   * and must not eat pointer events, and they are driven by a data attribute
+   * rather than :hover so the hint is present at rest.
+   */
+  .container::before,
+  .container::after {
+    position: absolute;
+    top: 1px;
+    bottom: 1px;
+    z-index: 2;
+    width: 1.5rem;
+    content: "";
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+  }
+
+  .container::before {
+    left: 0;
+    background: linear-gradient(to right, rgb(0 0 0 / 18%), transparent);
+  }
+
+  .container::after {
+    /* Clears the overflow menu so the fade never sits under it. */
+    right: 2.5rem;
+    background: linear-gradient(to left, rgb(0 0 0 / 18%), transparent);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .container::before {
+      background: linear-gradient(to right, rgb(0 0 0 / 45%), transparent);
+    }
+
+    .container::after {
+      background: linear-gradient(to left, rgb(0 0 0 / 45%), transparent);
+    }
+  }
+
+  .container[data-overflow="start"]::before,
+  .container[data-overflow="both"]::before,
+  .container[data-overflow="end"]::after,
+  .container[data-overflow="both"]::after {
+    opacity: 1;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .container::before,
+    .container::after {
+      transition: none;
+    }
   }
 
   .tab-list {
@@ -320,24 +554,58 @@ const styles = `
     min-width: 0;
     overflow-x: auto;
     overflow-y: hidden;
-    scrollbar-width: thin;
+    overscroll-behavior-x: contain;
+    /*
+     * scrollbar-width is deliberately unset: in Chromium, setting it to
+     * anything other than "auto" disables ::-webkit-scrollbar styling
+     * altogether, which is what kept the scrollbar invisible on macOS.
+     * Firefox has no ::-webkit-scrollbar, so it gets scrollbar-color only.
+     */
+    scrollbar-color: var(--_ob-color-text-muted) transparent;
+  }
+
+  /*
+   * macOS hides overlay scrollbars at rest, which leaves an overflowing strip
+   * with no visible indication that it scrolls. An explicitly sized scrollbar
+   * is always drawn in Chromium and WebKit.
+   */
+  .tab-list::-webkit-scrollbar {
+    height: 0.4rem;
+  }
+
+  .tab-list::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .tab-list::-webkit-scrollbar-thumb {
+    background: var(--_ob-color-border);
+    border-radius: 0.2rem;
+  }
+
+  .tab-list:hover::-webkit-scrollbar-thumb {
+    background: var(--_ob-color-text-muted);
+  }
+
+  .tab-list:empty {
+    display: none;
   }
 
   .tab-shell {
     position: relative;
+    scroll-snap-align: start;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     min-width: 8rem;
     max-width: 20rem;
     flex: 0 1 14rem;
     align-items: center;
-    color: var(--ob-color-text-muted);
-    border-right: 1px solid var(--ob-color-border);
+    color: var(--_ob-color-text-muted);
+    border-right: 1px solid var(--_ob-color-border);
   }
 
   .tab-shell.active {
-    color: var(--ob-color-text);
-    background: var(--ob-color-background);
+    color: var(--_ob-color-text);
+    background: var(--_ob-color-background);
   }
 
   .tab-shell.active::before {
@@ -345,7 +613,7 @@ const styles = `
     inset: 0 0 auto;
     height: 2px;
     content: "";
-    background: var(--ob-color-accent);
+    background: var(--_ob-color-accent);
   }
 
   .tab-shell.dragging {
@@ -353,7 +621,7 @@ const styles = `
   }
 
   .tab-shell.drop-target {
-    box-shadow: inset 3px 0 var(--ob-color-accent);
+    box-shadow: inset 3px 0 var(--_ob-color-accent);
   }
 
   .tab-button,
@@ -385,31 +653,35 @@ const styles = `
     width: 0.45rem;
     height: 0.45rem;
     flex: 0 0 auto;
-    background: var(--ob-color-text-muted);
+    background: var(--_ob-color-text-muted);
     border-radius: 50%;
   }
 
+  .status[hidden] {
+    display: none;
+  }
+
   .status.running {
-    background: var(--ob-color-success);
-    box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--ob-color-success) 16%, transparent);
+    background: var(--_ob-color-success);
+    box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--_ob-color-success) 16%, transparent);
   }
 
   .status.dirty {
-    background: var(--ob-color-accent);
+    background: var(--_ob-color-accent);
   }
 
   .close {
     width: 2rem;
     padding: 0;
-    color: var(--ob-color-text-muted);
+    color: var(--_ob-color-text-muted);
     font-size: 1rem;
     opacity: 0.65;
   }
 
   .close:hover,
   .close:focus-visible {
-    color: var(--ob-color-text);
-    background: var(--ob-color-surface-strong);
+    color: var(--_ob-color-text);
+    background: var(--_ob-color-surface-strong);
     opacity: 1;
   }
 
@@ -417,13 +689,21 @@ const styles = `
     align-self: center;
     padding: 0 0.75rem;
     margin: 0;
-    color: var(--ob-color-text-muted);
+    color: var(--_ob-color-text-muted);
     font-size: 0.78rem;
+  }
+
+  .empty[hidden] {
+    display: none;
   }
 
   .menu {
     position: relative;
-    border-left: 1px solid var(--ob-color-border);
+    border-left: 1px solid var(--_ob-color-border);
+  }
+
+  .menu[hidden] {
+    display: none;
   }
 
   .menu > summary {
@@ -448,19 +728,19 @@ const styles = `
     display: grid;
     width: 12rem;
     padding: 0.3rem;
-    background: var(--ob-color-background);
-    border: 1px solid var(--ob-color-border);
-    border-radius: var(--ob-radius);
+    background: var(--_ob-color-background);
+    border: 1px solid var(--_ob-color-border);
+    border-radius: var(--_ob-radius);
     box-shadow: 0 0.6rem 1.8rem rgb(0 0 0 / 15%);
   }
 
   .menu button {
     text-align: left;
-    border-radius: calc(var(--ob-radius) * 0.65);
+    border-radius: calc(var(--_ob-radius) * 0.65);
   }
 
   .menu button:hover:not(:disabled) {
-    background: var(--ob-color-surface);
+    background: var(--_ob-color-surface);
   }
 
   .menu button:disabled {

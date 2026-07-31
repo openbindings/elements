@@ -1,7 +1,13 @@
 import type { OBInterface } from "@openbindings/sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { JSON_EDITOR_TAG, JSONEditorElement } from "@openbindings/json-editor";
 import { OBI_EDITOR_TAG, OBIEditorElement } from "./index.js";
 
+// `define.ts` registers both; the tests import classes, so they register the
+// composed editor the same way a consumer's define entry point would.
+if (!customElements.get(JSON_EDITOR_TAG)) {
+  customElements.define(JSON_EDITOR_TAG, JSONEditorElement);
+}
 if (!customElements.get(OBI_EDITOR_TAG)) {
   customElements.define(OBI_EDITOR_TAG, OBIEditorElement);
 }
@@ -45,16 +51,14 @@ describe("OBIEditorElement", () => {
     document.body.append(element);
     await settled();
 
-    const textarea =
-      element.shadowRoot?.querySelector<HTMLTextAreaElement>("textarea");
-    if (!textarea) throw new Error("missing editor textarea");
-    textarea.value = '{"openbindings":"0.2.0","operations":';
-    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    const broken = '{"openbindings":"0.2.0","operations":';
+    typeInto(element, broken);
+    await validated();
 
     const detail = edited.mock.calls[0]?.[0].detail;
     expect(detail.valid).toBe(false);
     expect(detail.dirty).toBe(true);
-    expect(element.text).toBe(textarea.value);
+    expect(element.text).toBe(broken);
     expect(element.value).toBeNull();
     expect(
       element.shadowRoot?.querySelector(".status")?.getAttribute("data-state"),
@@ -77,17 +81,32 @@ describe("OBIEditorElement", () => {
     expect(element.text).toContain("openbindings: 0.2.0");
     expect(element.value).toEqual(obi);
 
-    const textarea =
-      element.shadowRoot?.querySelector<HTMLTextAreaElement>("textarea");
-    if (!textarea) throw new Error("missing editor textarea");
-    textarea.value = `${element.text}\noperations: {}\n`;
-    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    typeInto(element, `${element.text}\noperations: {}\n`);
+    await validated();
     expect(element.value).toBeNull();
     expect(element.shadowRoot?.querySelector(".status")?.textContent).toContain(
       "Map keys must be unique",
     );
   });
 });
+
+/** Emulates a keystroke arriving from the composed JSON editor. */
+function typeInto(element: OBIEditorElement, text: string): void {
+  const editor = element.shadowRoot?.querySelector(".editor");
+  if (!editor) throw new Error("missing composed json editor");
+  editor.dispatchEvent(
+    new CustomEvent("ob-json-input", {
+      detail: { text, structured: false },
+      bubbles: true,
+      composed: true,
+    }),
+  );
+}
+
+/** Waits out the editor's validation debounce. */
+async function validated(): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, 240));
+}
 
 async function settled(): Promise<void> {
   await Promise.resolve();

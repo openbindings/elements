@@ -3,7 +3,13 @@ import {
   type OBInterface,
   validateDocument,
 } from "@openbindings/sdk";
-import { OpenBindingsElement, baseStyles } from "@openbindings/ui-core";
+import type { JSONEditorElement } from "@openbindings/json-editor";
+import {
+  OpenBindingsElement,
+  adoptStyles,
+  baseStyles,
+  debounce,
+} from "@openbindings/ui-core";
 import { parse as parseYAML, stringify as stringifyYAML } from "yaml";
 
 export const OBI_EDITOR_TAG = "ob-obi-editor";
@@ -46,11 +52,13 @@ export class OBIEditorElement extends OpenBindingsElement {
   #baseline = "";
   #format: OBIDocumentFormat = "json";
   #readOnly = false;
+  #errorLine: number | null = null;
   #result: ParseResult = {
     valid: false,
     error: "No interface document loaded.",
   };
-  #textarea: HTMLTextAreaElement | null = null;
+  #editor: JSONEditorElement | null = null;
+  readonly #scheduleValidation = debounce(() => this.#validateNow(), 180);
   #formatSelect: HTMLSelectElement | null = null;
   #status: HTMLElement | null = null;
   #reset: HTMLButtonElement | null = null;
@@ -59,7 +67,8 @@ export class OBIEditorElement extends OpenBindingsElement {
     super();
     const root = this.renderRoot;
     if (!root) return;
-    root.innerHTML = `<style>${baseStyles}${styles}</style>
+    adoptStyles(root, baseStyles, styles);
+    root.innerHTML = `
       <section class="container" part="container" aria-label="OpenBindings interface source editor">
         <header class="toolbar" part="toolbar">
           <div>
@@ -77,34 +86,21 @@ export class OBIEditorElement extends OpenBindingsElement {
             <button class="reset" part="reset" type="button">Reset</button>
           </div>
         </header>
-        <textarea
-          class="editor"
-          part="editor"
-          aria-label="OpenBindings interface source"
-          autocomplete="off"
-          autocapitalize="off"
-          spellcheck="false"
-        ></textarea>
+        <ob-json-editor class="editor" part="editor"></ob-json-editor>
         <footer class="status" part="status" role="status" aria-live="polite"></footer>
       </section>`;
-    this.#textarea = root.querySelector(".editor");
+    this.#editor = root.querySelector(".editor");
     this.#formatSelect = root.querySelector(".format");
     this.#status = root.querySelector(".status");
     this.#reset = root.querySelector(".reset");
 
-    this.#textarea?.addEventListener("input", () => {
-      this.#text = this.#textarea?.value ?? "";
-      this.#result = parseInterface(this.#text, this.#format);
-      this.#update();
-      this.#emitEdit();
-    });
-    this.#textarea?.addEventListener("keydown", event => {
-      if (event.key !== "Tab" || this.#readOnly || !this.#textarea) return;
-      event.preventDefault();
-      const start = this.#textarea.selectionStart;
-      const end = this.#textarea.selectionEnd;
-      this.#textarea.setRangeText("  ", start, end, "end");
-      this.#textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    // Schema validation walks the whole document, so running it per keystroke
+    // made typing cost grow with document size. The keystroke now only records
+    // the text; validation and the resulting event are debounced, and the
+    // editor element handles indentation itself.
+    this.#editor?.addEventListener("ob-json-input", event => {
+      this.#text = (event as CustomEvent<{ text: string }>).detail.text;
+      this.#scheduleValidation();
     });
     this.#formatSelect?.addEventListener("change", () => {
       const next = normalizeFormat(this.#formatSelect?.value);
@@ -123,7 +119,7 @@ export class OBIEditorElement extends OpenBindingsElement {
       this.#result = parseInterface(this.#text, this.#format);
       this.#update();
       this.#emitEdit();
-      this.#textarea?.focus();
+      this.#editor?.focusEditor();
     });
   }
 
@@ -134,7 +130,8 @@ export class OBIEditorElement extends OpenBindingsElement {
   set value(value: OBInterface | null) {
     this.#text = value ? formatInterface(value, this.#format) : "";
     this.#baseline = this.#text;
-    this.#result = parseInterface(this.#text, this.#format);
+    this.#scheduleValidation.cancel();
+    this.#revalidate();
     this.requestRender();
   }
 
@@ -145,7 +142,8 @@ export class OBIEditorElement extends OpenBindingsElement {
   set text(value: string) {
     this.#text = value ?? "";
     this.#baseline = this.#text;
-    this.#result = parseInterface(this.#text, this.#format);
+    this.#scheduleValidation.cancel();
+    this.#revalidate();
     this.requestRender();
   }
 
@@ -161,7 +159,8 @@ export class OBIEditorElement extends OpenBindingsElement {
       this.#baseline = this.#text;
     }
     this.#format = next;
-    this.#result = parseInterface(this.#text, this.#format);
+    this.#scheduleValidation.cancel();
+    this.#revalidate();
     this.requestRender();
   }
 
@@ -180,11 +179,11 @@ export class OBIEditorElement extends OpenBindingsElement {
   }
 
   #update(): void {
-    if (this.#textarea) {
-      if (this.#textarea.value !== this.#text) {
-        this.#textarea.value = this.#text;
-      }
-      this.#textarea.readOnly = this.#readOnly;
+    if (this.#editor) {
+      this.#editor.text = this.#text;
+      this.#editor.language = this.#format;
+      this.#editor.readOnly = this.#readOnly;
+      this.#editor.errorLine = this.#result.valid ? null : this.#errorLine;
     }
     if (this.#formatSelect) {
       this.#formatSelect.value = this.#format;
@@ -202,6 +201,29 @@ export class OBIEditorElement extends OpenBindingsElement {
           : "Valid OpenBindings interface"
         : this.#result.error;
     }
+  }
+
+  /**
+   * Re-parses and validates, then reports. Runs on a trailing debounce from
+   * the keystroke path and synchronously from programmatic changes.
+   */
+  #validateNow(): void {
+    this.#revalidate();
+    this.#emitEdit();
+  }
+
+  /**
+   * Re-parses and repaints without reporting. Assigning `value`, `text` or
+   * `format` is the application talking to the element, not the author
+   * editing — emitting an edit intent there would echo the application's own
+   * write back at it.
+   */
+  #revalidate(): void {
+    this.#result = parseInterface(this.#text, this.#format);
+    this.#errorLine = this.#result.valid
+      ? null
+      : errorLineFrom(this.#result.error, this.#text);
+    this.#update();
   }
 
   #emitEdit(): void {
@@ -224,6 +246,22 @@ export class OBIEditorElement extends OpenBindingsElement {
       });
     }
   }
+}
+
+/**
+ * Best-effort 1-based line for a parse failure, so the gutter can point at it.
+ * Both JSON.parse and the YAML parser report a position; neither promises a
+ * format, so a miss just means no marker rather than a wrong one.
+ */
+function errorLineFrom(message: string, text: string): number | null {
+  const line = /\bline (\d+)/i.exec(message);
+  if (line?.[1]) return Number(line[1]);
+  const position = /position (\d+)/i.exec(message);
+  if (position?.[1]) {
+    const offset = Number(position[1]);
+    return text.slice(0, offset).split("\n").length;
+  }
+  return null;
 }
 
 function parseInterface(
@@ -300,20 +338,20 @@ const styles = `
     height: 100%;
     min-height: 0;
     overflow: hidden;
-    background: var(--ob-color-background);
-    border: 1px solid var(--ob-color-border);
-    border-radius: var(--ob-radius);
+    background: var(--_ob-color-background);
+    border: 1px solid var(--_ob-color-border);
+    border-radius: var(--_ob-radius);
   }
 
   .toolbar {
     display: flex;
-    gap: var(--ob-space);
+    gap: var(--_ob-space);
     align-items: center;
     justify-content: space-between;
     min-height: 3rem;
-    padding: calc(var(--ob-space) * 0.65) var(--ob-space);
-    background: var(--ob-color-surface);
-    border-bottom: 1px solid var(--ob-color-border);
+    padding: calc(var(--_ob-space) * 0.65) var(--_ob-space);
+    background: var(--_ob-color-surface);
+    border-bottom: 1px solid var(--_ob-color-border);
   }
 
   .toolbar p {
@@ -321,7 +359,7 @@ const styles = `
   }
 
   .eyebrow {
-    color: var(--ob-color-text-muted);
+    color: var(--_ob-color-text-muted);
     font-size: 0.68rem;
     font-weight: 750;
     letter-spacing: 0.1em;
@@ -338,9 +376,9 @@ const styles = `
   button {
     min-height: 2rem;
     padding: 0.25rem 0.55rem;
-    background: var(--ob-color-background);
-    border: 1px solid var(--ob-color-border);
-    border-radius: calc(var(--ob-radius) * 0.65);
+    background: var(--_ob-color-background);
+    border: 1px solid var(--_ob-color-border);
+    border-radius: calc(var(--_ob-radius) * 0.65);
   }
 
   button {
@@ -356,14 +394,14 @@ const styles = `
     width: 100%;
     min-width: 0;
     min-height: 0;
-    padding: var(--ob-space);
+    padding: var(--_ob-space);
     resize: none;
-    color: var(--ob-color-text);
-    background: var(--ob-color-background);
+    color: var(--_ob-color-text);
+    background: var(--_ob-color-background);
     border: 0;
     border-radius: 0;
     outline: 0;
-    font-family: var(--ob-font-mono);
+    font-family: var(--_ob-font-mono);
     font-size: 0.78rem;
     line-height: 1.55;
     tab-size: 2;
@@ -371,30 +409,30 @@ const styles = `
   }
 
   .editor:focus-visible {
-    box-shadow: inset var(--ob-focus-ring);
+    box-shadow: inset var(--_ob-focus-ring);
   }
 
   .editor[readonly] {
-    color: var(--ob-color-text-muted);
+    color: var(--_ob-color-text-muted);
   }
 
   .status {
     min-height: 2rem;
-    padding: 0.4rem var(--ob-space);
+    padding: 0.4rem var(--_ob-space);
     overflow: auto;
-    color: var(--ob-color-text-muted);
-    background: var(--ob-color-surface);
-    border-top: 1px solid var(--ob-color-border);
+    color: var(--_ob-color-text-muted);
+    background: var(--_ob-color-surface);
+    border-top: 1px solid var(--_ob-color-border);
     font-size: 0.72rem;
     white-space: pre-wrap;
   }
 
   .status[data-state="valid"] {
-    color: var(--ob-color-success);
+    color: var(--_ob-color-success);
   }
 
   .status[data-state="invalid"] {
-    color: var(--ob-color-danger);
+    color: var(--_ob-color-danger);
   }
 
   .sr-only {

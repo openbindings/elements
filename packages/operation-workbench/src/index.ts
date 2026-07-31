@@ -1,13 +1,19 @@
+import type { JSONEditorElement } from "@openbindings/json-editor";
 import {
   resolveOperationRequirement,
+  type BindingEntry,
   type Invocation,
   type OBInterface,
+  type Operation,
   type OperationRequirementResolution,
 } from "@openbindings/sdk";
 import {
   OpenBindingsElement,
+  Refs,
+  adoptStyles,
   baseStyles,
   formatJSON,
+  reconcile,
   type OperationSource,
 } from "@openbindings/ui-core";
 import type {
@@ -32,6 +38,13 @@ export type {
 export const OPERATION_WORKBENCH_TAG = "ob-operation-workbench";
 export const DEFAULT_MAX_DISPLAYED_OUTPUTS = 100;
 export type OperationInputMode = "single" | "sequence";
+export type OperationWorkbenchLayout = "stacked" | "split";
+
+const SPLIT_RATIO_MIN = 0.2;
+const SPLIT_RATIO_MAX = 0.8;
+const SPLIT_RATIO_STEP = 0.02;
+/** Below this container width, split presentation falls back to stacked. */
+const NARROW_FALLBACK_REM = 36;
 
 type DependencyResolution = OperationRequirementResolution<
   OperationInvokerInputFrame,
@@ -94,10 +107,33 @@ export interface InvocationCompleteDetail {
   outputs: unknown[];
   outputCount: number;
   truncated: boolean;
+  /** Wall-clock milliseconds from run start to the terminal frame. */
+  durationMs: number;
+}
+
+/**
+ * Same detail family as `operation-detail`'s `ob-binding-select`: the chosen
+ * binding key and its interface entry. Emitted only for a user selection in
+ * the binding selector — programmatic `bindingKey` assignment never echoes.
+ */
+export interface BindingSelectDetail {
+  bindingKey: string;
+  binding: BindingEntry;
+}
+
+/**
+ * Emitted when the USER resizes the split layout — at drag end and after each
+ * effective keyboard step. Programmatic `splitRatio` assignment never echoes;
+ * persistence of the ratio is the host application's policy.
+ */
+export interface LayoutChangeDetail {
+  splitRatio: number;
 }
 
 export interface OperationWorkbenchEventMap {
   "ob-dependency-state": CustomEvent<OperationDependencyStateDetail>;
+  "ob-binding-select": CustomEvent<BindingSelectDetail>;
+  "ob-layout-change": CustomEvent<LayoutChangeDetail>;
   "ob-invocation-start": CustomEvent<InvocationStartDetail>;
   "ob-output": CustomEvent<InvocationOutputDetail>;
   "ob-input-change": CustomEvent<InvocationInputChangeDetail>;
@@ -129,28 +165,62 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
   #running = false;
   #maxDisplayedOutputs = DEFAULT_MAX_DISPLAYED_OUTPUTS;
   #outputs: unknown[] = [];
+  /** performance.now() per retained output, sliced in lockstep with #outputs. */
+  #outputTimes: number[] = [];
   #outputCount = 0;
+  /** Timestamp of the run's FIRST output frame; offsets are measured from it. */
+  #firstFrameTime: number | null = null;
+  /** Run start → terminal, settled only by the run's own terminal (runID-fenced). */
+  #totalDurationMs: number | null = null;
+  #copied = false;
+  #copyTimer: ReturnType<typeof setTimeout> | null = null;
   #frameError: OperationFrameError | null = null;
   #runtimeError: Error | null = null;
+  #refs: Refs | null = null;
   #contentRoot: HTMLElement | null = null;
   #statusAnnouncer: HTMLElement | null = null;
   #outputAnnouncer: HTMLElement | null = null;
   #lastStatusAnnouncement = "";
   #lastAnnouncedOutputCount = 0;
+  #bindingOptionsSignature = "";
+  #layout: OperationWorkbenchLayout = "stacked";
+  #splitRatio = 0.5;
+  #narrow = false;
+  #layoutObserver: ResizeObserver | null = null;
+  #dragBounds: { left: number; width: number } | null = null;
+  #dragChanged = false;
+
+  static get observedAttributes(): string[] {
+    return ["layout"];
+  }
+
+  attributeChangedCallback(
+    name: string,
+    _oldValue: string | null,
+    value: string | null,
+  ): void {
+    // The attribute is a parse-time convenience for the property; unknown
+    // values normalize to the default rather than throwing mid-parse.
+    if (name === "layout") {
+      this.layout = value === "split" ? "split" : "stacked";
+    }
+  }
 
   constructor() {
     super();
     const root = this.renderRoot;
     if (!root) return;
-    root.innerHTML = `<style>${baseStyles}${styles}</style>
-      <div class="render-root"></div>
-      <div class="live-announcers">
-        <span class="status-announcer" role="status" aria-live="polite" aria-atomic="true"></span>
-        <span class="output-announcer" aria-live="polite" aria-atomic="true"></span>
-      </div>`;
-    this.#contentRoot = root.querySelector(".render-root");
-    this.#statusAnnouncer = root.querySelector(".status-announcer");
-    this.#outputAnnouncer = root.querySelector(".output-announcer");
+    // The shell is built once. Live regions in particular must be present in
+    // the accessibility tree *before* their content changes, or assistive
+    // technology announces nothing — rebuilding them on every render is why
+    // status and output updates used to be silent.
+    adoptStyles(root, baseStyles, styles);
+    root.innerHTML = CONTENT_SHELL;
+    this.#refs = new Refs(root);
+    this.#contentRoot = this.#refs.find(".render-root");
+    this.#statusAnnouncer = this.#refs.find(".status-announcer");
+    this.#outputAnnouncer = this.#refs.find(".output-announcer");
+    this.#bindContent();
   }
 
   get obi(): OBInterface | null {
@@ -240,6 +310,34 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     this.requestRender();
   }
 
+  get layout(): OperationWorkbenchLayout {
+    return this.#layout;
+  }
+
+  set layout(value: OperationWorkbenchLayout) {
+    if (value !== "stacked" && value !== "split") {
+      throw new TypeError('layout must be "stacked" or "split"');
+    }
+    if (value === this.#layout) return;
+    this.#layout = value;
+    this.requestRender();
+  }
+
+  get splitRatio(): number {
+    return this.#splitRatio;
+  }
+
+  set splitRatio(value: number) {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      throw new TypeError("splitRatio must be a finite number");
+    }
+    const clamped = clampSplitRatio(value);
+    if (clamped === this.#splitRatio) return;
+    this.#splitRatio = clamped;
+    // Assignment never echoes: ob-layout-change is user intent only.
+    this.requestRender();
+  }
+
   get maxDisplayedOutputs(): number {
     return this.#maxDisplayedOutputs;
   }
@@ -253,6 +351,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     this.#maxDisplayedOutputs = normalized;
     if (this.#outputs.length > normalized) {
       this.#outputs = this.#outputs.slice(-normalized);
+      this.#outputTimes = this.#outputTimes.slice(-normalized);
     }
     this.requestRender();
   }
@@ -300,6 +399,39 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     this.requestRender();
   }
 
+  /**
+   * Copies the retained output window as WYSIWYG-valid JSON: the bare value
+   * for a single output, a JSON array of values for several — never index,
+   * offset, or duration labels. Returns whether a clipboard write succeeded.
+   */
+  async copyOutput(): Promise<boolean> {
+    if (this.#outputs.length === 0) return false;
+    const payload =
+      this.#outputs.length === 1 ? this.#outputs[0] : [...this.#outputs];
+    const text = formatJSON(payload);
+    let copied = false;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        copied = true;
+      }
+    } catch {
+      copied = false;
+    }
+    if (!copied) copied = copyThroughSelection(text);
+    if (copied) {
+      this.#copied = true;
+      if (this.#copyTimer !== null) clearTimeout(this.#copyTimer);
+      this.#copyTimer = setTimeout(() => {
+        this.#copyTimer = null;
+        this.#copied = false;
+        this.requestRender();
+      }, COPY_FEEDBACK_MS);
+      this.requestRender();
+    }
+    return copied;
+  }
+
   override connectedCallback(): void {
     super.connectedCallback();
     if (this.#operationSource && !this.#unsubscribe) {
@@ -307,12 +439,32 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
         this.#resolveDependency(),
       );
     }
+    // Reconnect-safe narrow-width watcher: created and observing while
+    // connected, disconnected on removal, recreated on reinsertion.
+    if (typeof ResizeObserver === "function" && !this.#layoutObserver) {
+      const workspace = this.#refs?.find(".workspace");
+      if (workspace) {
+        this.#layoutObserver = new ResizeObserver(entries => {
+          const width = entries[entries.length - 1]?.contentRect.width;
+          if (typeof width !== "number") return;
+          const narrow =
+            width > 0 && width < NARROW_FALLBACK_REM * rootFontSizePx();
+          if (narrow !== this.#narrow) {
+            this.#narrow = narrow;
+            this.requestRender();
+          }
+        });
+        this.#layoutObserver.observe(workspace);
+      }
+    }
     this.#resolveDependency();
   }
 
   disconnectedCallback(): void {
     this.#unsubscribe?.();
     this.#unsubscribe = null;
+    this.#layoutObserver?.disconnect();
+    this.#layoutObserver = null;
     this.#resolutionController?.abort(
       new DOMException("element disconnected", "AbortError"),
     );
@@ -380,11 +532,15 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     const targetContext = this.#context;
 
     const runID = ++this.#runID;
+    const runStart = performance.now();
     const call = resolution.match.invoke();
     this.#activeInvocation = call;
     this.#running = true;
     this.#outputs = [];
+    this.#outputTimes = [];
     this.#outputCount = 0;
+    this.#firstFrameTime = null;
+    this.#totalDurationMs = null;
     this.#frameError = null;
     this.#runtimeError = null;
     this.emit<InvocationStartDetail>("ob-invocation-start", {
@@ -397,11 +553,19 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       for await (const frame of call.outputs) {
         if (runID !== this.#runID) return;
         switch (frame.kind) {
-          case "output":
+          case "output": {
+            const receivedAt = performance.now();
+            if (this.#firstFrameTime === null) {
+              this.#firstFrameTime = receivedAt;
+            }
             this.#outputs = [...this.#outputs, frame.value];
+            this.#outputTimes = [...this.#outputTimes, receivedAt];
             this.#outputCount += 1;
             if (this.#outputs.length > this.#maxDisplayedOutputs) {
               this.#outputs = this.#outputs.slice(-this.#maxDisplayedOutputs);
+              this.#outputTimes = this.#outputTimes.slice(
+                -this.#maxDisplayedOutputs,
+              );
             }
             this.emit<InvocationOutputDetail>("ob-output", {
               operationKey: targetOperationKey,
@@ -409,6 +573,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
               index: this.#outputCount - 1,
             });
             break;
+          }
           case "input_closed":
             this.emit<InvocationInputClosedDetail>("ob-input-closed", {
               operationKey: targetOperationKey,
@@ -459,6 +624,8 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       await Promise.all([pump(), drain()]);
       await call.closed;
       if (runID !== this.#runID) return;
+      const durationMs = performance.now() - runStart;
+      this.#totalDurationMs = durationMs;
       if (this.#frameError) {
         this.emit<InvocationErrorDetail>("ob-invocation-error", {
           error: this.#frameError,
@@ -469,10 +636,12 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
           outputs: [...this.#outputs],
           outputCount: this.#outputCount,
           truncated: this.#outputCount > this.#outputs.length,
+          durationMs,
         });
       }
     } catch (error) {
       if (runID !== this.#runID) return;
+      this.#totalDurationMs = performance.now() - runStart;
       this.#runtimeError =
         error instanceof Error ? error : new Error(String(error));
       this.emit<InvocationErrorDetail>("ob-invocation-error", {
@@ -497,99 +666,196 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     this.requestRender();
   }
 
-  protected render(): void {
-    const root = this.#contentRoot;
-    if (!root) return;
-    root.innerHTML =
-      `<section class="container" part="container" aria-label="Operation invocation workbench">
-         <header>
-           <div>
-             <p class="eyebrow">Invocation</p>
-             <h2></h2>
-           </div>
-           <span class="status" part="status"></span>
-         </header>
-         <div class="empty" part="empty"></div>
-         <div class="workspace">
-           <section class="input-column">
-             <div class="section-heading">
-               <h3>Input</h3>
-               <div class="input-options">
-                 <span class="input-hint"></span>
-                 <button class="format-input subtle" part="format-input" type="button">Format JSON</button>
-                 <button class="reset-input subtle" part="reset-input" type="button">Reset starter</button>
-                 <label>
-                   <span class="sr-only">Input cardinality</span>
-                   <select class="input-mode" part="input-mode" aria-label="Input cardinality">
-                     <option value="single">One value</option>
-                     <option value="sequence">Value sequence</option>
-                   </select>
-                 </label>
-               </div>
-             </div>
-             <textarea part="input" spellcheck="false" aria-label="Operation input as JSON"></textarea>
-             <div class="actions">
-               <button class="run" part="run" type="button">Run</button>
-               <button class="cancel" part="cancel" type="button">Cancel</button>
-             </div>
-           </section>
-           <section class="output-column">
-             <div class="section-heading">
-               <h3>Output</h3>
-               <div class="output-options">
-                 <span class="output-count"></span>
-                 <button class="clear-output subtle" part="clear-output" type="button">Clear</button>
-               </div>
-             </div>
-             <pre part="output"></pre>
-             <div class="error" part="error" role="alert">
-               <p class="error-summary"></p>
-               <details>
-                 <summary>Technical details</summary>
-                 <pre class="error-detail"></pre>
-               </details>
-             </div>
-           </section>
-         </div>
-       </section>`;
+  /**
+   * Attaches every listener exactly once, against shell nodes that live for
+   * the element's lifetime. Previously these were re-attached on each render,
+   * which meant the cost of a render grew with the size of the UI and any
+   * node the user was interacting with was destroyed underneath them.
+   */
+  #bindContent(): void {
+    const refs = this.#refs;
+    if (!refs) return;
 
+    refs.find(".input-editor")?.addEventListener("ob-json-input", event => {
+      this.#inputTouched = true;
+      this.#inputText = (event as CustomEvent<{ text: string }>).detail.text;
+      this.#emitInputChange();
+    });
+
+    // Cmd/Ctrl+Enter runs from anywhere in the input surface.
+    refs.find(".input-editor")?.addEventListener("keydown", event => {
+      const key = event as KeyboardEvent;
+      if (
+        key.key === "Enter" &&
+        (key.metaKey || key.ctrlKey) &&
+        !this.#running
+      ) {
+        key.preventDefault();
+        void this.run();
+      }
+    });
+
+    refs.find<HTMLSelectElement>(".input-mode")?.addEventListener("change", event => {
+      this.inputMode = (event.target as HTMLSelectElement)
+        .value as OperationInputMode;
+      this.#emitInputChange();
+    });
+
+    // User selection routes through the property setter (cancel + clear per
+    // its documented semantics) and then emits intent. Programmatic
+    // `bindingKey` assignment never reaches this handler, so it never echoes.
+    refs
+      .find<HTMLSelectElement>(".binding-select")
+      ?.addEventListener("change", event => {
+        const key = (event.target as HTMLSelectElement).value;
+        const binding = key ? this.#obi?.bindings?.[key] : undefined;
+        if (!key || !binding || key === this.#bindingKey) return;
+        this.bindingKey = key;
+        this.emit<BindingSelectDetail>("ob-binding-select", {
+          bindingKey: key,
+          binding,
+        });
+      });
+
+    refs
+      .find(".format-input")
+      ?.addEventListener("click", () => this.formatInput());
+    refs
+      .find(".reset-input")
+      ?.addEventListener("click", () => this.resetInputToSchema());
+    refs.find(".run")?.addEventListener("click", () => void this.run());
+    refs.find(".cancel")?.addEventListener("click", () => void this.cancel());
+    refs
+      .find(".clear-output")
+      ?.addEventListener("click", () => this.clearOutput());
+    refs
+      .find(".copy-output")
+      ?.addEventListener("click", () => void this.copyOutput());
+
+    const gutter = refs.find(".layout-gutter");
+    if (gutter) this.#bindLayoutGutter(gutter);
+  }
+
+  /**
+   * Pointer and keyboard resize for the split gutter. The pointer path uses
+   * pointer capture so a fast drag that leaves the 8px hit zone keeps
+   * resizing; movement mutates state silently and ob-layout-change fires
+   * once, at drag end. Keyboard steps emit per effective change.
+   */
+  #bindLayoutGutter(gutter: HTMLElement): void {
+    const endDrag = (event: Event) => {
+      if (this.#dragBounds === null) return;
+      this.#dragBounds = null;
+      gutter.classList.remove("dragging");
+      const pointerID = (event as PointerEvent).pointerId;
+      try {
+        gutter.releasePointerCapture?.(pointerID);
+      } catch {
+        // The capture may already be gone (pointercancel, jsdom).
+      }
+      if (this.#dragChanged) {
+        this.#dragChanged = false;
+        this.emit<LayoutChangeDetail>("ob-layout-change", {
+          splitRatio: this.#splitRatio,
+        });
+      }
+    };
+
+    gutter.addEventListener("pointerdown", event => {
+      const pointer = event as PointerEvent;
+      if (pointer.button !== 0) return;
+      const workspace = this.#refs?.find(".workspace");
+      if (!workspace) return;
+      const bounds = workspace.getBoundingClientRect();
+      if (bounds.width <= 0) return;
+      this.#dragBounds = { left: bounds.left, width: bounds.width };
+      this.#dragChanged = false;
+      gutter.classList.add("dragging");
+      try {
+        gutter.setPointerCapture?.(pointer.pointerId);
+      } catch {
+        // jsdom tracks no pointers; capture is progressive enhancement there.
+      }
+      pointer.preventDefault();
+    });
+
+    gutter.addEventListener("pointermove", event => {
+      const bounds = this.#dragBounds;
+      if (bounds === null) return;
+      const pointer = event as PointerEvent;
+      const next = clampSplitRatio(
+        (pointer.clientX - bounds.left) / bounds.width,
+      );
+      if (next === this.#splitRatio) return;
+      this.#splitRatio = next;
+      this.#dragChanged = true;
+      this.requestRender();
+    });
+
+    gutter.addEventListener("pointerup", endDrag);
+    gutter.addEventListener("pointercancel", endDrag);
+
+    gutter.addEventListener("keydown", event => {
+      const key = (event as KeyboardEvent).key;
+      let target: number | null = null;
+      if (key === "ArrowLeft") target = this.#splitRatio - SPLIT_RATIO_STEP;
+      else if (key === "ArrowRight") {
+        target = this.#splitRatio + SPLIT_RATIO_STEP;
+      } else if (key === "Home") target = SPLIT_RATIO_MIN;
+      else if (key === "End") target = SPLIT_RATIO_MAX;
+      if (target === null) return;
+      event.preventDefault();
+      const next = clampSplitRatio(target);
+      if (next === this.#splitRatio) return;
+      this.#splitRatio = next;
+      this.requestRender();
+      this.emit<LayoutChangeDetail>("ob-layout-change", {
+        splitRatio: next,
+      });
+    });
+  }
+
+  protected render(): void {
+    const refs = this.#refs;
+    if (!refs || !this.#contentRoot) return;
     const operation =
       this.#obi && this.#operationKey
         ? this.#obi.operations[this.#operationKey]
         : undefined;
-    const heading = root.querySelector("h2");
-    const status = root.querySelector(".status");
-    const empty = root.querySelector(".empty") as HTMLElement | null;
-    const workspace = root.querySelector(".workspace") as HTMLElement | null;
-    const textarea = root.querySelector("textarea");
-    const inputHint = root.querySelector(".input-hint");
-    const inputMode = root.querySelector(
-      ".input-mode",
-    ) as HTMLSelectElement | null;
-    const formatInput = root.querySelector(
-      ".format-input",
-    ) as HTMLButtonElement | null;
-    const resetInput = root.querySelector(
-      ".reset-input",
-    ) as HTMLButtonElement | null;
-    const runButton = root.querySelector(".run") as HTMLButtonElement | null;
-    const cancelButton = root.querySelector(
-      ".cancel",
-    ) as HTMLButtonElement | null;
-    const output = root.querySelector("pre");
-    const outputCount = root.querySelector(".output-count");
-    const clearOutput = root.querySelector(
-      ".clear-output",
-    ) as HTMLButtonElement | null;
-    const error = root.querySelector(".error") as HTMLElement | null;
-    const errorSummary = root.querySelector(".error-summary");
-    const errorDetail = root.querySelector(".error-detail");
-    const errorDetails = error?.querySelector("details");
+    const heading = refs.find("h2");
+    const status = refs.find(".status");
+    const empty = refs.find(".empty");
+    const workspace = refs.find(".workspace");
+    const editor = refs.find<JSONEditorElement>(".input-editor");
+    const inputHint = refs.find(".input-hint");
+    const inputMode = refs.find<HTMLSelectElement>(".input-mode");
+    const formatInput = refs.find<HTMLButtonElement>(".format-input");
+    const resetInput = refs.find<HTMLButtonElement>(".reset-input");
+    const runButton = refs.find<HTMLButtonElement>(".run");
+    const cancelButton = refs.find<HTMLButtonElement>(".cancel");
+    const outputNotice = refs.find(".output-notice");
+    const outputList = refs.find(".output-list");
+    const outputCount = refs.find(".output-count");
+    const outputTiming = refs.find(".output-timing");
+    const copyOutput = refs.find<HTMLButtonElement>(".copy-output");
+    const clearOutput = refs.find<HTMLButtonElement>(".clear-output");
+    const error = refs.find(".error");
+    const errorSummary = refs.find(".error-summary");
+    const errorDetail = refs.find(".error-detail");
+    const errorDetails = refs.find<HTMLDetailsElement>(".error details");
+    const bindingBar = refs.find(".binding-bar");
+    const bindingSelect = refs.find<HTMLSelectElement>(".binding-select");
     const statusMessage = this.#running
       ? "Running"
       : this.#bindingKey && this.#dependency.status === "available"
         ? `Ready · ${this.#bindingKey}`
         : this.#dependency.message;
+    // The visible pill carries the routed binding key, but the live region
+    // must not re-announce a programmatic bindingKey reflection — it speaks
+    // only dependency and run state.
+    const announcedStatus = this.#running
+      ? "Running"
+      : this.#dependency.message;
 
     if (heading) heading.textContent = this.#operationKey ?? "No operation";
     if (status) {
@@ -605,67 +871,78 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
           : "Assign an OBI document and operation key.";
       }
       if (workspace) workspace.hidden = true;
-      this.#announceStatus(statusMessage);
+      // No cockpit without an operation: drop the fill chain so the empty
+      // state renders at natural document height.
+      refs.find(".container")?.classList.remove("split");
+      if (bindingBar) bindingBar.hidden = true;
+      this.#announceStatus(announcedStatus);
       this.#announceOutputCount();
       return;
     }
 
+    this.#syncBindingSelector(bindingBar, bindingSelect, operation);
+
     if (empty) empty.hidden = true;
+    // The no-operation branch above hides the workspace; an operation that
+    // arrives later (e.g. assigned after the element is already connected)
+    // must un-hide it in the same render path, or the workbench stays blank
+    // forever.
+    if (workspace) workspace.hidden = false;
+    // Layout is geometry only — classes and grid custom properties on shell
+    // nodes, never markup replacement — so toggling it preserves the editor
+    // and every output block by identity. Below the narrow threshold split
+    // presentation falls back to stacked while the property keeps its value.
+    const effectiveSplit = this.#layout === "split" && !this.#narrow;
+    // The container joins the fill chain in split mode: it flexes the
+    // workspace to all height the host grants, so the editor and output view
+    // scroll internally instead of leaving dead space below.
+    refs.find(".container")?.classList.toggle("split", effectiveSplit);
+    if (workspace) {
+      workspace.classList.toggle("split", effectiveSplit);
+      workspace.classList.toggle("narrow", this.#narrow);
+      workspace.style.setProperty(
+        "--_ob-split-input",
+        `${this.#splitRatio}fr`,
+      );
+      workspace.style.setProperty(
+        "--_ob-split-output",
+        `${roundRatio(1 - this.#splitRatio)}fr`,
+      );
+    }
+    const layoutGutter = refs.find(".layout-gutter");
+    if (layoutGutter) {
+      layoutGutter.hidden = !effectiveSplit;
+      layoutGutter.setAttribute(
+        "aria-valuenow",
+        String(Math.round(this.#splitRatio * 100)),
+      );
+    }
     const hasInput =
       operation.input !== undefined && operation.input !== null;
-    if (textarea) {
-      textarea.hidden = !hasInput;
-      textarea.disabled = this.#running;
-      textarea.value = this.#inputText;
-      textarea.placeholder =
+    if (editor) {
+      editor.hidden = !hasInput;
+      editor.readOnly = this.#running;
+      editor.text = this.#inputText;
+      editor.label = `Input for ${this.#operationKey ?? "operation"} as JSON`;
+      editor.placeholder =
         this.#inputMode === "single"
           ? "Enter one JSON input value"
           : "Enter a JSON array; each member is one input value";
-      textarea.addEventListener("input", () => {
-        this.#inputTouched = true;
-        this.#inputText = textarea.value;
-        this.#emitInputChange();
-      });
-      textarea.addEventListener("keydown", event => {
-        if (
-          event.key === "Enter" &&
-          (event.metaKey || event.ctrlKey) &&
-          !this.#running
-        ) {
-          event.preventDefault();
-          void this.run();
-          return;
-        }
-        if (event.key !== "Tab" || this.#running) return;
-        event.preventDefault();
-        const start = textarea.selectionStart;
-        const end = textarea.selectionEnd;
-        textarea.setRangeText("  ", start, end, "end");
-        this.#inputTouched = true;
-        this.#inputText = textarea.value;
-        this.#emitInputChange();
-      });
     }
     if (inputMode) {
       inputMode.hidden = !hasInput;
       inputMode.disabled = this.#running;
       inputMode.value = this.#inputMode;
-      inputMode.addEventListener("change", () => {
-        this.inputMode = inputMode.value as OperationInputMode;
-        this.#emitInputChange();
-      });
     }
     if (formatInput) {
       formatInput.hidden = !hasInput;
       formatInput.disabled = this.#running || !this.#inputText.trim();
-      formatInput.addEventListener("click", () => this.formatInput());
     }
     if (resetInput) {
       resetInput.hidden = !hasInput;
       resetInput.disabled =
         this.#running ||
         !sampleFromSchema(operation.input, this.#obi).available;
-      resetInput.addEventListener("click", () => this.resetInputToSchema());
     }
     if (inputHint) {
       inputHint.textContent = hasInput
@@ -678,38 +955,85 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     const available = this.#dependency.status === "available";
     if (runButton) {
       runButton.disabled = !available || this.#running;
-      runButton.addEventListener("click", () => void this.run());
     }
     if (cancelButton) {
       cancelButton.hidden = !this.#running;
-      cancelButton.addEventListener("click", () => void this.cancel());
     }
 
-    if (output) {
-      const rendered =
-        this.#outputs.length === 1 ? this.#outputs[0] : this.#outputs;
-      output.textContent =
-        this.#outputCount > 0
-          ? `${
-              this.#outputCount > this.#outputs.length
-                ? `Showing the last ${this.#outputs.length} of ${this.#outputCount} values.\n\n`
-                : ""
-            }${formatJSON(rendered)}`
-          : this.#running
+    if (outputNotice) {
+      const notice =
+        this.#outputCount === 0
+          ? this.#running
             ? "Waiting for output…"
-            : "No output yet.";
+            : "No output yet."
+          : this.#outputCount > this.#outputs.length
+            ? `Showing the last ${this.#outputs.length} of ${this.#outputCount} values.`
+            : "";
+      outputNotice.textContent = notice;
+      outputNotice.hidden = !notice;
+    }
+    if (outputList) {
+      // One block per retained output, keyed by the value's global index so a
+      // frame's node is created exactly once and survives every later append
+      // (open/closed state, scroll and text included). Per-frame render work
+      // is the new block only; the value is stringified at creation, never
+      // again.
+      const startIndex = this.#outputCount - this.#outputs.length;
+      const firstFrameAt = this.#firstFrameTime;
+      const solo = this.#outputCount === 1;
+      const items = this.#outputs.map((value, position) => ({
+        value,
+        globalIndex: startIndex + position,
+        at: this.#outputTimes[position] ?? firstFrameAt ?? 0,
+      }));
+      reconcile(outputList, items, {
+        key: item => String(item.globalIndex),
+        create: item =>
+          createOutputItem(
+            item.value,
+            item.globalIndex,
+            item.at - (firstFrameAt ?? item.at),
+          ),
+        update: node => {
+          // The only per-pass mutation: a run's sole value renders without
+          // disclosure chrome; the chrome appears if a second frame arrives.
+          const summary = node.querySelector("summary");
+          if (summary) summary.hidden = solo;
+        },
+      });
     }
     if (outputCount) {
+      const plural = this.#outputCount === 1 ? "value" : "values";
       outputCount.textContent =
         this.#outputCount === 0
           ? ""
-          : `${this.#outputCount} value${this.#outputCount === 1 ? "" : "s"}`;
+          : this.#running
+            ? `${this.#outputCount} ${plural} · streaming…`
+            : `${this.#outputCount} ${plural}`;
+    }
+    if (outputTiming) {
+      const showTiming =
+        this.#outputCount > 0 &&
+        !this.#running &&
+        this.#totalDurationMs !== null;
+      outputTiming.hidden = !showTiming;
+      outputTiming.textContent =
+        showTiming && this.#totalDurationMs !== null
+          ? formatDuration(this.#totalDurationMs)
+          : "";
+    }
+    if (copyOutput) {
+      copyOutput.hidden = this.#outputCount === 0;
+      copyOutput.textContent = this.#copied ? "Copied" : "Copy";
+      copyOutput.setAttribute(
+        "aria-label",
+        this.#copied ? "Copied" : "Copy output as JSON",
+      );
     }
     if (clearOutput) {
       clearOutput.hidden =
         this.#outputCount === 0 && !this.#frameError && !this.#runtimeError;
       clearOutput.disabled = this.#running;
-      clearOutput.addEventListener("click", () => this.clearOutput());
     }
     if (error) {
       const currentError = this.#frameError ?? this.#runtimeError;
@@ -730,15 +1054,79 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
         currentError && presentation
           ? `Invocation failed. ${presentation.summary}`
           : this.#running
-            ? "Invocation running."
+            ? this.#outputCount > 0
+              ? `Invocation running. ${this.#outputCount} value${
+                  this.#outputCount === 1 ? "" : "s"
+                } so far.`
+              : "Invocation running."
             : this.#outputCount > 0
               ? `Invocation complete. ${this.#outputCount} output ${
                   this.#outputCount === 1 ? "value" : "values"
                 } received.`
-              : statusMessage,
+              : announcedStatus,
       );
     }
     this.#announceOutputCount();
+  }
+
+  /**
+   * Mutates the binding selector to mirror the contract: one option per
+   * binding of the current operation, shown only when there is a real choice
+   * (two or more). Ordering is presentation only — descending declared
+   * preference, entries without one last, ties lexicographic — and never
+   * selects anything by itself: choosing a binding is the host's policy,
+   * expressed through `bindingKey`.
+   */
+  #syncBindingSelector(
+    bar: HTMLElement | null,
+    select: HTMLSelectElement | null,
+    operation: Operation,
+  ): void {
+    if (!bar || !select) return;
+    const entries = operationBindingEntries(
+      this.#obi,
+      this.#operationKey,
+      operation,
+    );
+    const show = entries.length >= 2;
+    bar.hidden = !show;
+    if (!show) return;
+
+    const known =
+      this.#bindingKey !== null &&
+      entries.some(([key]) => key === this.#bindingKey);
+    const placeholder = !known;
+    const signature = [
+      placeholder ? "\u0000placeholder" : "",
+      ...entries.map(
+        ([key, entry]) => `${key}\u0000${entry.deprecated ? "1" : "0"}`,
+      ),
+    ].join("\u0001");
+    if (signature !== this.#bindingOptionsSignature) {
+      this.#bindingOptionsSignature = signature;
+      const options: HTMLOptionElement[] = [];
+      if (placeholder) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.disabled = true;
+        option.selected = true;
+        option.textContent = "choose a binding…";
+        options.push(option);
+      }
+      for (const [key, entry] of entries) {
+        const option = document.createElement("option");
+        option.value = key;
+        option.textContent = entry.deprecated ? `${key} · deprecated` : key;
+        options.push(option);
+      }
+      select.replaceChildren(...options);
+    }
+    select.value = known && this.#bindingKey !== null ? this.#bindingKey : "";
+    select.disabled = this.#running;
+    select.setAttribute(
+      "aria-label",
+      `Binding for ${this.#operationKey ?? "operation"}`,
+    );
   }
 
   #resetInput(): void {
@@ -759,10 +1147,18 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
 
   #clearResult(): void {
     this.#outputs = [];
+    this.#outputTimes = [];
     this.#outputCount = 0;
+    this.#firstFrameTime = null;
+    this.#totalDurationMs = null;
     this.#lastAnnouncedOutputCount = 0;
     this.#frameError = null;
     this.#runtimeError = null;
+    this.#copied = false;
+    if (this.#copyTimer !== null) {
+      clearTimeout(this.#copyTimer);
+      this.#copyTimer = null;
+    }
   }
 
   #announceStatus(message: string): void {
@@ -877,29 +1273,236 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
   }
 }
 
-function presentInvocationError(
+/**
+ * The bindings of one operation in display order. A binding belongs to the
+ * operation when its `operation` field names the operation key or any alias —
+ * the key plus aliases form one flat namespace (OBI-T-12). Order: descending
+ * numeric `preference`, entries without a preference last, ties broken
+ * lexicographically by binding key. This order is presentation only; it is
+ * not a selection policy.
+ */
+function operationBindingEntries(
+  obi: OBInterface | null,
+  operationKey: string | null,
+  operation: Operation | undefined,
+): Array<[string, BindingEntry]> {
+  if (!obi?.bindings || !operationKey) return [];
+  const names = new Set<string>([operationKey]);
+  if (Array.isArray(operation?.aliases)) {
+    for (const alias of operation.aliases) {
+      if (typeof alias === "string") names.add(alias);
+    }
+  }
+  const entries = Object.entries(obi.bindings).filter(([, entry]) =>
+    names.has(entry.operation),
+  );
+  entries.sort(([keyA, entryA], [keyB, entryB]) => {
+    const preferenceA =
+      typeof entryA.preference === "number"
+        ? entryA.preference
+        : Number.NEGATIVE_INFINITY;
+    const preferenceB =
+      typeof entryB.preference === "number"
+        ? entryB.preference
+        : Number.NEGATIVE_INFINITY;
+    if (preferenceA !== preferenceB) return preferenceB - preferenceA;
+    return keyA < keyB ? -1 : keyA > keyB ? 1 : 0;
+  });
+  return entries;
+}
+
+const COPY_FEEDBACK_MS = 1600;
+const PREVIEW_LIMIT = 80;
+
+/** Rounds a ratio to 0.1% so keyboard steps stay exact decimals. */
+function roundRatio(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
+function clampSplitRatio(value: number): number {
+  return roundRatio(
+    Math.min(SPLIT_RATIO_MAX, Math.max(SPLIT_RATIO_MIN, value)),
+  );
+}
+
+/** The document's root font size in px, for the rem-based narrow threshold. */
+function rootFontSizePx(): number {
+  if (typeof document === "undefined" || typeof getComputedStyle !== "function") {
+    return 16;
+  }
+  const size = Number.parseFloat(
+    getComputedStyle(document.documentElement).fontSize,
+  );
+  return Number.isFinite(size) && size > 0 ? size : 16;
+}
+
+/**
+ * Devtools-style duration scaling: whole milliseconds under a second, seconds
+ * to one decimal (trailing .0 trimmed) under a minute, then "1m 23s". The
+ * branch is chosen after rounding at each granularity, so 999.6ms reads "1s"
+ * (never "1000ms") and 59.96s reads "1m 0s" (never "60s"). Non-finite and
+ * negative input clamp to "0ms".
+ */
+export function formatDuration(ms: number): string {
+  const clamped = Number.isFinite(ms) && ms > 0 ? ms : 0;
+  const wholeMs = Math.round(clamped);
+  if (wholeMs < 1000) return `${wholeMs}ms`;
+  const deciseconds = Math.round(clamped / 100);
+  if (deciseconds < 600) {
+    const text = (deciseconds / 10).toFixed(1);
+    return `${text.endsWith(".0") ? text.slice(0, -2) : text}s`;
+  }
+  const totalSeconds = Math.round(clamped / 1000);
+  return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`;
+}
+
+/** One line of compact JSON for a block's summary, truncated with an ellipsis. */
+function previewValue(value: unknown): string {
+  let text: string;
+  try {
+    text = JSON.stringify(value) ?? String(value);
+  } catch {
+    text = String(value);
+  }
+  return text.length > PREVIEW_LIMIT
+    ? `${text.slice(0, PREVIEW_LIMIT - 1)}…`
+    : text;
+}
+
+/**
+ * Builds one output block. Runs exactly once per received frame: the value is
+ * stringified here and never re-rendered, which is what keeps a stream's
+ * per-frame cost independent of how much output is already displayed.
+ */
+function createOutputItem(
+  value: unknown,
+  globalIndex: number,
+  offsetMs: number,
+): HTMLDetailsElement {
+  const item = document.createElement("details");
+  item.className = "output-item";
+  item.setAttribute("part", "output-item");
+  item.open = true;
+  const summary = document.createElement("summary");
+  const index = document.createElement("span");
+  index.className = "output-item-index";
+  index.textContent = `#${globalIndex + 1}`;
+  const offset = document.createElement("span");
+  offset.className = "output-item-offset";
+  offset.textContent = `+${formatDuration(offsetMs)}`;
+  const preview = document.createElement("span");
+  preview.className = "output-item-preview";
+  preview.textContent = previewValue(value);
+  summary.append(index, offset, preview);
+  const rendered = document.createElement("pre");
+  rendered.className = "output-value";
+  // `output` is the long-documented part for rendered output text; it now
+  // matches each value block's <pre> so existing consumer selectors keep
+  // working across the per-value restructure.
+  rendered.setAttribute("part", "output");
+  rendered.textContent = formatJSON(value);
+  item.append(summary, rendered);
+  return item;
+}
+
+/** Selection-based clipboard fallback for engines without navigator.clipboard. */
+function copyThroughSelection(text: string): boolean {
+  if (
+    typeof document === "undefined" ||
+    typeof document.execCommand !== "function"
+  ) {
+    return false;
+  }
+  const scratch = document.createElement("textarea");
+  scratch.value = text;
+  scratch.setAttribute("readonly", "");
+  scratch.style.position = "fixed";
+  scratch.style.opacity = "0";
+  document.body.append(scratch);
+  scratch.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {
+    copied = false;
+  }
+  scratch.remove();
+  return copied;
+}
+
+const UNDESCRIBED_ERROR_SUMMARY =
+  "The invoker reported an error it did not describe.";
+
+/**
+ * ERR_CONNECT_FAILED is the invoker transport failing, not the target: the
+ * workbench never reached the point of talking to the target, and from a
+ * browser a rejected or expired session credential produces exactly the same
+ * failed fetch. The copy therefore names the invoker and hints at both causes
+ * instead of blaming "the target".
+ */
+const CONNECT_FAILED_SUMMARY =
+  "Could not reach the operation invoker. From the browser, a rejected " +
+  "session credential looks identical to a network failure, so check the " +
+  "invoker connection and its credentials.";
+
+/**
+ * Copy keyed by the contract's classification axis — `category` on
+ * InvocationError (see requirements/operation-invoker.json), which consumers
+ * branch on before any error code. The contract spells the caller-ended
+ * category "cancelled"; the American spelling is accepted defensively, as is
+ * the conventional "unsupported". `context` is deliberately absent here: it
+ * is the resolve-and-retry hinge and reads best through its normative code,
+ * CONTEXT_REQUIRED, in the code map below.
+ */
+const CATEGORY_SUMMARIES: Record<string, string> = {
+  auth: "The target rejected the supplied credentials.",
+  service: "The target returned an error.",
+  transient: "The target or invoker could not be reached — retrying may help.",
+  validation: "A value did not match the operation contract.",
+  protocol: "The invocation violated the invoker protocol contract.",
+  permanent: "The operation failed permanently — retrying will not help.",
+  unsupported: "The invoker does not support this operation.",
+  cancelled: "The operation was cancelled.",
+  canceled: "The operation was cancelled.",
+};
+
+/** Fallback copy for well-known codes when the category does not decide. */
+const CODE_SUMMARIES: Record<string, string> = {
+  CONTEXT_REQUIRED:
+    "This operation needs credentials or other invocation context.",
+  ERR_VALIDATION_FAILED: "A value did not match the operation contract.",
+  ERR_TIMEOUT: "The operation timed out.",
+  ERR_CANCELLED: "The operation was cancelled.",
+  ERR_CONNECT_FAILED: CONNECT_FAILED_SUMMARY,
+  ERR_UNAVAILABLE: "The target could not be reached.",
+};
+
+export function presentInvocationError(
   error: OperationFrameError | Error,
 ): { summary: string; detail: string } {
-  if (!("code" in error)) {
-    return { summary: error.message, detail: "" };
+  const frame = error as Partial<OperationFrameError>;
+  const code = typeof frame.code === "string" ? frame.code : "";
+  const category = typeof frame.category === "string" ? frame.category : "";
+  const message = typeof frame.message === "string" ? frame.message.trim() : "";
+
+  if (!code && !category) {
+    // Plain runtime Errors and malformed frame errors alike: the message is
+    // all there is, and an empty one must never leave the summary blank.
+    return { summary: message || UNDESCRIBED_ERROR_SUMMARY, detail: "" };
   }
 
-  const summary =
-    error.code === "CONTEXT_REQUIRED"
-      ? "This operation needs credentials or other invocation context."
-      : error.code === "ERR_VALIDATION_FAILED"
-        ? "A value did not match the operation contract."
-        : error.code === "ERR_TIMEOUT"
-          ? "The operation timed out."
-          : error.code === "ERR_CANCELLED"
-            ? "The operation was cancelled."
-            : error.code === "ERR_CONNECT_FAILED" ||
-                error.code === "ERR_UNAVAILABLE"
-              ? "The target could not be reached."
-              : "The operation could not be completed.";
+  const classification =
+    code === "ERR_CONNECT_FAILED"
+      ? CONNECT_FAILED_SUMMARY
+      : (CATEGORY_SUMMARIES[category] ??
+        CODE_SUMMARIES[code] ??
+        "The operation could not be completed.");
+  // The server's human-readable message is part of the visible summary, not
+  // something buried behind the details disclosure.
+  const summary = message ? `${classification} ${message}` : classification;
   return {
     summary,
-    detail: `${error.code}: ${error.message}`,
+    detail: `${code || "(no code)"}: ${message || "(no message)"}`,
   };
 }
 
@@ -1151,6 +1754,83 @@ declare global {
   }
 }
 
+/**
+ * The workbench shell, parsed once. Every subsequent render mutates these
+ * nodes rather than replacing them, so the input editor keeps its caret,
+ * selection and scroll position while output streams in beside it.
+ */
+const CONTENT_SHELL = `
+  <div class="render-root"><section class="container" part="container" aria-label="Operation invocation workbench">
+         <header>
+           <div>
+             <p class="eyebrow">Invocation</p>
+             <h2></h2>
+           </div>
+           <div class="header-tools">
+             <span class="binding-bar" part="binding-bar" hidden>
+               <span aria-hidden="true">via</span>
+               <select class="binding-select" part="binding-select"></select>
+             </span>
+             <span class="status" part="status"></span>
+           </div>
+         </header>
+         <div class="empty" part="empty"></div>
+         <div class="workspace">
+           <section class="input-column">
+             <div class="section-heading">
+               <h3>Input</h3>
+               <div class="input-options">
+                 <span class="input-hint"></span>
+                 <button class="format-input subtle" part="format-input" type="button">Format JSON</button>
+                 <button class="reset-input subtle" part="reset-input" type="button">Reset starter</button>
+                 <label>
+                   <span class="sr-only">Input cardinality</span>
+                   <select class="input-mode" part="input-mode" aria-label="Input cardinality">
+                     <option value="single">One value</option>
+                     <option value="sequence">Value sequence</option>
+                   </select>
+                 </label>
+               </div>
+             </div>
+             <ob-json-editor part="input" class="input-editor"></ob-json-editor>
+             <div class="actions">
+               <button class="run" part="run" type="button">Run</button>
+               <button class="cancel" part="cancel" type="button">Cancel</button>
+             </div>
+           </section>
+           <div class="layout-gutter" part="layout-gutter" role="separator" aria-orientation="vertical" aria-label="Resize input and output" aria-valuemin="20" aria-valuemax="80" tabindex="0" hidden>
+             <span class="layout-gutter-handle" aria-hidden="true"></span>
+           </div>
+           <section class="output-column">
+             <div class="section-heading">
+               <h3>Output</h3>
+               <div class="output-options">
+                 <span class="output-count"></span>
+                 <span class="output-timing" part="output-timing" hidden></span>
+                 <button class="copy-output subtle" part="copy-output" type="button" aria-label="Copy output as JSON" hidden>Copy</button>
+                 <button class="clear-output subtle" part="clear-output" type="button">Clear</button>
+               </div>
+             </div>
+             <div class="output-view" part="output-view">
+               <p class="output-notice">No output yet.</p>
+               <div class="output-list"></div>
+             </div>
+             <div class="error" part="error" role="alert">
+               <p class="error-summary"></p>
+               <details>
+                 <summary>Technical details</summary>
+                 <pre class="error-detail"></pre>
+               </details>
+             </div>
+           </section>
+         </div>
+       </section></div>
+  <div class="live-announcers">
+    <span class="status-announcer" role="status" aria-live="polite" aria-atomic="true"></span>
+    <span class="output-announcer" aria-live="polite" aria-atomic="true"></span>
+  </div>
+`;
+
 const styles = `
   .render-root {
     height: 100%;
@@ -1172,15 +1852,27 @@ const styles = `
 
   .container {
     min-height: 18rem;
-    padding: calc(var(--ob-space) * 1.5);
-    background: var(--ob-color-background);
-    border: 1px solid var(--ob-color-border);
-    border-radius: var(--ob-radius);
+    padding: calc(var(--_ob-space) * 1.5);
+    background: var(--_ob-color-background);
+    border: 1px solid var(--_ob-color-border);
+    border-radius: var(--_ob-radius);
+  }
+
+  /* Split mode is a non-scrolling cockpit: header rows keep natural height,
+     the exec grid takes ALL remaining height, and only the input editor and
+     the output view scroll internally. Without a definite host height every
+     percentage resolves to auto and the min-height floors below keep the
+     cockpit usable instead of collapsing. */
+  .container.split {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
   }
 
   header, .section-heading, .actions, .input-options, .output-options {
     display: flex;
-    gap: var(--ob-space);
+    gap: var(--_ob-space);
     align-items: center;
     justify-content: space-between;
   }
@@ -1190,7 +1882,7 @@ const styles = `
   }
 
   .eyebrow {
-    color: var(--ob-color-text-muted);
+    color: var(--_ob-color-text-muted);
     font-size: 0.68rem;
     font-weight: 700;
     letter-spacing: 0.08em;
@@ -1199,7 +1891,7 @@ const styles = `
 
   h2 {
     overflow-wrap: anywhere;
-    font: 650 1rem / 1.3 var(--ob-font-mono);
+    font: 650 1rem / 1.3 var(--_ob-font-mono);
   }
 
   h3 {
@@ -1208,30 +1900,86 @@ const styles = `
 
   .status {
     padding: 0.18rem 0.48rem;
-    color: var(--ob-color-text-muted);
-    background: var(--ob-color-surface);
+    color: var(--_ob-color-text-muted);
+    background: var(--_ob-color-surface);
     border-radius: 999px;
     font-size: 0.7rem;
   }
 
   .status.available {
-    color: var(--ob-color-success);
+    color: var(--_ob-color-success);
   }
 
   .status.ambiguous,
   .status.failed {
-    color: var(--ob-color-danger);
+    color: var(--_ob-color-danger);
   }
 
   .workspace {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(22rem, 100%), 1fr));
-    gap: var(--ob-space);
-    margin-top: calc(var(--ob-space) * 1.5);
+    gap: var(--_ob-space);
+    margin-top: calc(var(--_ob-space) * 1.5);
+  }
+
+  .workspace.split {
+    flex: 1 1 0;
+    min-height: 22rem;
+    grid-template-columns:
+      minmax(0, var(--_ob-split-input, 1fr))
+      auto
+      minmax(0, var(--_ob-split-output, 1fr));
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .workspace.split .input-column,
+  .workspace.split .output-column {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .workspace.split .input-editor {
+    display: block;
+    flex: 1 1 0;
+    min-height: 13rem;
+  }
+
+  .workspace.split .output-view {
+    flex: 1 1 0;
+    min-height: 13rem;
+    max-height: none;
   }
 
   .input-column, .output-column {
     min-width: 0;
+  }
+
+  .layout-gutter {
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+    width: 0.65rem;
+    cursor: col-resize;
+    touch-action: none;
+    border-radius: 999px;
+  }
+
+  .layout-gutter-handle {
+    width: 3px;
+    background: transparent;
+    border-radius: 999px;
+  }
+
+  .layout-gutter:hover .layout-gutter-handle,
+  .layout-gutter:focus-visible .layout-gutter-handle,
+  .layout-gutter.dragging .layout-gutter-handle {
+    background: var(--_ob-color-border);
+  }
+
+  .layout-gutter:focus-visible {
+    outline: none;
+    box-shadow: var(--_ob-focus-ring);
   }
 
   .section-heading {
@@ -1239,7 +1987,7 @@ const styles = `
   }
 
   .input-hint, .output-count {
-    color: var(--ob-color-text-muted);
+    color: var(--_ob-color-text-muted);
     font-size: 0.7rem;
   }
 
@@ -1252,50 +2000,135 @@ const styles = `
     justify-content: flex-end;
   }
 
-  .input-mode {
-    min-height: 1.8rem;
-    padding: 0.2rem 0.35rem;
-    color: var(--ob-color-text);
-    font: inherit;
-    background: var(--ob-color-background);
-    border: 1px solid var(--ob-color-border);
-    border-radius: var(--ob-radius);
+  .header-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: calc(var(--_ob-space) * 0.75);
+    align-items: center;
+    justify-content: flex-end;
   }
 
-  textarea, pre {
-    width: 100%;
-    min-height: 13rem;
-    padding: var(--ob-space);
+  .binding-bar {
+    display: inline-flex;
+    gap: 0.35rem;
+    align-items: center;
+    color: var(--_ob-color-text-muted);
+    font-size: 0.7rem;
+  }
+
+  .input-mode,
+  .binding-select {
+    min-height: 1.8rem;
+    padding: 0.2rem 0.35rem;
+    color: var(--_ob-color-text);
+    font: inherit;
+    background: var(--_ob-color-background);
+    border: 1px solid var(--_ob-color-border);
+    border-radius: var(--_ob-radius);
+  }
+
+  .binding-select {
+    max-width: 16rem;
+    font-family: var(--_ob-font-mono);
+  }
+
+  .binding-select:disabled {
+    cursor: not-allowed;
+    opacity: 0.48;
+  }
+
+  pre {
     margin: 0;
     overflow: auto;
-    color: var(--ob-color-text);
-    font: 0.76rem / 1.5 var(--ob-font-mono);
-    background: var(--ob-color-surface);
-    border: 1px solid var(--ob-color-border);
-    border-radius: var(--ob-radius);
-    resize: vertical;
+    color: var(--_ob-color-text);
+    font: 0.76rem / 1.5 var(--_ob-font-mono);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
 
+  .output-view {
+    min-height: 13rem;
+    max-height: 26rem;
+    padding: var(--_ob-space);
+    overflow: auto;
+    background: var(--_ob-color-surface);
+    border: 1px solid var(--_ob-color-border);
+    border-radius: var(--_ob-radius);
+  }
+
+  .output-notice {
+    margin: 0 0 0.45rem;
+    color: var(--_ob-color-text-muted);
+    font-size: 0.72rem;
+  }
+
+  .output-item {
+    margin-bottom: 0.5rem;
+    background: var(--_ob-color-background);
+    border: 1px solid var(--_ob-color-border);
+    border-radius: calc(var(--_ob-radius) * 0.8);
+  }
+
+  .output-item:last-child {
+    margin-bottom: 0;
+  }
+
+  .output-item > summary {
+    display: flex;
+    gap: 0.45rem;
+    align-items: center;
+    padding: 0.32rem 0.5rem;
+    color: var(--_ob-color-text-muted);
+    font-size: 0.7rem;
+    cursor: pointer;
+  }
+
+  .output-item-preview {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    font-family: var(--_ob-font-mono);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .output-item-offset,
+  .output-timing {
+    padding: 0.05rem 0.4rem;
+    color: var(--_ob-color-text-muted);
+    font-size: 0.66rem;
+    white-space: nowrap;
+    border: 1px solid var(--_ob-color-border);
+    border-radius: 999px;
+  }
+
+  .output-value {
+    padding: 0.45rem 0.55rem;
+    border-top: 1px solid var(--_ob-color-border);
+  }
+
+  .output-item > summary[hidden] + .output-value {
+    border-top: none;
+  }
+
   .actions {
     justify-content: flex-start;
-    margin-top: var(--ob-space);
+    margin-top: var(--_ob-space);
   }
 
   button {
     min-height: 2.25rem;
     padding: 0.42rem 0.8rem;
-    border: 1px solid var(--ob-color-border);
-    border-radius: var(--ob-radius);
+    border: 1px solid var(--_ob-color-border);
+    border-radius: var(--_ob-radius);
     cursor: pointer;
   }
 
   button.subtle {
     min-height: 1.8rem;
     padding: 0.2rem 0.42rem;
-    color: var(--ob-color-text-muted);
-    background: var(--ob-color-background);
+    color: var(--_ob-color-text-muted);
+    background: var(--_ob-color-background);
     font-size: 0.68rem;
   }
 
@@ -1305,24 +2138,24 @@ const styles = `
   }
 
   .run {
-    color: var(--ob-color-accent-contrast);
-    background: var(--ob-color-accent);
-    border-color: var(--ob-color-accent);
+    color: var(--_ob-color-accent-contrast);
+    background: var(--_ob-color-accent);
+    border-color: var(--_ob-color-accent);
   }
 
   .cancel {
-    color: var(--ob-color-danger);
-    background: var(--ob-color-background);
+    color: var(--_ob-color-danger);
+    background: var(--_ob-color-background);
   }
 
   .error {
     padding: 0.65rem 0.75rem;
-    margin-top: var(--ob-space);
-    color: var(--ob-color-danger);
+    margin-top: var(--_ob-space);
+    color: var(--_ob-color-danger);
     font-size: 0.78rem;
-    background: color-mix(in srgb, var(--ob-color-danger) 7%, var(--ob-color-background));
-    border: 1px solid color-mix(in srgb, var(--ob-color-danger) 22%, var(--ob-color-border));
-    border-radius: var(--ob-radius);
+    background: color-mix(in srgb, var(--_ob-color-danger) 7%, var(--_ob-color-background));
+    border: 1px solid color-mix(in srgb, var(--_ob-color-danger) 22%, var(--_ob-color-border));
+    border-radius: var(--_ob-radius);
   }
 
   .error-summary {
@@ -1332,7 +2165,7 @@ const styles = `
 
   .error details {
     margin-top: 0.4rem;
-    color: var(--ob-color-text-muted);
+    color: var(--_ob-color-text-muted);
   }
 
   .error summary {
@@ -1346,17 +2179,17 @@ const styles = `
     padding: 0.55rem;
     margin: 0.4rem 0 0;
     overflow: auto;
-    color: var(--ob-color-text);
+    color: var(--_ob-color-text);
     white-space: pre-wrap;
-    background: var(--ob-color-surface);
-    border-radius: calc(var(--ob-radius) * 0.8);
+    background: var(--_ob-color-surface);
+    border-radius: calc(var(--_ob-radius) * 0.8);
   }
 
   .empty {
     display: grid;
     min-height: 12rem;
     place-items: center;
-    color: var(--ob-color-text-muted);
+    color: var(--_ob-color-text-muted);
     text-align: center;
   }
 `;

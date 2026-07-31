@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      /* Mimic the reference app: host display set from document CSS. */
+      ob-operation-workbench { display: block; }
+      body { --ob-color-accent: rgb(255, 0, 0); --ob-radius: 0; }
+    </style>
+  </head>
+  <body>
+    <ob-operation-workbench id="hidden-workbench" hidden></ob-operation-workbench>
+    <ob-operation-workbench id="themed-workbench"></ob-operation-workbench>
+    <ob-operation-workbench id="override-workbench" style="--ob-color-accent: rgb(0, 128, 0)"></ob-operation-workbench>
+    <script type="module">
+      import "@openbindings/operation-workbench/define";
+      const obi = {
+        openbindings: "0.2.0",
+        interface: { name: "fixture", version: "1.0.0" },
+        operations: { ping: { description: "ping" } },
+        bindings: {},
+        sources: {},
+      };
+      for (const id of ["hidden-workbench", "themed-workbench", "override-workbench"]) {
+        const el = document.getElementById(id);
+        el.obi = obi;
+        el.operationKey = "ping";
+      }
+      await new Promise((r) => setTimeout(r, 150));
+      window.fixtureReady = true;
+    </script>
+  </body>
+</html>

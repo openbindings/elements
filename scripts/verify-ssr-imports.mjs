@@ -28,6 +28,7 @@ const packages = [
     expected: "OperationGraphEditorElement",
     define: true,
   },
+  { name: "json-editor", expected: "JSONEditorElement", define: true },
   { name: "operation-tabs", expected: "OperationTabsElement", define: true },
   {
     name: "operation-workbench",

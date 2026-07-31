@@ -1,0 +1,33 @@
+{
+  "WB-PERF-01": {
+    "kind": "perf",
+    "budgetMs": 1500,
+    "description": "navigate -> Ready (local OBI); first ratchet target 800ms"
+  },
+  "WB-PERF-03": {
+    "kind": "perf",
+    "budgetMs": 400,
+    "description": "Run -> first output frame visible (describe); budget is 400ms + server time"
+  },
+  "WB-PERF-04": {
+    "kind": "perf",
+    "budgetMs": 200,
+    "description": "tab switch -> correct session visible & interactive (or progress shown)"
+  },
+  "WB-HONESTY-01": {
+    "kind": "honesty",
+    "description": "wrong credential -> pill must not read Ready; failure named as credential failure"
+  },
+  "WB-HONESTY-02": {
+    "kind": "honesty",
+    "description": "server death -> connection pill reflects it within 5000ms"
+  },
+  "WB-VIS-01": {
+    "kind": "perception",
+    "description": "exactly one operation workbench perceptibly visible (computed geometry, not [hidden])"
+  },
+  "WB-KEY-01": {
+    "kind": "keyboard",
+    "description": "rail/tab strip keyboard-operable; Tab stops in strip <= tab count + 2 chrome stops"
+  }
+}

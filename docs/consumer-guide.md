@@ -40,6 +40,10 @@ Elements do not know about each other. The application decides what selection
 means:
 
 ```ts
+const explorer = document.querySelector("ob-obi-explorer");
+const detail = document.querySelector("ob-operation-detail");
+const workbench = document.querySelector("ob-operation-workbench");
+
 explorer.addEventListener("ob-operation-select", event => {
   detail.operationKey = event.detail.operationKey;
   workbench.operationKey = event.detail.operationKey;
@@ -87,20 +91,105 @@ workbench-specific component.
 ## Supply operation implementations
 
 Behavioral elements consume the read-only `OperationSource` interface.
-`OperationEnvironment` is a small application-owned implementation:
+`OperationEnvironment` is a small application-owned implementation. An
+`OperationImplementation` pairs a concrete provider OBI with an SDK
+`OperationInvoker` plus an optional `label` and `preference`.
+
+### Supply an in-memory implementation
+
+The complete recipe below satisfies the workbench's published requirement
+without any network protocol. A `BindingInvoker` drives the Operation Invoker
+frame grammar — read `open`, `input`, and `close` frames, then emit `output`
+and `complete` — and the provider OBI is the published interface plus the
+`sources` and `bindings` that make it invocable:
 
 ```ts
+import "@openbindings/operation-workbench/define";
+import {
+  InvocationImpl,
+  OperationInvoker,
+  type BindingInvocationArgs,
+  type BindingInvoker,
+  type BindingSpecInfo,
+} from "@openbindings/sdk";
 import { OperationEnvironment } from "@openbindings/ui-core";
+import type {
+  OperationInvokerInputFrame,
+  OperationInvokerOutputFrame,
+} from "@openbindings/operation-workbench";
+import { operationInvokerInterface } from "@openbindings/operation-workbench/requirement";
+
+const LOCAL_BINDING_SPEC = "example.local-operation-invoker@1";
+
+class LocalOperationInvokerBinding implements BindingInvoker {
+  bindingSpecs(): BindingSpecInfo[] {
+    return [{ bindingSpec: LOCAL_BINDING_SPEC }];
+  }
+
+  invokeBinding<I = unknown, O = unknown>(
+    _args: BindingInvocationArgs,
+  ): InvocationImpl<I, O> {
+    const invocation = new InvocationImpl<
+      OperationInvokerInputFrame,
+      OperationInvokerOutputFrame
+    >();
+    queueMicrotask(() => void this.drive(invocation));
+    return invocation as unknown as InvocationImpl<I, O>;
+  }
+
+  private async drive(
+    invocation: InvocationImpl<
+      OperationInvokerInputFrame,
+      OperationInvokerOutputFrame
+    >,
+  ): Promise<void> {
+    let targetOperation = "";
+    let targetInput: unknown;
+    for await (const frame of invocation.inputs()) {
+      if (frame.kind === "open") {
+        targetOperation = frame.input.operation ?? "";
+      } else if (frame.kind === "input") {
+        targetInput = frame.value;
+      } else if (frame.kind === "close") {
+        break;
+      }
+    }
+    invocation.closeInput();
+    await invocation.emitOutput({
+      kind: "output",
+      value: { targetOperation, targetInput },
+    });
+    await invocation.emitOutput({ kind: "complete" });
+    invocation.closeOutput();
+  }
+}
+
+// The published requirement interface, made invocable by adding the local
+// source and a binding for its operation.
+const candidate = {
+  ...structuredClone(operationInvokerInterface),
+  sources: {
+    local: { bindingSpec: LOCAL_BINDING_SPEC, content: {} },
+  },
+  bindings: {
+    invoke: {
+      operation: "openbindings.operation-invoker.invokeOperation",
+      source: "local",
+      ref: "invoke",
+    },
+  },
+};
 
 const environment = new OperationEnvironment([
   {
-    interface: providerOBI,
-    invoker: browserSafeOperationInvoker,
-    label: "Current API",
+    interface: candidate,
+    invoker: new OperationInvoker([new LocalOperationInvokerBinding()]),
+    label: "In-memory invoker",
     preference: 10,
   },
 ]);
 
+const workbench = document.querySelector("ob-operation-workbench")!;
 workbench.operationSource = environment;
 ```
 
@@ -144,6 +233,26 @@ ob-operation-workbench::part(run) {
 ```
 
 Internal class names and shadow-DOM structure are not API.
+
+### Theming
+
+Elements consume the public `--ob-*` tokens through private fallbacks, so a
+token set on any ancestor — `:root`, a layout region, or the element itself —
+inherits into every shadow tree below it. The nearest declaration wins under
+normal CSS inheritance, which means an element-level override beats a
+document-level theme for that element only. The private `--_ob-*` names the
+internals read are not API; set only the public tokens. A dark theme should
+also declare `color-scheme: dark` alongside its `--ob-*` colors so native
+form controls, scrollbars, and `prefers-color-scheme`-derived defaults agree
+with the palette:
+
+```css
+:root {
+  color-scheme: dark;
+  --ob-color-background: #16161a;
+  --ob-color-text: #e8e8e4;
+}
+```
 
 ## Server rendering and edge deployment
 

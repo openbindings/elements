@@ -20,8 +20,23 @@ The package augments `HTMLElementTagNameMap` and types the listener payload on
 ## Customization
 
 The element inherits shared `--ob-*` tokens and exposes `container`, `header`,
-`metadata`, `binding-list`, `binding`, `input-schema`, and `output-schema`
-parts. Operation examples are exposed through the `examples` part.
+`metadata`, `bindings-summary`, `binding-list`, `binding`, `input-schema`, and
+`output-schema` parts. Operation examples are exposed through the `examples`
+part.
+
+## Bindings disclosure
+
+The bindings section renders as a native `<details>` disclosure. The
+always-visible summary line (`bindings-summary` part) reads `Bindings · N`,
+and appends ` · via <key>` when `selectedBindingKey` names one of this
+operation's bindings. Binding rows render inside the disclosure body,
+unchanged.
+
+The disclosure defaults closed when the operation has three or more bindings
+and open at two or fewer. The default is applied only when the operation
+identity changes; a manual toggle survives re-renders (including
+`selectedBindingKey` changes). With zero bindings the section is hidden
+entirely — no disclosure chrome is shown.
 
 This element has no operation dependencies.
 

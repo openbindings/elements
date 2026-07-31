@@ -67,7 +67,17 @@ export class OperationGraphEditorElement extends OpenBindingsElement {
   }
 
   set operationKeys(value: readonly string[]) {
-    this.#operationKeys = [...new Set((value ?? []).filter(key => key.trim()))];
+    const next = [...new Set((value ?? []).filter(key => key.trim()))];
+    // Callers routinely rebuild this array (`Object.keys(...)`) on every
+    // update, so identity never matches and an unguarded setter re-rendered
+    // the whole editor on every tab switch. Compare contents instead.
+    if (
+      next.length === this.#operationKeys.length &&
+      next.every((key, index) => key === this.#operationKeys[index])
+    ) {
+      return;
+    }
+    this.#operationKeys = next;
     this.requestRender();
   }
 
@@ -527,9 +537,9 @@ const styles = `
     height: 100%;
     min-height: 0;
     overflow: hidden;
-    background: var(--ob-color-background);
-    border: 1px solid var(--ob-color-border);
-    border-radius: var(--ob-radius);
+    background: var(--_ob-color-background);
+    border: 1px solid var(--_ob-color-border);
+    border-radius: var(--_ob-radius);
   }
 
   .viewer,
@@ -548,12 +558,12 @@ const styles = `
   .inspector {
     min-width: 0;
     overflow: auto;
-    padding: var(--ob-space);
-    border-left: 1px solid var(--ob-color-border);
+    padding: var(--_ob-space);
+    border-left: 1px solid var(--_ob-color-border);
   }
 
   header {
-    margin-bottom: var(--ob-space);
+    margin-bottom: var(--_ob-space);
   }
 
   h2, h3, p {
@@ -565,7 +575,7 @@ const styles = `
   }
 
   .eyebrow {
-    color: var(--ob-color-text-muted);
+    color: var(--_ob-color-text-muted);
     font-size: 0.68rem;
     font-weight: 750;
     letter-spacing: 0.1em;
@@ -580,7 +590,7 @@ const styles = `
   label {
     display: grid;
     gap: 0.25rem;
-    color: var(--ob-color-text-muted);
+    color: var(--_ob-color-text-muted);
     font-size: 0.72rem;
   }
 
@@ -596,16 +606,16 @@ const styles = `
     min-width: 0;
     min-height: 2rem;
     padding: 0.35rem 0.5rem;
-    color: var(--ob-color-text);
-    background: var(--ob-color-background);
-    border: 1px solid var(--ob-color-border);
-    border-radius: calc(var(--ob-radius) * 0.65);
+    color: var(--_ob-color-text);
+    background: var(--_ob-color-background);
+    border: 1px solid var(--_ob-color-border);
+    border-radius: calc(var(--_ob-radius) * 0.65);
   }
 
   textarea {
     min-height: 4rem;
     resize: vertical;
-    font-family: var(--ob-font-mono);
+    font-family: var(--_ob-font-mono);
     font-size: 0.72rem;
   }
 
@@ -614,21 +624,21 @@ const styles = `
   }
 
   button.primary {
-    color: var(--ob-color-accent-contrast);
-    background: var(--ob-color-accent);
-    border-color: var(--ob-color-accent);
+    color: var(--_ob-color-accent-contrast);
+    background: var(--_ob-color-accent);
+    border-color: var(--_ob-color-accent);
   }
 
   button.danger {
-    color: var(--ob-color-danger);
+    color: var(--_ob-color-danger);
   }
 
   .edge-editor {
     display: grid;
     gap: 0.55rem;
-    margin-top: calc(var(--ob-space) * 1.5);
-    padding-top: var(--ob-space);
-    border-top: 1px solid var(--ob-color-border);
+    margin-top: calc(var(--_ob-space) * 1.5);
+    padding-top: var(--_ob-space);
+    border-top: 1px solid var(--_ob-color-border);
   }
 
   .edge-editor form {
@@ -652,28 +662,28 @@ const styles = `
     gap: 0.35rem;
     align-items: center;
     padding: 0.25rem 0.4rem;
-    background: var(--ob-color-surface);
-    border-radius: calc(var(--ob-radius) * 0.5);
+    background: var(--_ob-color-surface);
+    border-radius: calc(var(--_ob-radius) * 0.5);
   }
 
   .edge-editor code {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-family: var(--ob-font-mono);
+    font-family: var(--_ob-font-mono);
     font-size: 0.68rem;
   }
 
   .edge-editor li button {
     width: 2rem;
     padding: 0;
-    color: var(--ob-color-danger);
+    color: var(--_ob-color-danger);
   }
 
   .edit-status,
   .empty {
-    margin-top: var(--ob-space);
-    color: var(--ob-color-text-muted);
+    margin-top: var(--_ob-space);
+    color: var(--_ob-color-text-muted);
     font-size: 0.72rem;
   }
 
@@ -686,7 +696,7 @@ const styles = `
 
     .inspector {
       overflow: visible;
-      border-top: 1px solid var(--ob-color-border);
+      border-top: 1px solid var(--_ob-color-border);
       border-left: 0;
     }
   }

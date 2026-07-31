@@ -85,9 +85,16 @@ main {
   --ob-color-text-muted: var(--page-muted);
   --ob-color-border: var(--page-border);
   --ob-color-accent: var(--accent);
+  --ob-color-accent-contrast: var(--page-background);
   --ob-color-success: var(--success);
   --ob-color-danger: var(--danger);
   --ob-radius: 0;
+}
+
+/* Defensive: element base styles also guard :host([hidden]), but the app must
+   never depend on shadow internals to keep its own session stack honest. */
+.invocation-sessions > ob-operation-workbench[hidden] {
+  display: none;
 }
 
 .app-header {
