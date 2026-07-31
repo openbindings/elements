@@ -9,6 +9,9 @@ import {
 } from "@openbindings/operation-workbench";
 import "@openbindings/operation-workbench/define";
 import type { OperationWorkbenchElement } from "@openbindings/operation-workbench";
+// Defined for the browser contract suite (overflow-fade test builds its own
+// strip); the fixture page renders none by default.
+import "@openbindings/operation-tabs/define";
 import {
   InvocationImpl,
   OperationInvoker,

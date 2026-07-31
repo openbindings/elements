@@ -240,4 +240,85 @@ test("split layout fills the height the host gives the element", async ({
     return root.querySelector(".workspace")!.getBoundingClientRect().height;
   });
   expect(flowHeight).toBeGreaterThanOrEqual(350);
+
+  // Rev-12: the form pane obeys the same fill physics — switching the input
+  // view swaps panes at (near-)identical height, no layout jump.
+  const formHeight = await page.evaluate(async () => {
+    const el = document.getElementById("split-workbench") as HTMLElement & {
+      inputView: string;
+    };
+    el.inputView = "form";
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    const root = el.shadowRoot!;
+    const form = root.querySelector<HTMLElement>(".form-view")!;
+    return { hidden: form.hidden, height: form.getBoundingClientRect().height };
+  });
+  expect(formHeight.hidden).toBe(false);
+  expect(Math.abs(formHeight.height - large.editor)).toBeLessThanOrEqual(8);
+});
+
+test("tab overflow hint fades the tabs themselves — no scrim painted over them", async ({
+  page,
+}) => {
+  // Dogfood report (rev 13.2): the overflow fade was a text-color gradient
+  // painted OVER the first tab, which reads as a smudgy fake shadow on light
+  // surfaces. The hint must dissolve the strip's own content at the scrolled
+  // edge (a mask on the scroller) — nothing may paint on top of tab labels.
+  const probe = await page.evaluate(async () => {
+    const strip = document.createElement("ob-operation-tabs") as HTMLElement & {
+      tabs: { key: string; label: string }[];
+      activeKey: string | null;
+    };
+    strip.style.width = "20rem";
+    strip.style.display = "block";
+    document.body.append(strip);
+    strip.tabs = Array.from({ length: 12 }, (_, i) => ({
+      key: `op-${i}`,
+      label: `operation.number${i}`,
+    }));
+    strip.activeKey = "op-0";
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    const root = strip.shadowRoot!;
+    const container = root.querySelector<HTMLElement>(".container")!;
+    const list = root.querySelector<HTMLElement>(".tab-list")!;
+    // Scroll to the middle so both edges have hidden tabs.
+    list.scrollLeft = (list.scrollWidth - list.clientWidth) / 2;
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    const mask = (el: Element) => {
+      const cs = getComputedStyle(el) as CSSStyleDeclaration & {
+        webkitMaskImage?: string;
+      };
+      return cs.maskImage && cs.maskImage !== "none"
+        ? cs.maskImage
+        : (cs.webkitMaskImage ?? "none");
+    };
+    const scrim = (pseudo: string) => {
+      const cs = getComputedStyle(container, pseudo);
+      return cs.backgroundImage;
+    };
+    const overflowing = {
+      state: container.getAttribute("data-overflow"),
+      listMask: mask(list),
+      before: scrim("::before"),
+      after: scrim("::after"),
+    };
+    strip.tabs = [{ key: "only", label: "only" }];
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    const settled = {
+      state: container.getAttribute("data-overflow"),
+      listMask: mask(list),
+    };
+    strip.remove();
+    return { overflowing, settled };
+  });
+
+  expect(probe.overflowing.state).toBe("both");
+  // The hint is a mask on the scroller…
+  expect(probe.overflowing.listMask).toContain("linear-gradient");
+  // …and nothing paints over the tabs.
+  expect(probe.overflowing.before).toBe("none");
+  expect(probe.overflowing.after).toBe("none");
+  // No overflow, no mask: nothing dissolves when everything is visible.
+  expect(probe.settled.state).toBe("none");
+  expect(probe.settled.listMask).toBe("none");
 });

@@ -236,7 +236,7 @@ export class OperationTabsElement extends OpenBindingsElement {
   }
 
   /**
-   * Records which edges have hidden tabs, so the container can fade them.
+   * Records which edges have hidden tabs, so the strip can dissolve them.
    * Reading scroll geometry forces layout, so this runs on render, scroll and
    * resize only — never per tab.
    */
@@ -497,56 +497,28 @@ const styles = `
   }
 
   /*
-   * Fades mark tabs that are scrolled out of view. They sit above the strip
-   * and must not eat pointer events, and they are driven by a data attribute
-   * rather than :hover so the hint is present at rest.
+   * Edges with scrolled-out tabs dissolve the strip's own content via a mask
+   * on the scroller — nothing is ever painted OVER a tab label (a painted
+   * gradient reads as a smudged fake shadow on light surfaces; dogfood
+   * report, rev 13.2). Masks composite alpha only, so the keyword color
+   * carries no visual color and the hint is theme-proof by construction.
+   * Driven by the data attribute rather than :hover so it holds at rest.
+   * The menu column sits outside the scroller, so the end fade clears it
+   * with no positioning special-case.
    */
-  .container::before,
-  .container::after {
-    position: absolute;
-    top: 1px;
-    bottom: 1px;
-    z-index: 2;
-    width: 1.5rem;
-    content: "";
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 120ms ease;
+  .container[data-overflow="start"] .tab-list {
+    -webkit-mask-image: linear-gradient(to right, transparent, black 1.5rem);
+    mask-image: linear-gradient(to right, transparent, black 1.5rem);
   }
 
-  .container::before {
-    left: 0;
-    background: linear-gradient(to right, rgb(0 0 0 / 18%), transparent);
+  .container[data-overflow="end"] .tab-list {
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 1.5rem), transparent);
+    mask-image: linear-gradient(to right, black calc(100% - 1.5rem), transparent);
   }
 
-  .container::after {
-    /* Clears the overflow menu so the fade never sits under it. */
-    right: 2.5rem;
-    background: linear-gradient(to left, rgb(0 0 0 / 18%), transparent);
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .container::before {
-      background: linear-gradient(to right, rgb(0 0 0 / 45%), transparent);
-    }
-
-    .container::after {
-      background: linear-gradient(to left, rgb(0 0 0 / 45%), transparent);
-    }
-  }
-
-  .container[data-overflow="start"]::before,
-  .container[data-overflow="both"]::before,
-  .container[data-overflow="end"]::after,
-  .container[data-overflow="both"]::after {
-    opacity: 1;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .container::before,
-    .container::after {
-      transition: none;
-    }
+  .container[data-overflow="both"] .tab-list {
+    -webkit-mask-image: linear-gradient(to right, transparent, black 1.5rem, black calc(100% - 1.5rem), transparent);
+    mask-image: linear-gradient(to right, transparent, black 1.5rem, black calc(100% - 1.5rem), transparent);
   }
 
   .tab-list {
@@ -731,7 +703,7 @@ const styles = `
     background: var(--_ob-color-background);
     border: 1px solid var(--_ob-color-border);
     border-radius: var(--_ob-radius);
-    box-shadow: 0 0.6rem 1.8rem rgb(0 0 0 / 15%);
+    box-shadow: var(--_ob-shadow);
   }
 
   .menu button {

@@ -11,6 +11,7 @@
   "dependencies": {
     "@openbindings/obi-explorer": "workspace:^",
     "@openbindings/operation-detail": "workspace:^",
+    "@openbindings/operation-tabs": "workspace:^",
     "@openbindings/operation-workbench": "workspace:^",
     "@openbindings/sdk": "link:../../../openbindings-ts/packages/sdk",
     "@openbindings/ui-core": "workspace:^"

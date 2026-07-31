@@ -109,6 +109,36 @@ test("the operation dependency becomes available when session context changes", 
   await expect(workbench.locator("button.run")).toBeEnabled();
 });
 
+test("a rejected session token is reported honestly instead of claiming Ready", async ({
+  page,
+}) => {
+  await page.goto("/#token=wrong-token");
+
+  // Ready must mean "an authenticated call succeeded", never "a token
+  // exists". A wrong token has to surface as a rejection.
+  await expect(page.locator("#connection-status-text")).toHaveText(
+    "Credential rejected",
+  );
+  await expect(page.locator("#connection-status-text")).not.toHaveText(
+    "Ready",
+  );
+  await expect(page.locator("#connection-panel")).toBeVisible();
+  await expect(page.locator("#session-status")).toContainText(
+    "Credential rejected",
+  );
+  await expect(page.locator("#session-badge")).not.toHaveText("Connected");
+
+  // The verification probe's 401 response is the expected outcome under
+  // test, not an application defect; drop only that resource error before
+  // the shared afterEach console assertion runs.
+  const errors = browserErrors.get(page) ?? [];
+  errors.splice(
+    0,
+    errors.length,
+    ...errors.filter(text => !/status of 401/i.test(text)),
+  );
+});
+
 test("the workbench layout is adjustable, accessible, and persistent", async ({
   page,
 }) => {
@@ -616,4 +646,84 @@ test("multi-binding operations default to the author's preferred binding and run
     { timeout: 60_000 },
   );
   await expect(graphSession.locator(".error")).toBeHidden();
+});
+
+test("form input mode drives placeOrder through schema fields", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto("/#token=test-token");
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+
+  await page.locator("#target-url").fill("http://127.0.0.1:20392");
+  await page.locator("#resolve-target").click();
+  await expect(page.locator("#current-target-label")).toHaveText(
+    "http://127.0.0.1:20392",
+    { timeout: 20_000 },
+  );
+
+  const explorer = page.locator("ob-obi-explorer");
+  // placeAndTrack's summary mentions placeOrder, so match the key exactly.
+  await explorer
+    .locator('[part~="operation"]')
+    .filter({ has: page.locator('.operation-key:text-is("placeOrder")') })
+    .click();
+  const workbench = page.locator("ob-operation-workbench:not([hidden])");
+  await expect(workbench.locator("h2")).toHaveText("placeOrder");
+
+  // PlaceOrderInput is a $ref-rooted schema: the local reference resolves
+  // before capability analysis, so Form view is available.
+  const formToggle = workbench.locator("button.view-form");
+  await expect(formToggle).toBeEnabled();
+  await formToggle.click();
+
+  const customer = workbench.locator("#f-customer");
+  const drink = workbench.locator("#f-drink");
+  const size = workbench.locator("select#f-size");
+  await expect(customer).toBeVisible();
+  await expect(drink).toBeVisible();
+  // size is an enum and renders as a select carrying the documented values.
+  await expect(size).toBeVisible();
+  await expect(size.locator('option[value="v2"]')).toHaveCount(1);
+
+  await drink.fill("Schema Latte");
+  await customer.fill("FormBot");
+  await size.selectOption("v2");
+
+  await workbench.locator("button.run").click();
+  await expect(workbench.locator('pre[part~="output"]').first()).toContainText(
+    '"status": "received"',
+    { timeout: 30_000 },
+  );
+  await expect(workbench.locator('pre[part~="output"]').first()).toContainText(
+    '"customer": "FormBot"',
+  );
+  await expect(workbench.locator(".error")).toBeHidden();
+});
+
+test("a failed resolve reports the server's diagnostic, not a bare status line", async ({
+  page,
+}) => {
+  // Dogfood report (rev 13.2): resolving a URL that serves no interface
+  // surfaced as "ERR_UNAVAILABLE: HTTP 502 Bad Gateway" — the transport's
+  // view of the resolve endpoint's failure status, while the endpoint's own
+  // diagnostic (the full resolution trail) rode an ignored response body.
+  await page.goto("/#token=test-token");
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+
+  await page
+    .locator("#target-url")
+    .fill("http://127.0.0.1:20392/definitely-not-here.json");
+  await page.locator("#resolve-target").click();
+
+  const message = page.locator("#bootstrap-message");
+  await expect(message).toContainText("could not resolve an OBI", {
+    timeout: 30_000,
+  });
+  await expect(message).not.toContainText("Bad Gateway");
+  // Recoverable: the control returns and the current target is untouched.
+  await expect(page.locator("#resolve-target")).toHaveText("Connect");
+  await expect(page.locator("#current-target-label")).toHaveText(
+    "This ob start instance",
+  );
 });

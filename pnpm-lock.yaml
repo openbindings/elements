@@ -80,6 +80,9 @@ importers:
       '@openbindings/operation-detail':
         specifier: workspace:^
         version: link:../../packages/operation-detail
+      '@openbindings/operation-tabs':
+        specifier: workspace:^
+        version: link:../../packages/operation-tabs
       '@openbindings/operation-workbench':
         specifier: workspace:^
         version: link:../../packages/operation-workbench

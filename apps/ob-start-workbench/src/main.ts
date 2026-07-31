@@ -12,6 +12,7 @@ import "@openbindings/operation-graph-viewer/define";
 import "@openbindings/operation-tabs/define";
 import {
   OPERATION_INVOKER_OPERATION,
+  type OperationFrameError,
   type OperationInvokerInputFrame,
   type OperationInvokerOutputFrame,
 } from "@openbindings/operation-workbench";
@@ -80,6 +81,7 @@ const connectionStatusText = requiredElement<HTMLElement>(
   "#connection-status-text",
 );
 const bootstrapMessage = requiredElement<HTMLElement>("#bootstrap-message");
+const livenessNotice = requiredElement<HTMLElement>("#liveness-notice");
 const targetForm = requiredElement<HTMLFormElement>("#target-form");
 const targetURL = requiredElement<HTMLInputElement>("#target-url");
 const resolveTargetButton =
@@ -211,6 +213,27 @@ const defaultWorkspaceLayout: WorkspaceLayout = {
   execSplit: 0.5,
 };
 let sessionToken = tokenFromFragment() || restoreSessionToken();
+/**
+ * What is actually known about the session credential. "Ready" and
+ * "Authenticated" are only ever claimed from "verified" — the result of a
+ * successful authenticated request — never from token presence alone.
+ */
+type SessionAuthState = "none" | "checking" | "verified" | "rejected";
+let sessionAuth: SessionAuthState = sessionToken ? "checking" : "none";
+/**
+ * Server reachability as last observed by the bootstrap probe or the
+ * liveness watcher. "down" overrides every credential-derived pill state.
+ */
+let serverHealth: "unknown" | "up" | "down" = "unknown";
+const LIVENESS_INTERVAL_MS = 15_000;
+const LIVENESS_TIMEOUT_MS = 4_000;
+const LIVENESS_RECHECK_DEBOUNCE_MS = 300;
+/** Event-driven rechecks (focus/visibility) are spaced at least this far. */
+const LIVENESS_RECHECK_MIN_GAP_MS = 5_000;
+let livenessStarted = false;
+let livenessDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let livenessInFlight: Promise<void> | null = null;
+let lastLivenessCheckAt = 0;
 let obInterface: OBInterface | null = null;
 let obImplementationInterface: OBInterface | null = null;
 let obInvoker: OperationInvoker | null = null;
@@ -520,19 +543,30 @@ tokenForm.addEventListener("submit", event => {
   sessionToken = nextToken;
   persistSessionToken(sessionToken);
   tokenInput.value = "";
+  sessionAuth = "checking";
   renderSessionState();
   applyTargetContext();
   publishOBImplementation();
-  schedulePreflight();
-  bootstrapMessage.textContent = sessionToken
-    ? "Workbench session connected. The credential will not be forwarded to targets."
-    : "No session token is configured.";
+  bootstrapMessage.textContent =
+    "Verifying the session token against this ob start instance…";
+  // The same authenticated probe as bootstrap: the submitted token is
+  // reported as accepted or rejected, never assumed to work.
+  void probeSessionCredential().then(result => {
+    applySessionProbe(result);
+    bootstrapMessage.textContent =
+      result === "verified"
+        ? "Workbench session connected. The credential will not be forwarded to targets."
+        : result === "rejected"
+          ? "ob start rejected this session token."
+          : "ob start did not answer the verification request.";
+  });
 });
 
 clearSessionTokenButton.addEventListener("click", () => {
   sessionToken = "";
   persistSessionToken("");
   tokenInput.value = "";
+  sessionAuth = "none";
   renderSessionState();
   applyTargetContext();
   publishOBImplementation();
@@ -718,6 +752,9 @@ sourceGutter.addEventListener("keydown", event => {
 void bootstrap();
 
 async function bootstrap(): Promise<void> {
+  // The credential probe runs in parallel with public discovery so verified
+  // readiness costs one overlapped round trip, not an extra sequential one.
+  const probe = sessionToken ? probeSessionCredential() : null;
   try {
     const fetched = await fetchInterface(globalThis.location.origin);
     obInterface = fetched.iface;
@@ -729,10 +766,6 @@ async function bootstrap(): Promise<void> {
       }),
     ]);
     publishOBImplementation();
-    setConnectionStatus(
-      sessionToken ? "Ready" : "Session credential needed",
-      sessionToken ? "ready" : "attention",
-    );
 
     // The server's own OBI is a useful zero-configuration target and proves
     // that the workbench can invoke ob through ob's published interface.
@@ -746,11 +779,163 @@ async function bootstrap(): Promise<void> {
         ? "openbindings.ob.describe"
         : Object.keys(obInterface.operations)[0];
     if (!selectedOperationKey && preferred) activateOperation(preferred);
+
+    // Public discovery only proves the server answers anonymous requests.
+    // The pill claims Ready when — and only when — the authenticated probe
+    // came back accepted.
+    if (probe) applySessionProbe(await probe);
+    else renderSessionState();
+    startLivenessWatcher();
   } catch (error) {
+    await probe?.catch(() => undefined);
     setConnectionStatus("Connection failed", "failed");
     bootstrapMessage.textContent = errorText(error);
   }
 }
+
+// --- Session credential verification and liveness -------------------------
+//
+// Honesty rules for the connection pill (and the e2e contract around it):
+//
+// * "Ready" is set only after ONE cheap authenticated request succeeds:
+//   `GET /describe` with the session bearer. The route sits behind the
+//   server's auth middleware, so 200 proves the credential is accepted;
+//   401/403 surfaces as "Credential rejected" and opens the connection
+//   panel. Token presence alone never produces Ready or "Authenticated".
+// * After bootstrap, a single liveness watcher polls the public
+//   `GET /healthz` every 15 seconds (4 second timeout), plus a debounced
+//   recheck on window focus / tab visibility. A hidden tab pauses the tick.
+//   Failure flips the pill to "Disconnected — retrying…" and shows the
+//   inline notice near the target bar; recovery re-runs the authenticated
+//   probe so the pill lands back on Ready (or Credential rejected) honestly.
+// * Verification hook: the e2e harness owns the live server and cannot kill
+//   it mid-test, so `window.__obLiveness.checkNow()` is exported for manual
+//   kill/restart verification — it forces an immediate health check without
+//   waiting for the 15 second tick.
+
+type SessionProbeResult = "verified" | "rejected" | "unreachable";
+
+async function probeSessionCredential(): Promise<SessionProbeResult> {
+  try {
+    const response = await fetch(
+      new URL("/describe", globalThis.location.origin),
+      {
+        headers: { authorization: `Bearer ${sessionToken}` },
+        cache: "no-store",
+        signal: AbortSignal.timeout(LIVENESS_TIMEOUT_MS),
+      },
+    );
+    if (response.ok) return "verified";
+    if (response.status === 401 || response.status === 403) return "rejected";
+    return "unreachable";
+  } catch {
+    return "unreachable";
+  }
+}
+
+function applySessionProbe(result: SessionProbeResult): void {
+  if (!sessionToken) {
+    sessionAuth = "none";
+    renderSessionState();
+    return;
+  }
+  if (result === "unreachable") {
+    serverHealth = "down";
+    setLivenessNotice(livenessStarted);
+    renderSessionState();
+    return;
+  }
+  serverHealth = "up";
+  setLivenessNotice(false);
+  sessionAuth = result;
+  renderSessionState();
+  if (result === "rejected") {
+    setConnectionPanel(true);
+    tokenInput.focus();
+  } else {
+    // Preflight is deferred until the credential is proven; run the one that
+    // was skipped while verification was in flight.
+    schedulePreflight();
+  }
+}
+
+function startLivenessWatcher(): void {
+  if (livenessStarted) return; // exactly one watcher, ever
+  livenessStarted = true;
+  setInterval(() => {
+    // A hidden tab pauses the tick; visibilitychange below catches up.
+    if (document.hidden) return;
+    void runLivenessCheck();
+  }, LIVENESS_INTERVAL_MS);
+  globalThis.addEventListener("focus", scheduleLivenessRecheck);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) scheduleLivenessRecheck();
+  });
+}
+
+function scheduleLivenessRecheck(): void {
+  if (!livenessStarted || livenessDebounceTimer !== null) return;
+  livenessDebounceTimer = setTimeout(() => {
+    livenessDebounceTimer = null;
+    if (
+      serverHealth !== "down" &&
+      Date.now() - lastLivenessCheckAt < LIVENESS_RECHECK_MIN_GAP_MS
+    ) {
+      return;
+    }
+    void runLivenessCheck();
+  }, LIVENESS_RECHECK_DEBOUNCE_MS);
+}
+
+function runLivenessCheck(): Promise<void> {
+  if (livenessInFlight) return livenessInFlight;
+  livenessInFlight = (async () => {
+    lastLivenessCheckAt = Date.now();
+    let up = false;
+    try {
+      const response = await fetch(
+        new URL("/healthz", globalThis.location.origin),
+        { cache: "no-store", signal: AbortSignal.timeout(LIVENESS_TIMEOUT_MS) },
+      );
+      up = response.ok;
+    } catch {
+      up = false;
+    }
+    if (!up) {
+      serverHealth = "down";
+      setLivenessNotice(true);
+      renderConnectionPill();
+      return;
+    }
+    const wasDown = serverHealth === "down";
+    serverHealth = "up";
+    setLivenessNotice(false);
+    if (wasDown && sessionToken) {
+      // A restarted server may hold a different token set: re-prove the
+      // credential instead of assuming the pre-outage state still holds.
+      sessionAuth = "checking";
+      renderSessionState();
+      applySessionProbe(await probeSessionCredential());
+      return;
+    }
+    renderSessionState();
+  })().finally(() => {
+    livenessInFlight = null;
+  });
+  return livenessInFlight;
+}
+
+function setLivenessNotice(visible: boolean): void {
+  livenessNotice.hidden = !visible;
+}
+
+declare global {
+  interface Window {
+    __obLiveness?: { checkNow: () => Promise<void> };
+  }
+}
+
+window.__obLiveness = { checkNow: () => runLivenessCheck() };
 
 function publishOBImplementation(): void {
   operationEnvironment.replace(
@@ -792,7 +977,7 @@ async function resolveTarget(address: string): Promise<void> {
       : `Loaded ${result.interface.name ?? "interface"}.`;
   } catch (error) {
     if (attempt !== resolveAttempt) return;
-    bootstrapMessage.textContent = errorText(error);
+    bootstrapMessage.textContent = callFailureText(error);
   } finally {
     if (attempt === resolveAttempt) {
       resolveTargetButton.disabled = false;
@@ -816,7 +1001,7 @@ async function invokeThroughOB<I, O>(
     ),
   );
   const outputs: O[] = [];
-  const terminalErrors: Array<{ code: string; message: string }> = [];
+  const terminalErrors: OperationFrameError[] = [];
 
   const pump = async () => {
     await call.write({
@@ -844,7 +1029,7 @@ async function invokeThroughOB<I, O>(
   await call.closed;
   const terminalError = terminalErrors[0];
   if (terminalError) {
-    throw new Error(`${terminalError.code}: ${terminalError.message}`);
+    throw new WireCallError(terminalError);
   }
   if (outputs.length !== 1) {
     throw new Error(
@@ -1795,7 +1980,17 @@ async function preflightTarget(): Promise<void> {
   const operation = selectedOperationKey;
   const invocation = activeInvocation();
   const binding = invocation?.bindingKey ?? null;
-  if (!target || !operation || !obInterface || !obInvoker || !sessionToken) {
+  // Preflight rides the local session carrier, so it can only be meaningful
+  // once the credential has actually been accepted. A rejected or unverified
+  // token would just spend a guaranteed-401 round trip.
+  if (
+    !target ||
+    !operation ||
+    !obInterface ||
+    !obInvoker ||
+    !sessionToken ||
+    sessionAuth !== "verified"
+  ) {
     hideContextChallenge();
     return;
   }
@@ -2048,23 +2243,61 @@ function focusFirstRequirement(): void {
 }
 
 function renderSessionState(): void {
-  const connected = Boolean(sessionToken);
-  sessionStatus.textContent = connected
-    ? "Authenticated for this browser tab."
-    : "No local session credential is configured.";
-  sessionBadge.textContent = connected ? "Connected" : "Not connected";
-  sessionBadge.className = `badge ${connected ? "connected" : "attention"}`;
-  tokenInput.placeholder = connected
+  const hasToken = Boolean(sessionToken);
+  if (!hasToken) {
+    sessionStatus.textContent = "No local session credential is configured.";
+    sessionBadge.textContent = "Not connected";
+    sessionBadge.className = "badge attention";
+  } else if (sessionAuth === "verified") {
+    sessionStatus.textContent = "Authenticated for this browser tab.";
+    sessionBadge.textContent = "Connected";
+    sessionBadge.className = "badge connected";
+  } else if (sessionAuth === "rejected") {
+    sessionStatus.textContent =
+      "Credential rejected — enter a valid session token.";
+    sessionBadge.textContent = "Rejected";
+    sessionBadge.className = "badge danger";
+  } else {
+    sessionStatus.textContent = "Verifying the session credential…";
+    sessionBadge.textContent = "Checking";
+    sessionBadge.className = "badge";
+  }
+  tokenInput.placeholder = hasToken
     ? "Replace the current token"
     : "Paste a session token";
-  setConnectionStatus(
-    connected
-      ? obInterface
-        ? "Ready"
-        : "Connecting…"
-      : "Session credential needed",
-    connected ? (obInterface ? "ready" : "connecting") : "attention",
-  );
+  renderConnectionPill();
+}
+
+/**
+ * Derives the header pill from what has actually been observed: server
+ * reachability first, then the verified credential state. Nothing here
+ * claims Ready off token presence.
+ */
+function renderConnectionPill(): void {
+  if (serverHealth === "down") {
+    setConnectionStatus(
+      livenessStarted ? "Disconnected — retrying…" : "Server unreachable",
+      "failed",
+    );
+    return;
+  }
+  if (!sessionToken) {
+    setConnectionStatus("Session credential needed", "attention");
+    return;
+  }
+  switch (sessionAuth) {
+    case "verified":
+      setConnectionStatus("Ready", "ready");
+      break;
+    case "rejected":
+      setConnectionStatus("Credential rejected", "failed");
+      break;
+    default:
+      setConnectionStatus(
+        obInterface ? "Verifying credential…" : "Connecting…",
+        "connecting",
+      );
+  }
 }
 
 function setConnectionPanel(open: boolean): void {
@@ -2337,4 +2570,54 @@ function requiredElement<T extends Element>(selector: string): T {
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * A terminal error frame surfaced as a throwable, keeping the whole wire
+ * shape — code, category, and details — instead of flattening to a string.
+ * The message stays `CODE: text` so existing string-based presentation is
+ * unchanged for callers that never look deeper.
+ */
+class WireCallError extends Error {
+  constructor(readonly wire: OperationFrameError) {
+    super(`${wire.code}: ${wire.message}`);
+  }
+}
+
+const CALL_FAILURE_TEXT_CAP = 800;
+
+/**
+ * The text a failed call through ob should present. HTTP-transported
+ * failures carry the service's own diagnostic in details.body (the invoker
+ * contract: status line in message, response body in details) — that
+ * diagnostic always beats the bare status line the transport saw, which is
+ * how "HTTP 502 Bad Gateway" once hid an entire resolution trail explaining
+ * exactly why a target didn't resolve.
+ */
+function callFailureText(error: unknown): string {
+  if (error instanceof WireCallError) {
+    const details = error.wire.details as { body?: unknown } | null | undefined;
+    const body = typeof details?.body === "string" ? details.body.trim() : "";
+    if (body) {
+      let message = "";
+      try {
+        const parsed = JSON.parse(body) as Record<string, unknown>;
+        for (const key of ["error", "message", "detail"]) {
+          if (typeof parsed[key] === "string" && parsed[key]) {
+            message = parsed[key] as string;
+            break;
+          }
+        }
+      } catch {
+        // Not JSON — a short prose body is still better than a status line.
+        if (!body.startsWith("<")) message = body;
+      }
+      if (message) {
+        return message.length > CALL_FAILURE_TEXT_CAP
+          ? `${message.slice(0, CALL_FAILURE_TEXT_CAP)}…`
+          : message;
+      }
+    }
+  }
+  return errorText(error);
 }
