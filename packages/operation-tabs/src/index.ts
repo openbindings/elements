@@ -205,39 +205,33 @@ export class OperationTabsElement extends OpenBindingsElement {
       // The button's popovertarget does the toggling — the UA's invoker
       // relationship is what stops light-dismiss-then-reopen on the same
       // click, which a manual togglePopover() call reintroduces.
+      // Everything hangs off beforetoggle alone: Safari does not fire the
+      // popover `toggle` event (dogfood, rev 13.5 — a two-stage
+      // position-then-refine split left Safari holding the unrefined stage
+      // forever). Geometry is measured one frame later, when the top-layer
+      // box has real layout; until then CSS parks the box off-screen, so
+      // there is no misplaced first paint to flicker.
       menuPopover.addEventListener("beforetoggle", event => {
         const open =
           (event as Event & { newState?: string }).newState === "open";
         menuToggle.setAttribute("aria-expanded", String(open));
         if (!open) return;
-        // beforetoggle runs synchronously inside showPopover, before the
-        // first top-layer paint — no centered-popover flicker. The popover
-        // has no layout yet, so anchor-only geometry: pin its right edge
-        // under the toggle's right edge via translateX.
-        const anchor = menuToggle.getBoundingClientRect();
-        menuPopover.style.top = `${anchor.bottom + 4}px`;
-        menuPopover.style.left = `${anchor.right}px`;
-        menuPopover.style.transform = "translateX(-100%)";
-      });
-      menuPopover.addEventListener("toggle", event => {
-        if ((event as Event & { newState?: string }).newState !== "open") {
-          return;
-        }
-        // Refinement with real layout: keep the box on-screen. A strip near
-        // the viewport bottom flips the menu above its anchor — "below the
-        // button" that renders below the fold is the clipped-popover bug in
-        // a new costume.
-        const anchor = menuToggle.getBoundingClientRect();
-        const box = menuPopover.getBoundingClientRect();
-        const below = anchor.bottom + 4;
-        const flip =
-          below + box.height > window.innerHeight &&
-          anchor.top - 4 - box.height >= 0;
-        menuPopover.style.top = flip
-          ? `${anchor.top - 4 - box.height}px`
-          : `${below}px`;
-        menuPopover.style.left = `${Math.max(8, anchor.right - box.width)}px`;
-        menuPopover.style.transform = "none";
+        requestAnimationFrame(() => {
+          if (!menuPopover.matches(":popover-open")) return;
+          const anchor = menuToggle.getBoundingClientRect();
+          const box = menuPopover.getBoundingClientRect();
+          const below = anchor.bottom + 4;
+          // A strip near the viewport bottom flips the menu above its
+          // anchor — "below the button" past the fold is the clipped-popover
+          // bug in a new costume.
+          const flip =
+            below + box.height > window.innerHeight &&
+            anchor.top - 4 - box.height >= 0;
+          menuPopover.style.top = flip
+            ? `${anchor.top - 4 - box.height}px`
+            : `${below}px`;
+          menuPopover.style.left = `${Math.max(8, anchor.right - box.width)}px`;
+        });
       });
     } else {
       menuPopover.removeAttribute("popover");
@@ -774,19 +768,31 @@ const styles = `
   }
 
   /*
-   * Top-layer mode. The UA centers open popovers (inset 0 + margin auto)
-   * and display:none's closed ones — clear the centering, let the toggle
-   * handler pin the box under the button, and only claim a display when
-   * actually open so the UA's closed state stays in charge.
+   * Top-layer mode. UA popover defaults (inset 0, margin auto, fit-content
+   * sizing) vary across engines and versions — every geometry property is
+   * pinned here as an explicit LONGHAND so no engine's defaults can leak
+   * through and stretch the box (Safari did exactly that, rev 13.5; an
+   * inset:auto shorthand was not enough). The off-screen left parks the
+   * first open until the rAF positioner has real layout to measure; display
+   * is only claimed when actually open so the UA's closed state stays in
+   * charge.
    */
   .menu-popover[popover] {
     position: fixed;
+    top: 0;
+    right: auto;
+    bottom: auto;
+    left: -9999px;
+    width: 12rem;
+    height: fit-content;
+    max-height: calc(100vh - 2rem);
     margin: 0;
-    inset: auto;
+    overflow: auto;
   }
 
   .menu-popover[popover]:popover-open {
     display: grid;
+    align-content: start;
   }
 
   /*
