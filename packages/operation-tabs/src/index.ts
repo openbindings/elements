@@ -49,6 +49,9 @@ export class OperationTabsElement extends OpenBindingsElement {
   #dragKey: string | null = null;
   #scrolledKey: string | null = null;
   #resizeObserver: ResizeObserver | null = null;
+  // Bound by the shell wiring; closes the action menu in whichever
+  // presentation mode (top-layer popover or fallback) is active.
+  #closeMenu: () => void = () => {};
 
   get tabs(): readonly OperationTab[] {
     return this.#tabs;
@@ -184,12 +187,82 @@ export class OperationTabsElement extends OpenBindingsElement {
       this.#resizeObserver.observe(list);
     }
 
-    refs.require(".menu-popover").addEventListener("click", event => {
+    // The action popover renders in the TOP LAYER via the native Popover API.
+    // Hosts routinely clip the strip (the reference app guards grid blowout
+    // with `overflow: hidden` on the element) and an absolutely-positioned
+    // popover dies invisibly inside that clip — the menu "opened" under the
+    // panel below the strip and every click fell through (rev 13.4). The top
+    // layer escapes every ancestor clip and stacking context by definition,
+    // and popover="auto" brings light dismiss and Esc for free. Where the
+    // API is missing the popover falls back to the clippable absolute
+    // presentation — degraded, never dead.
+    const menuToggle = refs.require<HTMLButtonElement>(".menu-toggle");
+    const menuPopover = refs.require<HTMLElement>(".menu-popover");
+    const popoverSupported = typeof (menuPopover as HTMLElement & {
+      togglePopover?: () => void;
+    }).togglePopover === "function";
+    if (popoverSupported) {
+      // The button's popovertarget does the toggling — the UA's invoker
+      // relationship is what stops light-dismiss-then-reopen on the same
+      // click, which a manual togglePopover() call reintroduces.
+      menuPopover.addEventListener("beforetoggle", event => {
+        const open =
+          (event as Event & { newState?: string }).newState === "open";
+        menuToggle.setAttribute("aria-expanded", String(open));
+        if (!open) return;
+        // beforetoggle runs synchronously inside showPopover, before the
+        // first top-layer paint — no centered-popover flicker. The popover
+        // has no layout yet, so anchor-only geometry: pin its right edge
+        // under the toggle's right edge via translateX.
+        const anchor = menuToggle.getBoundingClientRect();
+        menuPopover.style.top = `${anchor.bottom + 4}px`;
+        menuPopover.style.left = `${anchor.right}px`;
+        menuPopover.style.transform = "translateX(-100%)";
+      });
+      menuPopover.addEventListener("toggle", event => {
+        if ((event as Event & { newState?: string }).newState !== "open") {
+          return;
+        }
+        // Refinement with real layout: keep the box on-screen. A strip near
+        // the viewport bottom flips the menu above its anchor — "below the
+        // button" that renders below the fold is the clipped-popover bug in
+        // a new costume.
+        const anchor = menuToggle.getBoundingClientRect();
+        const box = menuPopover.getBoundingClientRect();
+        const below = anchor.bottom + 4;
+        const flip =
+          below + box.height > window.innerHeight &&
+          anchor.top - 4 - box.height >= 0;
+        menuPopover.style.top = flip
+          ? `${anchor.top - 4 - box.height}px`
+          : `${below}px`;
+        menuPopover.style.left = `${Math.max(8, anchor.right - box.width)}px`;
+        menuPopover.style.transform = "none";
+      });
+    } else {
+      menuPopover.removeAttribute("popover");
+      menuPopover.classList.add("fallback");
+      menuPopover.hidden = true;
+      menuToggle.addEventListener("click", () => {
+        menuPopover.hidden = !menuPopover.hidden;
+        menuToggle.setAttribute("aria-expanded", String(!menuPopover.hidden));
+      });
+    }
+    this.#closeMenu = () => {
+      if (popoverSupported) {
+        (menuPopover as HTMLElement & { hidePopover: () => void }).hidePopover();
+      } else {
+        menuPopover.hidden = true;
+        menuToggle.setAttribute("aria-expanded", "false");
+      }
+    };
+
+    menuPopover.addEventListener("click", event => {
       const action = (event.target as HTMLElement | null)?.closest<HTMLElement>(
         "[data-action]",
       )?.dataset.action;
       if (!action) return;
-      refs.find<HTMLDetailsElement>(".menu")?.removeAttribute("open");
+      this.#closeMenu();
       if (action === "move-left") this.#requestActiveMove(-1);
       else if (action === "move-right") this.#requestActiveMove(1);
       else if (action === "close-unselected") {
@@ -464,15 +537,15 @@ const SHELL = `
   <div class="container" part="container">
     <div class="tab-list" part="tab-list" role="tablist" aria-label="Open operations"></div>
     <p class="empty" part="empty">No operations open</p>
-    <details class="menu" part="menu">
-      <summary aria-label="Operation tab actions" title="Operation tab actions">•••</summary>
-      <div class="menu-popover">
+    <div class="menu" part="menu">
+      <button type="button" class="menu-toggle" popovertarget="tabs-menu-popover" aria-haspopup="menu" aria-expanded="false" aria-label="Operation tab actions" title="Operation tab actions">•••</button>
+      <div class="menu-popover" id="tabs-menu-popover" popover="auto">
         <button type="button" data-action="move-left">Move active tab left</button>
         <button type="button" data-action="move-right">Move active tab right</button>
         <button type="button" data-action="close-unselected">Close other tabs</button>
         <button type="button" data-action="close-all">Close all tabs</button>
       </div>
-    </details>
+    </div>
   </div>
 `;
 
@@ -678,32 +751,55 @@ const styles = `
     display: none;
   }
 
-  .menu > summary {
+  .menu-toggle {
     display: grid;
     width: 2.5rem;
     height: 100%;
     min-height: 2.25rem;
+    padding: 0;
     place-items: center;
-    list-style: none;
+    background: none;
+    border: 0;
     cursor: pointer;
   }
 
-  .menu > summary::-webkit-details-marker {
-    display: none;
+  .menu-popover {
+    width: 12rem;
+    padding: 0.3rem;
+    color: var(--_ob-color-text);
+    background: var(--_ob-color-background);
+    border: 1px solid var(--_ob-color-border);
+    border-radius: var(--_ob-radius);
+    box-shadow: var(--_ob-shadow);
   }
 
-  .menu-popover {
+  /*
+   * Top-layer mode. The UA centers open popovers (inset 0 + margin auto)
+   * and display:none's closed ones — clear the centering, let the toggle
+   * handler pin the box under the button, and only claim a display when
+   * actually open so the UA's closed state stays in charge.
+   */
+  .menu-popover[popover] {
+    position: fixed;
+    margin: 0;
+    inset: auto;
+  }
+
+  .menu-popover[popover]:popover-open {
+    display: grid;
+  }
+
+  /*
+   * Popover-less fallback: the pre-top-layer presentation, subject to
+   * ancestor clipping — degraded, never dead. Hidden toggling relies on the
+   * base [hidden] guard.
+   */
+  .menu-popover.fallback {
     position: absolute;
     top: calc(100% + 0.25rem);
     right: 0.25rem;
     z-index: 10;
     display: grid;
-    width: 12rem;
-    padding: 0.3rem;
-    background: var(--_ob-color-background);
-    border: 1px solid var(--_ob-color-border);
-    border-radius: var(--_ob-radius);
-    box-shadow: var(--_ob-shadow);
   }
 
   .menu button {

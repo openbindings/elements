@@ -322,3 +322,66 @@ test("tab overflow hint fades the tabs themselves — no scrim painted over them
   expect(probe.settled.state).toBe("none");
   expect(probe.settled.listMask).toBe("none");
 });
+
+test("the tabs overflow menu escapes ancestor clipping and its actions fire", async ({
+  page,
+}) => {
+  // Dogfood report (rev 13.4): "the ••• more button doesn't work." It did
+  // open — but the popover painted inside the strip's box, and the app styles
+  // the strip with overflow:hidden (a standard grid-blowout guard), so the
+  // menu was clipped to invisibility and every click landed on the panel
+  // below. The popover must render in the top layer, above and outside any
+  // ancestor clip, and its actions must still reach the app.
+  const probe = await page.evaluate(async () => {
+    const wrap = document.createElement("div");
+    // The app's exact conditions: a clipping, strip-height box.
+    wrap.style.cssText = "overflow:hidden;width:28rem;";
+    const strip = document.createElement("ob-operation-tabs") as HTMLElement & {
+      tabs: { key: string; label: string }[];
+      activeKey: string | null;
+    };
+    strip.style.display = "block";
+    wrap.append(strip);
+    document.body.append(wrap);
+    strip.tabs = [
+      { key: "a", label: "alpha" },
+      { key: "b", label: "beta" },
+      { key: "c", label: "gamma" },
+    ];
+    strip.activeKey = "a";
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    let closeAll = 0;
+    strip.addEventListener("ob-tabs-close-all", () => {
+      closeAll += 1;
+    });
+    const root = strip.shadowRoot!;
+    root.querySelector<HTMLButtonElement>(".menu-toggle")!.click();
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    const pop = root.querySelector<HTMLElement>(".menu-popover")!;
+    const rect = pop.getBoundingClientRect();
+    const top = document.elementFromPoint(
+      rect.x + rect.width / 2,
+      rect.y + rect.height / 2,
+    );
+    const closeButton = pop.querySelector<HTMLButtonElement>(
+      '[data-action="close-all"]',
+    )!;
+    closeButton.click();
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    const openAfter = pop.matches(":popover-open");
+    const state = {
+      area: rect.width * rect.height,
+      topIsStrip: top === strip,
+      closeAll,
+      openAfter,
+    };
+    wrap.remove();
+    return state;
+  });
+  expect(probe.area).toBeGreaterThan(0);
+  // Top layer: what the user hits at the popover's center is the strip's
+  // shadow content, not whatever the layout put beneath the clip.
+  expect(probe.topIsStrip).toBe(true);
+  expect(probe.closeAll).toBe(1);
+  expect(probe.openAfter).toBe(false);
+});
