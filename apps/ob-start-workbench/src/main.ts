@@ -82,12 +82,36 @@ const connectionStatusText = requiredElement<HTMLElement>(
 );
 const bootstrapMessage = requiredElement<HTMLElement>("#bootstrap-message");
 const livenessNotice = requiredElement<HTMLElement>("#liveness-notice");
-const targetForm = requiredElement<HTMLFormElement>("#target-form");
-const targetURL = requiredElement<HTMLInputElement>("#target-url");
-const resolveTargetButton =
-  requiredElement<HTMLButtonElement>("#resolve-target");
-const useLocalTargetButton =
-  requiredElement<HTMLButtonElement>("#use-local-target");
+// Document bar (review/100 P1/P3): identity + verbs, no URL in the header.
+const documentName = requiredElement<HTMLButtonElement>("#document-name");
+const documentValidity = requiredElement<HTMLElement>("#document-validity");
+const documentDirtyMarker = requiredElement<HTMLElement>("#document-dirty");
+const documentMeta = requiredElement<HTMLElement>("#document-meta");
+const docNewButton = requiredElement<HTMLButtonElement>("#doc-new");
+const docOpenButton = requiredElement<HTMLButtonElement>("#doc-open");
+const docAddButton = requiredElement<HTMLButtonElement>("#doc-add");
+const docExportButton = requiredElement<HTMLButtonElement>("#doc-export");
+const ingestDialog = requiredElement<HTMLDialogElement>("#ingest-dialog");
+const ingestTitle = requiredElement<HTMLElement>("#ingest-title");
+const openUrlInput = requiredElement<HTMLInputElement>("#open-url");
+const ingestUrlSubmit = requiredElement<HTMLButtonElement>("#ingest-url-submit");
+const openPasteInput = requiredElement<HTMLTextAreaElement>("#open-paste");
+const ingestPasteSubmit = requiredElement<HTMLButtonElement>(
+  "#ingest-paste-submit",
+);
+const openFileInput = requiredElement<HTMLInputElement>("#open-file");
+const ingestOpenExtras = requiredElement<HTMLElement>("#ingest-open-extras");
+const openThisOBButton = requiredElement<HTMLButtonElement>("#open-this-ob");
+const openRecents = requiredElement<HTMLElement>("#open-recents");
+const ingestCancel = requiredElement<HTMLButtonElement>("#ingest-cancel");
+const renameDialog = requiredElement<HTMLDialogElement>("#rename-dialog");
+const renameForm = requiredElement<HTMLFormElement>("#rename-form");
+const renameName = requiredElement<HTMLInputElement>("#rename-name");
+const renameVersion = requiredElement<HTMLInputElement>("#rename-version");
+const renameDescription = requiredElement<HTMLTextAreaElement>(
+  "#rename-description",
+);
+const renameCancel = requiredElement<HTMLButtonElement>("#rename-cancel");
 const connectionToggle =
   requiredElement<HTMLButtonElement>("#connection-toggle");
 const connectionPanel =
@@ -131,10 +155,6 @@ const requirementFields =
 const applyRequirementsButton = requiredElement<HTMLButtonElement>(
   "#apply-requirements",
 );
-const currentTargetLabel = requiredElement<HTMLElement>(
-  "#current-target-label",
-);
-const currentTargetMeta = requiredElement<HTMLElement>("#current-target-meta");
 const requirementBanner =
   requiredElement<HTMLElement>("#requirement-banner");
 const requirementBannerTitle = requiredElement<HTMLElement>(
@@ -383,6 +403,7 @@ applyInterfaceDraft.addEventListener("click", () => {
       ? previousOperation
       : null) ?? Object.keys(draft.operations)[0];
   if (!selectedOperationKey && preferred) activateOperation(preferred);
+  markDocument(true);
   bootstrapMessage.textContent =
     "Local draft applied to the workspace. The source artifact has not been saved.";
 });
@@ -469,16 +490,353 @@ applyGraphDraft.addEventListener("click", () => {
   applyActiveGraphDraft();
 });
 
-targetForm.addEventListener("submit", event => {
-  event.preventDefault();
-  const address = targetURL.value.trim();
-  if (address) void resolveTarget(address);
+// --- The document model (review/100) ---------------------------------------
+//
+// The workbench holds one living OBI document; every verb below is a contract
+// operation (or a composition of them) applied to it. Acquisition is an
+// action inside the Open/Add flows, never a header identity (P3). The parity
+// gate (scripts/parity-gates.mjs) holds this file to that claim.
+
+let documentIsDirty = false;
+let validationAttempt = 0;
+type IngestMode = "open" | "add";
+let ingestMode: IngestMode = "open";
+
+function markDocument(dirty: boolean): void {
+  documentIsDirty = dirty;
+  documentDirtyMarker.hidden = !dirty;
+}
+
+function documentKey(obi: OBInterface): string {
+  return `doc:${obi.name?.trim() || "unnamed"}@${obi.version?.trim() || "0"}`;
+}
+
+function renderDocumentBar(obi: OBInterface): void {
+  documentName.textContent = obi.name?.trim() || "Untitled interface";
+  const operationCount = Object.keys(obi.operations).length;
+  const sourceCount = Object.keys(obi.sources ?? {}).length;
+  documentMeta.textContent =
+    `${operationCount} operation${operationCount === 1 ? "" : "s"} · ` +
+    `${sourceCount} source${sourceCount === 1 ? "" : "s"}`;
+  void refreshDocumentValidity(obi);
+}
+
+/**
+ * The validity chip is the contract's own verdict: validateInterface runs
+ * against the live document on every document change. A chip that cannot
+ * reach the server says "—", never a stale "Valid".
+ */
+async function refreshDocumentValidity(obi: OBInterface): Promise<void> {
+  const attempt = ++validationAttempt;
+  if (!obInterface) return;
+  // Same rule as preflight (rev 13): no authenticated call before the
+  // session credential is verified — a guaranteed 401 is noise, not honesty.
+  if (sessionAuth !== "verified") {
+    documentValidity.textContent = "—";
+    documentValidity.className = "badge";
+    return;
+  }
+  documentValidity.textContent = "…";
+  documentValidity.className = "badge";
+  documentValidity.removeAttribute("title");
+  try {
+    const report = await invokeThroughOB<
+      { interface: OBInterface },
+      { valid: boolean; problems?: string[] }
+    >(obInterface, "openbindings.ob.validateInterface", { interface: obi });
+    if (attempt !== validationAttempt) return;
+    if (report.valid) {
+      documentValidity.textContent = "Valid";
+      documentValidity.className = "badge connected";
+    } else {
+      const problems = report.problems ?? [];
+      documentValidity.textContent = problems.length
+        ? `${problems.length} problem${problems.length === 1 ? "" : "s"}`
+        : "Invalid";
+      documentValidity.className = "badge danger";
+      documentValidity.title = problems.slice(0, 6).join("\n");
+    }
+  } catch {
+    if (attempt !== validationAttempt) return;
+    documentValidity.textContent = "—";
+    documentValidity.className = "badge";
+  }
+}
+
+// Recents are Open-flow UI, not document management (P4): a small index of
+// documents this browser opened or exported, restorable when small enough to
+// store whole.
+const recentsStorageKey = "openbindings.ob-start.recent-documents.v1";
+const recentDocumentByteCap = 262_144;
+interface RecentDocument {
+  name: string;
+  version: string;
+  operations: number;
+  sources: number;
+  savedAt: number;
+  doc?: OBInterface;
+}
+
+function recentsLoad(): RecentDocument[] {
+  try {
+    const raw = globalThis.localStorage.getItem(recentsStorageKey);
+    const parsed = raw ? (JSON.parse(raw) as RecentDocument[]) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function recentsRemember(obi: OBInterface): void {
+  try {
+    const entry: RecentDocument = {
+      name: obi.name?.trim() || "Untitled interface",
+      version: obi.version?.trim() || "",
+      operations: Object.keys(obi.operations).length,
+      sources: Object.keys(obi.sources ?? {}).length,
+      savedAt: Date.now(),
+    };
+    if (JSON.stringify(obi).length <= recentDocumentByteCap) entry.doc = obi;
+    const rest = recentsLoad().filter(
+      recent => recent.name !== entry.name || recent.version !== entry.version,
+    );
+    globalThis.localStorage.setItem(
+      recentsStorageKey,
+      JSON.stringify([entry, ...rest].slice(0, 8)),
+    );
+  } catch {
+    // Quota or serialization trouble — recents are best-effort by design.
+  }
+}
+
+function renderRecents(): void {
+  const entries = recentsLoad().filter(recent => recent.doc);
+  openRecents.replaceChildren();
+  if (entries.length === 0) return;
+  const heading = document.createElement("p");
+  heading.className = "eyebrow";
+  heading.textContent = "Recent documents";
+  openRecents.append(heading);
+  for (const entry of entries) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent =
+      `${entry.name}${entry.version ? ` @ ${entry.version}` : ""}` +
+      ` · ${entry.operations} operation${entry.operations === 1 ? "" : "s"}`;
+    button.addEventListener("click", () => {
+      closeIngestDialog();
+      openDocument(entry.doc!, "recent document");
+    });
+    openRecents.append(button);
+  }
+}
+
+/** Commit path for every Open: navigation semantics, clean document. */
+function openDocument(obi: OBInterface, provenance: string): void {
+  resolveAttempt += 1;
+  setTarget(obi, obi.name?.trim() || provenance, documentKey(obi));
+  const first = Object.keys(obi.operations)[0];
+  if (!selectedOperationKey && first) activateOperation(first);
+  markDocument(false);
+  recentsRemember(obi);
+}
+
+function openIngestDialog(mode: IngestMode): void {
+  ingestMode = mode;
+  ingestTitle.textContent =
+    mode === "open" ? "Open a document" : "Add to this document";
+  ingestOpenExtras.hidden = mode !== "open";
+  openUrlInput.value = "";
+  openPasteInput.value = "";
+  if (mode === "open") renderRecents();
+  ingestDialog.showModal();
+  openUrlInput.focus();
+}
+
+function closeIngestDialog(): void {
+  ingestDialog.close();
+}
+
+docOpenButton.addEventListener("click", () => openIngestDialog("open"));
+docAddButton.addEventListener("click", () => openIngestDialog("add"));
+ingestCancel.addEventListener("click", closeIngestDialog);
+
+ingestUrlSubmit.addEventListener("click", () => {
+  const address = openUrlInput.value.trim();
+  if (!address) return;
+  const mode = ingestMode;
+  closeIngestDialog();
+  if (mode === "open") void resolveTarget(address);
+  else void addSourceToDocument(address);
 });
 
-useLocalTargetButton.addEventListener("click", () => {
+ingestPasteSubmit.addEventListener("click", () => {
+  void ingestPastedInterface(openPasteInput.value);
+});
+
+openFileInput.addEventListener("change", async () => {
+  const file = openFileInput.files?.[0];
+  if (!file) return;
+  const text = await file.text();
+  openFileInput.value = "";
+  void ingestPastedInterface(text);
+});
+
+async function ingestPastedInterface(text: string): Promise<void> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    bootstrapMessage.textContent =
+      "That is not JSON. Paste an OpenBindings interface document — for raw " +
+      "artifacts (OpenAPI, AsyncAPI, …) use the URL path and the server " +
+      "synthesizes an interface from them.";
+    return;
+  }
+  const candidate = parsed as OBInterface;
+  if (
+    !candidate ||
+    typeof candidate !== "object" ||
+    typeof (candidate as { operations?: unknown }).operations !== "object"
+  ) {
+    bootstrapMessage.textContent =
+      "That JSON is not an OpenBindings interface (no operations map). For " +
+      "raw artifacts use the URL path.";
+    return;
+  }
+  const mode = ingestMode;
+  closeIngestDialog();
+  if (mode === "open") {
+    openDocument(candidate, "pasted interface");
+    bootstrapMessage.textContent = `Opened ${
+      candidate.name?.trim() || "interface"
+    } from pasted JSON.`;
+  } else {
+    await mergeIntoDocument(candidate);
+  }
+}
+
+/**
+ * The Add flow is resolveInterface + mergeInterfaces: the server detects the
+ * artifact's format and synthesizes an interface (source entries included),
+ * then a plain merge folds its operations, bindings, and sources into the
+ * living document — one fetch chain, both contract operations. Explicit
+ * source registration without a merge (addSource, which requires a known
+ * bindingSpec up front) is deferred to the sources panel work (14.1).
+ */
+async function addSourceToDocument(address: string): Promise<void> {
+  if (!obInterface || !targetInterface) return;
+  const before = targetInterface;
+  bootstrapMessage.textContent = `Adding ${address} to the document…`;
+  try {
+    const resolved = await invokeThroughOB<
+      { address: string },
+      ResolveInterfaceOutput
+    >(obInterface, "openbindings.ob.resolveInterface", { address });
+    const merged = await invokeThroughOB<
+      { target: OBInterface; source: OBInterface },
+      { interface?: OBInterface; applied?: number }
+    >(obInterface, "openbindings.ob.mergeInterfaces", {
+      target: before,
+      source: resolved.interface,
+    });
+    if (!merged.interface) {
+      bootstrapMessage.textContent = "The merge returned no interface.";
+      return;
+    }
+    updateCurrentTarget(merged.interface, targetLabel);
+    markDocument(true);
+    const sourceCountDelta =
+      Object.keys(merged.interface.sources ?? {}).length -
+      Object.keys(before.sources ?? {}).length;
+    bootstrapMessage.textContent =
+      `Added ${resolved.interface.name?.trim() || address} — ` +
+      `${merged.applied ?? 0} change${(merged.applied ?? 0) === 1 ? "" : "s"} merged, ` +
+      `${sourceCountDelta} source${sourceCountDelta === 1 ? "" : "s"} registered.`;
+  } catch (error) {
+    bootstrapMessage.textContent = callFailureText(error);
+  }
+}
+
+async function mergeIntoDocument(source: OBInterface): Promise<void> {
+  if (!obInterface || !targetInterface) return;
+  try {
+    const merged = await invokeThroughOB<
+      { target: OBInterface; source: OBInterface },
+      { interface?: OBInterface; applied?: number }
+    >(obInterface, "openbindings.ob.mergeInterfaces", {
+      target: targetInterface,
+      source,
+    });
+    if (!merged.interface) {
+      bootstrapMessage.textContent = "The merge returned no interface.";
+      return;
+    }
+    updateCurrentTarget(merged.interface, targetLabel);
+    markDocument(true);
+    bootstrapMessage.textContent = `Merged ${
+      source.name?.trim() || "interface"
+    } — ${merged.applied ?? 0} change${
+      (merged.applied ?? 0) === 1 ? "" : "s"
+    } applied.`;
+  } catch (error) {
+    bootstrapMessage.textContent = callFailureText(error);
+  }
+}
+
+docNewButton.addEventListener("click", async () => {
+  if (
+    documentIsDirty &&
+    !(await confirmChange(
+      "Start a new document?",
+      "Unsaved changes in the current document will be lost. Export first to keep them.",
+      "New document",
+    ))
+  ) {
+    return;
+  }
   if (!obInterface) return;
+  try {
+    const fresh = await invokeThroughOB<
+      { name: string; version: string },
+      OBInterface
+    >(obInterface, "openbindings.ob.newInterface", {
+      name: "untitled-interface",
+      version: "0.1.0",
+    });
+    resolveAttempt += 1;
+    setTarget(fresh, "new document", documentKey(fresh));
+    markDocument(false);
+    bootstrapMessage.textContent =
+      "New empty document. Add a source, or author operations in the Document pane.";
+  } catch (error) {
+    bootstrapMessage.textContent = callFailureText(error);
+  }
+});
+
+docExportButton.addEventListener("click", () => {
+  if (!targetInterface) return;
+  const json = JSON.stringify(targetInterface, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  const stem = (targetInterface.name?.trim() || "interface").replace(
+    /[^\w.-]+/g,
+    "-",
+  );
+  anchor.download = `${stem}.obi.json`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+  markDocument(false);
+  recentsRemember(targetInterface);
+  bootstrapMessage.textContent = `Exported ${anchor.download}.`;
+});
+
+openThisOBButton.addEventListener("click", () => {
+  if (!obInterface) return;
+  closeIngestDialog();
   resolveAttempt += 1;
-  targetURL.value = "";
   setTarget(
     obInterface,
     "This ob start instance",
@@ -489,9 +847,50 @@ useLocalTargetButton.addEventListener("click", () => {
       ? "openbindings.ob.describe"
       : Object.keys(obInterface.operations)[0];
   if (!selectedOperationKey && preferred) activateOperation(preferred);
+  markDocument(false);
   bootstrapMessage.textContent =
     "Using this ob start instance through its published OpenBindings interface.";
 });
+
+documentName.addEventListener("click", () => {
+  if (!targetInterface) return;
+  renameName.value = targetInterface.name ?? "";
+  renameVersion.value = targetInterface.version ?? "";
+  renameDescription.value = targetInterface.description ?? "";
+  renameDialog.showModal();
+});
+
+renameCancel.addEventListener("click", () => renameDialog.close());
+
+renameForm.addEventListener("submit", event => {
+  event.preventDefault();
+  void commitRename();
+});
+
+async function commitRename(): Promise<void> {
+  if (!obInterface || !targetInterface) return;
+  try {
+    const next = await invokeThroughOB<
+      Record<string, unknown>,
+      OBInterface
+    >(obInterface, "openbindings.ob.setMetadata", {
+      interface: targetInterface,
+      ...(renameName.value.trim() ? { name: renameName.value.trim() } : {}),
+      ...(renameVersion.value.trim()
+        ? { version: renameVersion.value.trim() }
+        : {}),
+      ...(renameDescription.value.trim()
+        ? { description: renameDescription.value.trim() }
+        : {}),
+    });
+    renameDialog.close();
+    updateCurrentTarget(next, next.name?.trim() || targetLabel);
+    markDocument(true);
+  } catch (error) {
+    renameDialog.close();
+    bootstrapMessage.textContent = callFailureText(error);
+  }
+}
 
 connectionToggle.addEventListener("click", () => {
   setConnectionPanel(connectionPanel.hidden);
@@ -847,8 +1246,15 @@ function applySessionProbe(result: SessionProbeResult): void {
   }
   serverHealth = "up";
   setLivenessNotice(false);
+  const wasVerified = sessionAuth === "verified";
   sessionAuth = result;
   renderSessionState();
+  // The validity chip waits for a verified credential (it is a real
+  // contract call); the first verification back-fills it for the document
+  // that loaded while auth was still checking.
+  if (!wasVerified && sessionAuth === "verified" && targetInterface) {
+    void refreshDocumentValidity(targetInterface);
+  }
   if (result === "rejected") {
     setConnectionPanel(true);
     tokenInput.focus();
@@ -957,8 +1363,6 @@ async function resolveTarget(address: string): Promise<void> {
     return;
   }
   const attempt = ++resolveAttempt;
-  resolveTargetButton.disabled = true;
-  resolveTargetButton.textContent = "Connecting…";
   bootstrapMessage.textContent = `Resolving ${address} through OpenBindings…`;
 
   try {
@@ -968,21 +1372,13 @@ async function resolveTarget(address: string): Promise<void> {
       { address },
     );
     if (attempt !== resolveAttempt) return;
-    const resolvedAddress = result.resolvedUrl ?? address;
-    setTarget(result.interface, resolvedAddress, resolvedAddress);
-    const first = Object.keys(result.interface.operations)[0];
-    if (!selectedOperationKey && first) activateOperation(first);
+    openDocument(result.interface, result.resolvedUrl ?? address);
     bootstrapMessage.textContent = result.synthesizedFrom
       ? `Synthesized ${result.interface.name ?? "interface"} from ${result.synthesizedFrom}.`
       : `Loaded ${result.interface.name ?? "interface"}.`;
   } catch (error) {
     if (attempt !== resolveAttempt) return;
     bootstrapMessage.textContent = callFailureText(error);
-  } finally {
-    if (attempt === resolveAttempt) {
-      resolveTargetButton.disabled = false;
-      resolveTargetButton.textContent = "Connect";
-    }
   }
 }
 
@@ -1071,11 +1467,7 @@ function setTarget(obi: OBInterface, label: string, sessionID: string): void {
   applyInterfaceDraft.disabled = true;
   applyTargetContext();
   renderTargetContextState();
-  currentTargetLabel.textContent = label;
-  const operationCount = Object.keys(obi.operations).length;
-  currentTargetMeta.textContent = `${operationCount} operation${
-    operationCount === 1 ? "" : "s"
-  }`;
+  renderDocumentBar(obi);
   restoreOperationTabs();
   refreshGraphSurface();
 }
@@ -1145,11 +1537,10 @@ function updateCurrentTarget(obi: OBInterface, label: string): void {
   interfaceEditor.value = obi;
   pendingInterfaceDraft = null;
   applyInterfaceDraft.disabled = true;
-  currentTargetLabel.textContent = label;
-  const operationCount = Object.keys(obi.operations).length;
-  currentTargetMeta.textContent = `${operationCount} operation${
-    operationCount === 1 ? "" : "s"
-  }`;
+  renderDocumentBar(obi);
+  // Every reconcile is an edit to the living document (source pull/remove,
+  // binding removal, metadata, merges) — the dirty marker reflects it.
+  markDocument(true);
 
   if (previousOperation && obi.operations[previousOperation]) {
     activateOperation(previousOperation);
@@ -1322,7 +1713,9 @@ function restoreOperationTabs(): void {
   let restoredKeys: string[] = [];
   let restoredActive: string | null = null;
   try {
-    const raw = globalThis.localStorage.getItem(operationTabsStorageKey());
+    // Per-tab working state (review/100 P4/P6): sessionStorage survives a
+    // reload, dies with the tab, and two tabs can never trample each other.
+    const raw = globalThis.sessionStorage.getItem(operationTabsStorageKey());
     const parsed = raw ? (JSON.parse(raw) as unknown) : null;
     if (isRecord(parsed) && Array.isArray(parsed.keys)) {
       restoredKeys = parsed.keys
@@ -1358,7 +1751,7 @@ function restoreOperationTabs(): void {
 function persistOperationTabs(): void {
   if (!targetSessionID) return;
   try {
-    globalThis.localStorage.setItem(
+    globalThis.sessionStorage.setItem(
       operationTabsStorageKey(),
       JSON.stringify({
         keys: openOperationKeys,

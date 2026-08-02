@@ -2,6 +2,17 @@ import { expect, test } from "@playwright/test";
 
 const browserErrors = new WeakMap<object, string[]>();
 
+// Rev 14 (review/100): acquisition is an action inside the Open flow, not a
+// header identity. Every URL ingest in this suite goes through the dialog.
+async function openTargetUrl(
+  page: import("@playwright/test").Page,
+  address: string,
+): Promise<void> {
+  await page.locator("#doc-open").click();
+  await page.locator("#open-url").fill(address);
+  await page.locator("#ingest-url-submit").click();
+}
+
 test.beforeEach(async ({ page }) => {
   const errors: string[] = [];
   browserErrors.set(page, errors);
@@ -37,9 +48,7 @@ test("the embedded workbench invokes ob start through its published interface", 
     ),
   ).toBe(true);
   await expect(page.locator("#connection-panel")).toBeHidden();
-  await expect(page.locator("#current-target-label")).toHaveText(
-    "This ob start instance",
-  );
+  await expect(page.locator("#document-name")).toHaveText("ob");
   const explorer = page.locator("ob-obi-explorer");
   const detail = page.locator("ob-operation-detail");
   const workbench = page.locator("ob-operation-workbench:not([hidden])");
@@ -295,9 +304,7 @@ test("document, source, and graph elements compose through explicit local drafts
   );
   await expect(page.locator("#apply-interface-draft")).toBeEnabled();
   await page.locator("#apply-interface-draft").click();
-  await expect(page.locator("#current-target-label")).toContainText(
-    "local draft",
-  );
+  await expect(page.locator("#document-dirty")).toBeVisible();
 
   const explorer = page.locator("ob-obi-explorer");
   await explorer.locator('input[type="search"]').fill("graphDemo");
@@ -420,10 +427,7 @@ test("a raw API artifact is synthesized and invoked without a browser binding-fa
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
 
-  await page
-    .locator("#target-url")
-    .fill("http://127.0.0.1:20391/openapi.yaml");
-  await page.locator("#resolve-target").click();
+  await openTargetUrl(page, "http://127.0.0.1:20391/openapi.yaml");
 
   await expect(page.locator("#bootstrap-message")).toContainText(
     "Synthesized ob start API",
@@ -452,13 +456,8 @@ test("target authentication is preflighted into focused fields", async ({
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
 
-  await page
-    .locator("#target-url")
-    .fill("http://127.0.0.1:20391/openapi.yaml");
-  await page.locator("#resolve-target").click();
-  await expect(page.locator("#current-target-label")).toContainText(
-    "openapi.yaml",
-  );
+  await openTargetUrl(page, "http://127.0.0.1:20391/openapi.yaml");
+  await expect(page.locator("#document-name")).toHaveText("ob start API");
 
   const explorer = page.locator("ob-obi-explorer");
   await explorer
@@ -517,13 +516,8 @@ test("local and target credentials remain visibly separate", async ({
     "Authenticated for this browser tab.",
   );
 
-  await page
-    .locator("#target-url")
-    .fill("http://127.0.0.1:20391/openapi.yaml");
-  await page.locator("#resolve-target").click();
-  await expect(page.locator("#current-target-label")).toContainText(
-    "openapi.yaml",
-  );
+  await openTargetUrl(page, "http://127.0.0.1:20391/openapi.yaml");
+  await expect(page.locator("#document-name")).toHaveText("ob start API");
   await expect(page.locator("#target-context-status")).toHaveText(
     "No target credentials configured.",
   );
@@ -535,19 +529,13 @@ test("a malformed target fails recoverably without replacing the current interfa
 }) => {
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
-  await expect(page.locator("#current-target-label")).toHaveText(
-    "This ob start instance",
-  );
+  await expect(page.locator("#document-name")).toHaveText("ob");
 
-  await page.locator("#target-url").fill("http://[::1");
-  await page.locator("#resolve-target").click();
+  await openTargetUrl(page, "http://[::1");
 
-  await expect(page.locator("#resolve-target")).toBeEnabled();
-  await expect(page.locator("#resolve-target")).toHaveText("Connect");
   await expect(page.locator("#bootstrap-message")).not.toBeEmpty();
-  await expect(page.locator("#current-target-label")).toHaveText(
-    "This ob start instance",
-  );
+  await expect(page.locator("#doc-open")).toBeEnabled();
+  await expect(page.locator("#document-name")).toHaveText("ob");
   await expect(
     page
       .locator("ob-operation-workbench:not([hidden])")
@@ -562,8 +550,8 @@ test("the complete primary flow remains usable without horizontal overflow on mo
   await page.goto("/#token=test-token");
 
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
-  await expect(page.locator("#target-url")).toBeVisible();
-  await expect(page.locator("#resolve-target")).toBeVisible();
+  await expect(page.locator("#doc-open")).toBeVisible();
+  await expect(page.locator("#doc-new")).toBeVisible();
   await expect(
     page
       .locator("ob-operation-workbench:not([hidden])")
@@ -592,12 +580,10 @@ test("multi-binding operations default to the author's preferred binding and run
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
 
-  await page.locator("#target-url").fill("http://127.0.0.1:20392");
-  await page.locator("#resolve-target").click();
-  await expect(page.locator("#current-target-label")).toHaveText(
-    "http://127.0.0.1:20392",
-    { timeout: 20_000 },
-  );
+  await openTargetUrl(page, "http://127.0.0.1:20392");
+  await expect(page.locator("#document-name")).toHaveText("OpenBlendings", {
+    timeout: 20_000,
+  });
 
   const explorer = page.locator("ob-obi-explorer");
   const workbench = page.locator("ob-operation-workbench:not([hidden])");
@@ -655,12 +641,10 @@ test("form input mode drives placeOrder through schema fields", async ({
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
 
-  await page.locator("#target-url").fill("http://127.0.0.1:20392");
-  await page.locator("#resolve-target").click();
-  await expect(page.locator("#current-target-label")).toHaveText(
-    "http://127.0.0.1:20392",
-    { timeout: 20_000 },
-  );
+  await openTargetUrl(page, "http://127.0.0.1:20392");
+  await expect(page.locator("#document-name")).toHaveText("OpenBlendings", {
+    timeout: 20_000,
+  });
 
   const explorer = page.locator("ob-obi-explorer");
   // placeAndTrack's summary mentions placeOrder, so match the key exactly.
@@ -711,10 +695,7 @@ test("a failed resolve reports the server's diagnostic, not a bare status line",
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
 
-  await page
-    .locator("#target-url")
-    .fill("http://127.0.0.1:20392/definitely-not-here.json");
-  await page.locator("#resolve-target").click();
+  await openTargetUrl(page, "http://127.0.0.1:20392/definitely-not-here.json");
 
   const message = page.locator("#bootstrap-message");
   await expect(message).toContainText("could not resolve an OBI", {
@@ -722,8 +703,6 @@ test("a failed resolve reports the server's diagnostic, not a bare status line",
   });
   await expect(message).not.toContainText("Bad Gateway");
   // Recoverable: the control returns and the current target is untouched.
-  await expect(page.locator("#resolve-target")).toHaveText("Connect");
-  await expect(page.locator("#current-target-label")).toHaveText(
-    "This ob start instance",
-  );
+  await expect(page.locator("#doc-open")).toBeEnabled();
+  await expect(page.locator("#document-name")).toHaveText("ob");
 });

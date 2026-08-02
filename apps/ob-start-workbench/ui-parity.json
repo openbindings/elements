@@ -1,0 +1,248 @@
+{
+  "openbindings.ob.newInterface": {
+    "status": "affordance",
+    "detail": "New document button in the document bar",
+    "selector": "#doc-new"
+  },
+  "openbindings.ob.setMetadata": {
+    "status": "affordance",
+    "detail": "document rename in the document bar",
+    "selector": "#document-name"
+  },
+  "openbindings.ob.addOperation": {
+    "status": "deferred",
+    "rev": 15,
+    "detail": "authoring verbs on the rail and detail panel"
+  },
+  "openbindings.ob.addOperationAlias": {
+    "status": "deferred",
+    "rev": 15,
+    "detail": "authoring verbs on the detail panel"
+  },
+  "openbindings.ob.removeOperation": {
+    "status": "deferred",
+    "rev": 15,
+    "detail": "authoring verbs on the rail and detail panel"
+  },
+  "openbindings.ob.removeOperationAlias": {
+    "status": "deferred",
+    "rev": 15,
+    "detail": "authoring verbs on the detail panel"
+  },
+  "openbindings.ob.renameOperation": {
+    "status": "deferred",
+    "rev": 15,
+    "detail": "authoring verbs on the detail panel"
+  },
+  "openbindings.ob.setOperation": {
+    "status": "deferred",
+    "rev": 15,
+    "detail": "authoring verbs on the detail panel"
+  },
+  "openbindings.ob.setOperationOutputSchema": {
+    "status": "deferred",
+    "rev": 15,
+    "detail": "authoring verbs on the detail panel"
+  },
+  "openbindings.ob.setOperationCodegenName": {
+    "status": "deferred",
+    "rev": 16,
+    "detail": "ships with the codegen export menu"
+  },
+  "openbindings.ob.mergeInterfaces": {
+    "status": "composed",
+    "detail": "Add flow: plain merge of the resolved artifact into the living document; also the paste-an-OBI Add path",
+    "selector": "#doc-add"
+  },
+  "openbindings.ob.conform": {
+    "status": "deferred",
+    "rev": 16,
+    "detail": "document tools menu, after authoring verbs"
+  },
+  "openbindings.ob.purifyInterface": {
+    "status": "deferred",
+    "rev": 16,
+    "detail": "document tools menu"
+  },
+  "openbindings.ob.resolveInterface": {
+    "status": "composed",
+    "detail": "URL path of the Open and Add flows",
+    "selector": "#open-url"
+  },
+  "openbindings.ob.synthesizeInterface": {
+    "status": "composed",
+    "detail": "synthesis happens inside resolveInterface on the URL path of Open/Add; the paste path accepts OBI JSON directly",
+    "selector": "#open-paste"
+  },
+  "openbindings.ob.addSource": {
+    "status": "deferred",
+    "rev": 14.1,
+    "detail": "explicit source registration UI; the Add flow merges the resolved artifact and its source entries ride along"
+  },
+  "openbindings.ob.listSources": {
+    "status": "covered",
+    "detail": "sources panel renders the document's sources directly"
+  },
+  "openbindings.ob.inspectSource": {
+    "status": "deferred",
+    "rev": 14.1,
+    "detail": "preview step inside the Add flow"
+  },
+  "openbindings.ob.pullSource": {
+    "status": "affordance",
+    "detail": "per-source Pull in the sources panel",
+    "selector": "pullSource"
+  },
+  "openbindings.ob.removeSource": {
+    "status": "affordance",
+    "detail": "per-source Remove in the sources panel",
+    "selector": "removeSource"
+  },
+  "openbindings.ob.bindOperation": {
+    "status": "deferred",
+    "rev": 15,
+    "detail": "binding verbs on the detail panel"
+  },
+  "openbindings.ob.detachOperation": {
+    "status": "deferred",
+    "rev": 15,
+    "detail": "binding verbs on the detail panel"
+  },
+  "openbindings.ob.unbindOperation": {
+    "status": "affordance",
+    "detail": "unbind in the detail bindings disclosure",
+    "selector": "unbindOperation"
+  },
+  "openbindings.ob.listBindings": {
+    "status": "covered",
+    "detail": "detail bindings disclosure renders the document's bindings directly"
+  },
+  "openbindings.ob.listBindingSpecs": {
+    "status": "deferred",
+    "rev": 14.1,
+    "detail": "Add flow: show which binding specs can be ingested"
+  },
+  "openbindings.ob.prepareBinding": {
+    "status": "internal",
+    "detail": "server-side invocation preflight path"
+  },
+  "openbindings.ob.invokeOperation": {
+    "status": "affordance",
+    "detail": "session Run through the operation invoker",
+    "selector": "ob-operation-workbench"
+  },
+  "openbindings.ob.invokeBinding": {
+    "status": "covered",
+    "detail": "binding select + Run expresses invocation via a chosen binding"
+  },
+  "openbindings.ob.prepareOperation": {
+    "status": "internal",
+    "detail": "requirement preflight before Run",
+    "selector": "prepareOperation"
+  },
+  "openbindings.ob.describe": {
+    "status": "internal",
+    "detail": "server pill auth probe and the This-ob open path",
+    "selector": "describe"
+  },
+  "openbindings.ob.listOperations": {
+    "status": "covered",
+    "detail": "the rail is listOperations made spatial"
+  },
+  "openbindings.ob.listOperationAliases": {
+    "status": "covered",
+    "detail": "detail alias chips render document aliases"
+  },
+  "openbindings.ob.validateInterface": {
+    "status": "affordance",
+    "detail": "document validity chip in the document bar",
+    "selector": "#document-validity"
+  },
+  "openbindings.ob.compareInterfaces": {
+    "status": "deferred",
+    "rev": 14.1,
+    "detail": "drift preview inside per-source Pull"
+  },
+  "openbindings.ob.reportInterfaceStatus": {
+    "status": "deferred",
+    "rev": 16,
+    "detail": "document tools menu"
+  },
+  "openbindings.ob.reportCompatibility": {
+    "status": "deferred",
+    "rev": 16,
+    "detail": "document tools menu"
+  },
+  "openbindings.ob.getContext": {
+    "status": "covered",
+    "detail": "Connection panel shows the tab's target context"
+  },
+  "openbindings.ob.setContext": {
+    "status": "covered",
+    "detail": "target context input merges configuration into invocations",
+    "selector": "#clear-target-context"
+  },
+  "openbindings.ob.removeContext": {
+    "status": "covered",
+    "detail": "Connection panel Clear target context",
+    "selector": "#clear-target-context"
+  },
+  "openbindings.ob.listContexts": {
+    "status": "deferred",
+    "rev": 16,
+    "detail": "Connection panel stored-context list"
+  },
+  "openbindings.ob.codegen": {
+    "status": "deferred",
+    "rev": 16,
+    "detail": "Export menu: export as typed invoker"
+  },
+  "openbindings.ob.registerDelegate": {
+    "status": "refused",
+    "detail": "instance administration; CLI surface. Reopen: a dogfood session needs delegate visibility to explain an invocation route."
+  },
+  "openbindings.ob.unregisterDelegate": {
+    "status": "refused",
+    "detail": "instance administration; CLI surface. Reopen: with registerDelegate."
+  },
+  "openbindings.ob.listDelegates": {
+    "status": "refused",
+    "detail": "instance administration; CLI surface. Reopen: with registerDelegate."
+  },
+  "openbindings.ob.resolveDelegate": {
+    "status": "refused",
+    "detail": "instance administration; CLI surface. Reopen: with registerDelegate."
+  },
+  "openbindings.ob.resolveDelegateForBindingSpec": {
+    "status": "refused",
+    "detail": "instance administration; CLI surface. Reopen: with registerDelegate."
+  },
+  "openbindings.ob.setDelegatePreference": {
+    "status": "refused",
+    "detail": "instance administration; CLI surface. Reopen: with registerDelegate."
+  },
+  "openbindings.ob.getDelegateRequirements": {
+    "status": "refused",
+    "detail": "instance administration; CLI surface. Reopen: with registerDelegate."
+  },
+  "openbindings.ob.initializeEnvironment": {
+    "status": "refused",
+    "detail": "bootstrap concern; CLI surface. Reopen: a workbench first-run experience that needs it."
+  },
+  "openbindings.ob.reportEnvironmentStatus": {
+    "status": "refused",
+    "detail": "bootstrap concern; CLI surface. Reopen: with initializeEnvironment."
+  },
+  "openbindings.ob.demo": {
+    "status": "refused",
+    "detail": "foreground process in the caller's environment; server-enforced LocalOnly."
+  },
+  "openbindings.ob.startServer": {
+    "status": "refused",
+    "detail": "foreground process in the caller's environment; server-enforced LocalOnly."
+  },
+  "openbindings.ob.startMCPServer": {
+    "status": "refused",
+    "detail": "foreground process in the caller's environment; server-enforced LocalOnly."
+  }
+}

@@ -68,6 +68,7 @@ main {
 
 .app-header,
 .target-bar,
+.document-bar,
 .connection-panel,
 .workbench-grid {
   --ob-color-background: var(--page-surface);
@@ -197,6 +198,13 @@ h3 {
 
 .status-pill[data-state="failed"] .status-dot {
   background: var(--danger);
+  box-shadow: 0 0 0 0.2rem
+    color-mix(in srgb, var(--danger) 18%, transparent);
+}
+
+.status-pill[data-state="failed"] {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--page-border));
 }
 
 button,
@@ -319,6 +327,109 @@ button.primary:hover:not(:disabled) {
   border-bottom: 1px solid var(--page-border);
 }
 
+/* The document bar (review/100): identity on the left, verbs on the right. */
+.document-bar {
+  display: grid;
+  grid-template-columns: minmax(16rem, 1fr) auto;
+  gap: 0.35rem 1.25rem;
+  align-items: center;
+  padding: 0.6rem 1.5rem;
+  background: var(--page-surface);
+  border-bottom: 1px solid var(--page-border);
+}
+
+.document-identity {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.document-title-row {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  min-width: 0;
+}
+
+.document-title-row h2 {
+  margin: 0;
+  min-width: 0;
+  font-size: 1.05rem;
+}
+
+#document-name {
+  max-width: 32rem;
+  overflow: hidden;
+  padding: 0.1rem 0.3rem;
+  margin: -0.1rem -0.3rem;
+  font: inherit;
+  color: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: none;
+  border: 0;
+  border-radius: 0.35rem;
+  cursor: pointer;
+}
+
+#document-name:hover {
+  background: color-mix(in srgb, var(--page-text) 7%, transparent);
+}
+
+.document-dirty {
+  color: var(--page-muted);
+  font-size: 0.72rem;
+  font-style: italic;
+}
+
+.document-meta {
+  margin: 0;
+  color: var(--page-muted);
+  font-size: 0.78rem;
+}
+
+.document-verbs {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.document-bar #bootstrap-message,
+.document-bar .liveness-notice {
+  grid-column: 1 / -1;
+}
+
+.ingest-body {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1.1rem;
+}
+
+.ingest-body label {
+  font-size: 0.78rem;
+  color: var(--page-muted);
+}
+
+#ingest-open-extras {
+  display: grid;
+  gap: 0.5rem;
+}
+
+#open-this-ob {
+  justify-self: start;
+}
+
+.open-recents {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.open-recents button {
+  justify-self: start;
+  text-align: left;
+  font-size: 0.8rem;
+}
+
 .target-heading {
   display: grid;
   gap: 0.22rem;
@@ -355,6 +466,14 @@ textarea {
 
 #bootstrap-message:empty {
   display: none;
+}
+
+.liveness-notice {
+  grid-column: 2;
+  min-width: 0;
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.78rem;
 }
 
 .connection-panel {
@@ -491,6 +610,11 @@ textarea {
 .badge.attention {
   color: var(--warning);
   background: var(--warning-soft);
+}
+
+.badge.danger {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, var(--page-background));
 }
 
 .current-target {
@@ -690,6 +814,16 @@ ob-operation-tabs::part(container) {
 .gutter:focus-visible::after,
 .gutter.dragging::after {
   opacity: 0.35;
+}
+
+/* Keyboard focus must be visible, not opacity-only (DS-FOCUS-01): the same
+   accent ring the app's controls use, drawn as a box-shadow so the thin
+   separator itself lights up. */
+#rail-gutter:focus-visible,
+#detail-gutter:focus-visible,
+#source-gutter:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .gutter-vertical {
@@ -961,7 +1095,8 @@ ob-obi-explorer::part(container) {
     grid-template-columns: 1fr;
   }
 
-  #bootstrap-message {
+  #bootstrap-message,
+  .liveness-notice {
     grid-column: 1;
   }
 }
@@ -969,6 +1104,14 @@ ob-obi-explorer::part(container) {
 @media (max-width: 56rem) {
   body {
     overflow: auto;
+  }
+
+  .document-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .document-verbs {
+    flex-wrap: wrap;
   }
 
   main {
@@ -1074,11 +1217,15 @@ ob-obi-explorer::part(container) {
   }
 
   .target-bar,
+  .document-bar,
   .connection-panel,
-  .current-target,
   .requirement-banner {
     padding-right: 0.8rem;
     padding-left: 0.8rem;
+  }
+
+  .document-verbs button {
+    flex: 1 1 auto;
   }
 
   .field-actions {
