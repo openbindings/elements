@@ -736,5 +736,4 @@ declare global {
   }
 }
 
-export { HIGHLIGHT_LIMIT, highlight } from "./highlight.js";
 export type { JSONValue } from "./tree.js";

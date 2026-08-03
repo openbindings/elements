@@ -26,7 +26,7 @@ import {
   type ContextRequirement,
   type OBInterface,
 } from "@openbindings/sdk";
-import { OperationEnvironment } from "@openbindings/ui-core";
+import { OperationEnvironment, debounce } from "@openbindings/ui-core";
 import type { InterfaceSourcesElement } from "@openbindings/interface-sources";
 import type { OBIEditorElement } from "@openbindings/obi-editor";
 import type { OBIExplorerElement } from "@openbindings/obi-explorer";
@@ -181,9 +181,6 @@ const showInvocation =
 const showSource = requiredElement<HTMLInputElement>("#show-source");
 const resetLayoutButton =
   requiredElement<HTMLButtonElement>("#reset-layout");
-const applyInterfaceDraft = requiredElement<HTMLButtonElement>(
-  "#apply-interface-draft",
-);
 const documentPaneButton = requiredElement<HTMLButtonElement>(
   "#show-document-pane",
 );
@@ -377,35 +374,32 @@ operationTabs.addEventListener("ob-tabs-close-all", () => {
   persistOperationTabs();
 });
 
-interfaceEditor.addEventListener("ob-interface-edit", event => {
-  pendingInterfaceDraft =
-    event.detail.valid && event.detail.dirty ? event.detail.value : null;
-  applyInterfaceDraft.disabled = !pendingInterfaceDraft;
-  if (!event.detail.valid) {
-    bootstrapMessage.textContent =
-      "The interface draft is not valid yet. The active workspace is unchanged.";
-  } else if (event.detail.dirty) {
-    bootstrapMessage.textContent =
-      "Valid local draft. Apply it to inspect and invoke this edited interface.";
-  } else {
-    bootstrapMessage.textContent = "";
-  }
-});
-
-applyInterfaceDraft.addEventListener("click", () => {
+// Direct editing (rev 14.3, dogfood: "what would Apply do that Export
+// doesn't?"): the editor IS the living document. A valid edit commits on
+// idle through the same reconcile path every other document mutation uses —
+// surviving sessions keep their state. An invalid document changes nothing
+// and says so; Export remains the only durability act (P6).
+const commitInterfaceEdit = debounce(() => {
   const draft = pendingInterfaceDraft;
   if (!draft) return;
-  const previousOperation = selectedOperationKey;
-  const draftIdentity = `draft:${stableHash(interfaceEditor.text)}`;
-  setTarget(draft, `${draft.name?.trim() || "Interface"} · local draft`, draftIdentity);
-  const preferred =
-    (previousOperation && draft.operations[previousOperation]
-      ? previousOperation
-      : null) ?? Object.keys(draft.operations)[0];
-  if (!selectedOperationKey && preferred) activateOperation(preferred);
-  markDocument(true);
-  bootstrapMessage.textContent =
-    "Local draft applied to the workspace. The source artifact has not been saved.";
+  pendingInterfaceDraft = null;
+  updateCurrentTarget(draft, targetLabel);
+  bootstrapMessage.textContent = "";
+}, 700);
+
+interfaceEditor.addEventListener("ob-interface-edit", event => {
+  if (event.detail.valid && event.detail.dirty) {
+    pendingInterfaceDraft = event.detail.value;
+    commitInterfaceEdit();
+  } else {
+    pendingInterfaceDraft = null;
+    if (!event.detail.valid) {
+      bootstrapMessage.textContent =
+        "The document is not valid JSON yet — the workspace keeps the last valid state.";
+    } else {
+      bootstrapMessage.textContent = "";
+    }
+  }
 });
 
 for (const [button, pane] of [
@@ -1464,7 +1458,6 @@ function setTarget(obi: OBInterface, label: string, sessionID: string): void {
   detail.selectedBindingKey = null;
   interfaceEditor.value = obi;
   pendingInterfaceDraft = null;
-  applyInterfaceDraft.disabled = true;
   applyTargetContext();
   renderTargetContextState();
   renderDocumentBar(obi);
@@ -1536,7 +1529,6 @@ function updateCurrentTarget(obi: OBInterface, label: string): void {
   detail.obi = obi;
   interfaceEditor.value = obi;
   pendingInterfaceDraft = null;
-  applyInterfaceDraft.disabled = true;
   renderDocumentBar(obi);
   // Every reconcile is an edit to the living document (source pull/remove,
   // binding removal, metadata, merges) — the dirty marker reflects it.

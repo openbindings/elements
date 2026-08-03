@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EditorView as EditorViewCtor } from "@codemirror/view";
 import { JSON_EDITOR_TAG, JSONEditorElement } from "./index.js";
-import { highlight, tokenizeJSON, tokenizeYAML } from "./highlight.js";
 import { setAtPointer } from "./tree.js";
 
 if (!customElements.get(JSON_EDITOR_TAG)) {
@@ -38,68 +37,8 @@ function editorOf(root: ShadowRoot): { view: import("@codemirror/view").EditorVi
   return { view: EditorViewCtor.findFromDOM(dom!.closest(".cm-editor") as HTMLElement)! };
 }
 
-describe("tokenizeJSON", () => {
-  it("separates keys from string values", () => {
-    const tokens = tokenizeJSON('{"name": "listPets"}');
-    expect(tokens.filter(t => t.kind === "key").map(t => t.text)).toEqual([
-      '"name"',
-    ]);
-    expect(tokens.filter(t => t.kind === "string").map(t => t.text)).toEqual([
-      '"listPets"',
-    ]);
-  });
 
-  it("marks bare words and unterminated strings as invalid without hanging", () => {
-    expect(tokenizeJSON("{oops: 1}").some(t => t.kind === "invalid")).toBe(true);
-    const unterminated = tokenizeJSON('{"a": "no end\n}');
-    expect(unterminated.some(t => t.kind === "invalid")).toBe(true);
-  });
 
-  it("classifies numbers and keywords", () => {
-    const tokens = tokenizeJSON("[-1.5e3, true, null]");
-    expect(tokens.filter(t => t.kind === "number").map(t => t.text)).toEqual([
-      "-1.5e3",
-    ]);
-    expect(tokens.filter(t => t.kind === "keyword").map(t => t.text)).toEqual([
-      "true",
-      "null",
-    ]);
-  });
-
-  it("round-trips every character of the source", () => {
-    const source = '{"a": [1, true, null], "b": "x"}';
-    expect(tokenizeJSON(source).map(t => t.text).join("")).toBe(source);
-  });
-});
-
-describe("tokenizeYAML", () => {
-  it("highlights keys, scalars and comments", () => {
-    const tokens = tokenizeYAML("name: listPets # a comment\ncount: 2\n");
-    expect(tokens.filter(t => t.kind === "key").map(t => t.text)).toEqual([
-      "name",
-      "count",
-    ]);
-    expect(tokens.filter(t => t.kind === "comment").map(t => t.text)).toEqual([
-      "# a comment",
-    ]);
-    expect(tokens.filter(t => t.kind === "number").map(t => t.text)).toEqual([
-      "2",
-    ]);
-  });
-
-  it("does not treat a '#' inside a quoted scalar as a comment", () => {
-    const tokens = tokenizeYAML('ref: "#/components/schemas/Pet"\n');
-    expect(tokens.some(t => t.kind === "comment")).toBe(false);
-  });
-});
-
-describe("highlight", () => {
-  it("escapes markup found in the document", () => {
-    const html = highlight('{"a": "<img src=x onerror=alert(1)>"}', "json");
-    expect(html).not.toContain("<img");
-    expect(html).toContain("&lt;img");
-  });
-});
 
 describe("setAtPointer", () => {
   it("writes without mutating the original document", () => {

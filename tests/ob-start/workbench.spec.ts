@@ -312,9 +312,8 @@ test("document, source, and graph elements compose through explicit local drafts
     },
     `${JSON.stringify(draft, null, 2)}\n`,
   );
-  await expect(page.locator("#apply-interface-draft")).toBeEnabled();
-  await page.locator("#apply-interface-draft").click();
-  await expect(page.locator("#document-dirty")).toBeVisible();
+  // Direct editing (rev 14.3): a valid document commits on idle — no Apply.
+  await expect(page.locator("#document-dirty")).toBeVisible({ timeout: 10_000 });
 
   const explorer = page.locator("ob-obi-explorer");
   await explorer.locator('input[type="search"]').fill("graphDemo");
