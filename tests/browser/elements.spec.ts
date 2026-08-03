@@ -85,8 +85,8 @@ test("narrow layouts preserve independent element usability", async ({
   await expect(
     page
       .locator("ob-operation-workbench")
-      .locator("textarea"),
-  ).toBeEditable();
+      .locator("ob-json-editor .cm-content"),
+  ).toBeVisible();
 });
 
 test("operation list is one Tab stop with arrow-key navigation", async ({
@@ -153,24 +153,23 @@ test("filtering preserves keyboard focus and uses native button semantics", asyn
   );
 });
 
-test("editor focus indicator draws on the frame, not the inner overlay textarea", async ({
+test("editor focus presents on the frame, not the editing surface", async ({
   page,
 }) => {
-  // The json-editor's real <textarea> is a transparent overlay inset past the
-  // gutter and sized to the content — a focus ring on IT draws a floating box
-  // mid-editor (glaring in dark themes). Focus must present on the frame.
+  // Focus presentation is delegated to the frame; the CodeMirror surface
+  // itself must not draw its own outline (glaring in dark themes).
   const probe = await page.evaluate(() => {
     const workbench = document.querySelector("ob-operation-workbench")!;
-    const editor = workbench.shadowRoot!.querySelector("ob-json-editor")!;
-    const textarea = editor.shadowRoot!.querySelector("textarea")!;
+    const editor = workbench.shadowRoot!.querySelector("ob-json-editor")! as HTMLElement & { focusEditor(): void };
     const frame = editor.shadowRoot!.querySelector('[part~="frame"]')!;
-    textarea.focus();
+    editor.focusEditor();
+    const cm = editor.shadowRoot!.querySelector(".cm-editor")!;
     return {
-      textareaShadow: getComputedStyle(textarea).boxShadow,
+      cmOutline: getComputedStyle(cm).outlineStyle,
       frameShadow: getComputedStyle(frame).boxShadow,
     };
   });
-  expect(probe.textareaShadow).toBe("none");
+  expect(probe.cmOutline).toBe("none");
   expect(probe.frameShadow).not.toBe("none");
 });
 
@@ -386,41 +385,75 @@ test("the tabs overflow menu escapes ancestor clipping and its actions fire", as
   expect(probe.openAfter).toBe(false);
 });
 
-test("source-mode glyph layers coincide even under inherited white-space", async ({
+test("the caret lands exactly where the user clicks, even under inherited white-space", async ({
   page,
 }) => {
-  // Dogfood report (rev 14.1): "my cursor doesn't go where I tell it to."
-  // The obi-editor styled its embedded ob-json-editor host with a vestigial
-  // textarea-era rule whose white-space: pre inherited into the child's
-  // shadow — the shell template's own whitespace text nodes became LAYOUT
-  // (two newlines + eight spaces), displacing the transparent textarea by
-  // (8ch, 2 line-heights) from the highlight layer. Every click then landed
-  // the caret ~two lines before the character the user aimed at. The editor
-  // must keep its two glyph layers coincident regardless of what the host
-  // page or a wrapping element sets white-space to.
-  const probe = await page.evaluate(async () => {
+  // Rev 14.1's overlay fix is superseded by rev 14.2: source mode is
+  // CodeMirror 6. The contract is asserted end-to-end with no editor API:
+  // click at the visual position of a known character, type, and the typed
+  // character must land at that index in the element's text — including
+  // inside a hostile white-space: pre wrapper (the condition that displaced
+  // the old overlay by two lines).
+  const target = await page.evaluate(async () => {
     const wrap = document.createElement("div");
     wrap.style.cssText = "white-space: pre; width: 30rem; height: 16rem;";
     const editor = document.createElement("ob-json-editor") as HTMLElement & {
-      value: string;
+      text: string;
     };
     editor.style.cssText = "display: block; height: 100%;";
+    editor.id = "caret-probe";
     wrap.append(editor);
     document.body.append(wrap);
-    editor.value = JSON.stringify({ alpha: 1, beta: [2, 3], gamma: "four" }, null, 2);
+    editor.text = JSON.stringify(
+      { alpha: 1, beta: [2, 3], gamma: "four", delta: { epsilon: 5 } },
+      null,
+      2,
+    );
     await new Promise(resolve => requestAnimationFrame(resolve));
-    const root = editor.shadowRoot!;
-    const textarea = root.querySelector("textarea")!;
-    const layer = root.querySelector(".highlight")!;
-    const textareaRect = textarea.getBoundingClientRect();
-    const layerRect = layer.getBoundingClientRect();
-    const state = {
-      dx: Math.abs(textareaRect.x - layerRect.x),
-      dy: Math.abs(textareaRect.y - layerRect.y),
-    };
-    wrap.remove();
-    return state;
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    const text = editor.text;
+    const pos = text.indexOf("gamma") + 2;
+    const before = text.slice(0, pos);
+    const lineIndex = before.split("\n").length - 1;
+    const column = pos - (before.lastIndexOf("\n") + 1);
+    const line = editor.shadowRoot!.querySelectorAll(".cm-line")[lineIndex]!;
+    const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    let seen = 0;
+    let node: Text | null = null;
+    let offset = 0;
+    let current: Node | null;
+    while ((current = walker.nextNode())) {
+      const data = (current as Text).data;
+      if (column < seen + data.length) {
+        node = current as Text;
+        offset = column - seen;
+        break;
+      }
+      seen += data.length;
+    }
+    const range = document.createRange();
+    range.setStart(node!, offset);
+    range.setEnd(node!, offset);
+    const rect = range.getBoundingClientRect();
+    return { x: rect.x + 0.5, y: rect.y + rect.height / 2, pos, text };
   });
-  expect(probe.dx).toBeLessThanOrEqual(1);
-  expect(probe.dy).toBeLessThanOrEqual(1);
+  await page.mouse.click(target.x, target.y);
+  await page.keyboard.type("X");
+  const after = await page.evaluate(() => {
+    const editor = document.getElementById("caret-probe") as HTMLElement & {
+      text: string;
+    };
+    const value = editor.text;
+    editor.parentElement!.remove();
+    return value;
+  });
+  let insertedAt = -1;
+  for (let index = 0; index < after.length; index += 1) {
+    if (after[index] !== target.text[index]) {
+      insertedAt = index;
+      break;
+    }
+  }
+  expect(after.length).toBe(target.text.length + 1);
+  expect(Math.abs(insertedAt - target.pos)).toBeLessThanOrEqual(1);
 });

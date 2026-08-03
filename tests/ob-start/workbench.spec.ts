@@ -255,8 +255,10 @@ test("document, source, and graph elements compose through explicit local drafts
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
 
   const editor = page.locator("ob-obi-editor");
-  const textarea = editor.locator("textarea");
-  const source = await textarea.inputValue();
+  const innerEditor = editor.locator("ob-json-editor");
+  const source = await innerEditor.evaluate(
+    el => (el as HTMLElement & { text: string }).text,
+  );
   const draft = JSON.parse(source) as {
     operations: Record<string, unknown>;
     sources?: Record<string, unknown>;
@@ -294,11 +296,19 @@ test("document, source, and graph elements compose through explicit local drafts
       ref: "#",
     },
   };
-  await textarea.evaluate(
+  // Author the draft through the element contract: assign the document and
+  // announce it the way a keystroke would (CodeMirror owns the DOM now).
+  await innerEditor.evaluate(
     (element, value) => {
-      const input = element as HTMLTextAreaElement;
-      input.value = value;
-      input.dispatchEvent(new Event("input", { bubbles: true }));
+      const editorElement = element as HTMLElement & { text: string };
+      editorElement.text = value;
+      editorElement.dispatchEvent(
+        new CustomEvent("ob-json-input", {
+          detail: { text: value, structured: false },
+          bubbles: true,
+          composed: true,
+        }),
+      );
     },
     `${JSON.stringify(draft, null, 2)}\n`,
   );
@@ -616,10 +626,15 @@ test("multi-binding operations default to the author's preferred binding and run
   await expect(graphSession.locator("h2")).toHaveText("placeAndTrack");
   const input = graphSession.locator("ob-json-editor").first();
   await input.evaluate((el, value) => {
-    const editor = el as HTMLElement & { value: string };
-    const textarea = el.shadowRoot!.querySelector("textarea")!;
-    textarea.value = value;
-    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    const editorElement = el as HTMLElement & { text: string };
+    editorElement.text = value;
+    editorElement.dispatchEvent(
+      new CustomEvent("ob-json-input", {
+        detail: { text: value, structured: false },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }, '{"customer":"E2E","drink":"Schema Latte","size":"v2"}');
   await graphSession.locator("button.run").click();
   // The output view renders each stream value as its own block.

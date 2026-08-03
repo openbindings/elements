@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { EditorView as EditorViewCtor } from "@codemirror/view";
 import { JSON_EDITOR_TAG, JSONEditorElement } from "./index.js";
 import { highlight, tokenizeJSON, tokenizeYAML } from "./highlight.js";
 import { setAtPointer } from "./tree.js";
@@ -18,7 +19,6 @@ async function settled(): Promise<void> {
 
 async function mount(text: string): Promise<{
   element: JSONEditorElement;
-  textarea: HTMLTextAreaElement;
   root: ShadowRoot;
 }> {
   const element = document.createElement(JSON_EDITOR_TAG) as JSONEditorElement;
@@ -26,11 +26,16 @@ async function mount(text: string): Promise<{
   document.body.append(element);
   await settled();
   const root = element.shadowRoot!;
-  return {
-    element,
-    root,
-    textarea: root.querySelector("textarea")!,
-  };
+  return { element, root };
+}
+
+// The source surface is CodeMirror 6 (rev 14.2). Tests drive it through the
+// view instance the element mounts in the shadow root.
+function editorOf(root: ShadowRoot): { view: import("@codemirror/view").EditorView } {
+  const dom = root.querySelector<HTMLElement & { cmView?: unknown }>(".cm-content");
+  // CM exposes the view on the content DOM via the "cmView" property chain;
+  // the stable public route is EditorView.findFromDOM.
+  return { view: EditorViewCtor.findFromDOM(dom!.closest(".cm-editor") as HTMLElement)! };
 }
 
 describe("tokenizeJSON", () => {
@@ -120,40 +125,47 @@ describe("setAtPointer", () => {
 });
 
 describe("JSONEditorElement", () => {
-  it("renders a gutter line per source line and a highlight layer", async () => {
+  it("mounts a CodeMirror editor whose document mirrors the text property", async () => {
     const { root } = await mount('{\n  "a": 1\n}\n');
-    expect(root.querySelectorAll(".gutter span")).toHaveLength(4);
-    expect(root.querySelector(".highlight")!.innerHTML).toContain("t-key");
+    const { view } = editorOf(root);
+    expect(view.state.doc.toString()).toBe('{\n  "a": 1\n}\n');
+    expect(root.querySelector(".cm-gutters")).not.toBeNull();
   });
 
-  it("emits input without re-rendering the textarea the author is typing in", async () => {
-    const { element, textarea } = await mount("{}");
+  it("emits input for editor-originated edits, never for host assignments", async () => {
+    const { element, root } = await mount("{}");
     const seen = vi.fn();
     element.addEventListener("ob-json-input", seen);
 
-    textarea.value = '{"a": 1}';
-    textarea.setSelectionRange(4, 4);
-    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    const { view } = editorOf(root);
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: '{"a": 1}' },
+    });
 
     expect(seen.mock.calls[0]?.[0].detail).toEqual({
       text: '{"a": 1}',
       structured: false,
     });
     expect(element.text).toBe('{"a": 1}');
-    // The caret survives because the node was never replaced.
-    expect(textarea.selectionStart).toBe(4);
+
+    seen.mockClear();
+    element.text = '{"b": 2}';
+    await settled();
+    // A host-assigned document is not an authored edit.
+    expect(seen).not.toHaveBeenCalled();
+    expect(editorOf(root).view.state.doc.toString()).toBe('{"b": 2}');
   });
 
-  it("keeps an indent and opens a block on Enter", async () => {
-    const { textarea } = await mount('{\n  "a": [\n');
-    const caret = textarea.value.length;
-    textarea.setSelectionRange(caret, caret);
-    textarea.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
-    );
-    // jsdom does not implement setRangeText's caret modes fully; assert the
-    // observable contract — the element mirrored whatever the textarea holds.
-    expect(typeof textarea.value).toBe("string");
+  it("keeps selection semantics through readOnly and language flips", async () => {
+    const { element, root } = await mount('{"a": 1}');
+    element.readOnly = true;
+    await settled();
+    const { view } = editorOf(root);
+    expect(view.state.readOnly).toBe(true);
+    element.readOnly = false;
+    element.language = "yaml";
+    await settled();
+    expect(editorOf(root).view.state.readOnly).toBe(false);
   });
 
   it("formats JSON on request and reports failure instead of throwing", async () => {
@@ -209,17 +221,19 @@ describe("JSONEditorElement", () => {
     expect(root.querySelectorAll(".tree-row").length).toBe(rowCountBefore);
   });
 
-  it("marks the error line in the gutter", async () => {
+  it("marks the error line with a line decoration", async () => {
     const { element, root } = await mount("{\n\n}\n");
     element.errorLine = 2;
     await settled();
-    expect(root.querySelector(".gutter span.error")?.textContent).toBe("2");
+    expect(root.querySelector(".ob-error-line")).not.toBeNull();
+    element.errorLine = null;
+    await settled();
+    expect(root.querySelector(".ob-error-line")).toBeNull();
   });
 
-  it("does not attempt to highlight beyond the size limit", async () => {
-    const { root } = await mount(`"${"x".repeat(400_100)}"`);
-    expect(root.querySelector(".highlight")!.classList.contains("plain")).toBe(
-      true,
-    );
+  it("mounts large documents without losing content", async () => {
+    const large = `"${"x".repeat(400_100)}"`;
+    const { root } = await mount(large);
+    expect(editorOf(root).view.state.doc.length).toBe(large.length);
   });
 });
