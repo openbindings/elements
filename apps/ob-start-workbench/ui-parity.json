@@ -76,7 +76,7 @@
   },
   "openbindings.ob.addSource": {
     "status": "deferred",
-    "rev": 14.1,
+    "rev": 14.2,
     "detail": "explicit source registration UI; the Add flow merges the resolved artifact and its source entries ride along"
   },
   "openbindings.ob.listSources": {
@@ -85,7 +85,7 @@
   },
   "openbindings.ob.inspectSource": {
     "status": "deferred",
-    "rev": 14.1,
+    "rev": 14.2,
     "detail": "preview step inside the Add flow"
   },
   "openbindings.ob.pullSource": {
@@ -119,7 +119,7 @@
   },
   "openbindings.ob.listBindingSpecs": {
     "status": "deferred",
-    "rev": 14.1,
+    "rev": 14.2,
     "detail": "Add flow: show which binding specs can be ingested"
   },
   "openbindings.ob.prepareBinding": {
@@ -160,7 +160,7 @@
   },
   "openbindings.ob.compareInterfaces": {
     "status": "deferred",
-    "rev": 14.1,
+    "rev": 14.2,
     "detail": "drift preview inside per-source Pull"
   },
   "openbindings.ob.reportInterfaceStatus": {

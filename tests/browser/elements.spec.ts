@@ -385,3 +385,42 @@ test("the tabs overflow menu escapes ancestor clipping and its actions fire", as
   expect(probe.closeAll).toBe(1);
   expect(probe.openAfter).toBe(false);
 });
+
+test("source-mode glyph layers coincide even under inherited white-space", async ({
+  page,
+}) => {
+  // Dogfood report (rev 14.1): "my cursor doesn't go where I tell it to."
+  // The obi-editor styled its embedded ob-json-editor host with a vestigial
+  // textarea-era rule whose white-space: pre inherited into the child's
+  // shadow — the shell template's own whitespace text nodes became LAYOUT
+  // (two newlines + eight spaces), displacing the transparent textarea by
+  // (8ch, 2 line-heights) from the highlight layer. Every click then landed
+  // the caret ~two lines before the character the user aimed at. The editor
+  // must keep its two glyph layers coincident regardless of what the host
+  // page or a wrapping element sets white-space to.
+  const probe = await page.evaluate(async () => {
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "white-space: pre; width: 30rem; height: 16rem;";
+    const editor = document.createElement("ob-json-editor") as HTMLElement & {
+      value: string;
+    };
+    editor.style.cssText = "display: block; height: 100%;";
+    wrap.append(editor);
+    document.body.append(wrap);
+    editor.value = JSON.stringify({ alpha: 1, beta: [2, 3], gamma: "four" }, null, 2);
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    const root = editor.shadowRoot!;
+    const textarea = root.querySelector("textarea")!;
+    const layer = root.querySelector(".highlight")!;
+    const textareaRect = textarea.getBoundingClientRect();
+    const layerRect = layer.getBoundingClientRect();
+    const state = {
+      dx: Math.abs(textareaRect.x - layerRect.x),
+      dy: Math.abs(textareaRect.y - layerRect.y),
+    };
+    wrap.remove();
+    return state;
+  });
+  expect(probe.dx).toBeLessThanOrEqual(1);
+  expect(probe.dy).toBeLessThanOrEqual(1);
+});

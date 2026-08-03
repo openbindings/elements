@@ -587,7 +587,7 @@ const styles = `
 
   .views button[aria-pressed="true"] {
     background: var(--_ob-color-background);
-    box-shadow: 0 1px 2px rgb(0 0 0 / 12%);
+    box-shadow: var(--_ob-shadow);
   }
 
   .views button:disabled {
@@ -650,6 +650,19 @@ const styles = `
     border-radius: 0.2rem;
   }
 
+  .frame {
+    /*
+     * Inherited-white-space immunity: with white-space: pre arriving from a
+     * host or wrapper, the shell template's own whitespace text nodes become
+     * LAYOUT — two newlines and eight spaces displaced the transparent
+     * textarea (8ch, 2 line-heights) from the highlight layer, and every
+     * click placed the caret two lines from where the user aimed. Reset at
+     * the boundary; internal rules re-declare pre exactly where glyphs need
+     * it.
+     */
+    white-space: normal;
+  }
+
   .surface {
     position: relative;
     min-width: 0;
@@ -684,6 +697,10 @@ const styles = `
   }
 
   .surface textarea {
+    /* Block, not inline-block: an inline box participates in whatever text
+       flow surrounds it, so stray text nodes could offset it. A block box
+       starts at the content origin no matter what. */
+    display: block;
     position: relative;
     width: 100%;
     height: 100%;

@@ -390,30 +390,19 @@ const styles = `
     opacity: 0.5;
   }
 
+  /*
+   * Layout only. This class once styled a raw <textarea>; when the embedded
+   * ob-json-editor replaced it, the leftover declarations kept styling the
+   * HOST — and the inheritable ones (white-space: pre above all) leaked into
+   * the child's shadow tree, turning its template whitespace into layout and
+   * displacing the click target two lines from the visible text. The element
+   * owns its own typography, focus, and readonly presentation.
+   */
   .editor {
     width: 100%;
     min-width: 0;
     min-height: 0;
     padding: var(--_ob-space);
-    resize: none;
-    color: var(--_ob-color-text);
-    background: var(--_ob-color-background);
-    border: 0;
-    border-radius: 0;
-    outline: 0;
-    font-family: var(--_ob-font-mono);
-    font-size: 0.78rem;
-    line-height: 1.55;
-    tab-size: 2;
-    white-space: pre;
-  }
-
-  .editor:focus-visible {
-    box-shadow: inset var(--_ob-focus-ring);
-  }
-
-  .editor[readonly] {
-    color: var(--_ob-color-text-muted);
   }
 
   .status {
