@@ -313,6 +313,12 @@ test("document, source, and graph elements compose through explicit local drafts
     `${JSON.stringify(draft, null, 2)}\n`,
   );
   // Direct editing (rev 14.3): a valid document commits on idle — no Apply.
+  // Pane switching is asserted perceptually, not by attribute (WB-VIS-01):
+  await page.locator("#show-sources-pane").click();
+  await expect(page.locator("#document-pane")).not.toBeVisible();
+  await expect(page.locator("ob-interface-sources")).toBeInViewport();
+  await page.locator("#show-document-pane").click();
+  await expect(page.locator("#document-pane")).toBeVisible();
   await expect(page.locator("#document-dirty")).toBeVisible({ timeout: 10_000 });
 
   const explorer = page.locator("ob-obi-explorer");

@@ -933,6 +933,13 @@ ob-operation-detail::part(container),
   overflow: hidden;
 }
 
+/* The [hidden] attribute must always win — a display set on the class beat
+   the UA rule and left the Document pane painted over Sources/Graph (the
+   rev-1 :host([hidden]) bug class, in the app's own light DOM). */
+.artifact-pane[hidden] {
+  display: none !important;
+}
+
 .artifact-panels {
   position: relative;
 }
