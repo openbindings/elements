@@ -37,6 +37,8 @@ public tokens listed here.
 | `--ob-radius` | `0.5rem` | Corner radius |
 | `--ob-space` | `0.75rem` | Base spacing unit |
 | `--ob-focus-ring` | `0 0 0 3px color-mix(in srgb, var(--_ob-color-accent) 28%, transparent)` | Focus indicator box-shadow on form controls |
+| `--ob-shadow` | `0 1px 2px color-mix(in srgb, var(--_ob-color-text) 12%, transparent)` | Elevation box-shadow for raised surfaces (text-derived, so it holds in both themes) |
+| `--ob-duration` | `120ms` | Base motion duration for transitions and animations |
 
 `@openbindings/json-editor` additionally exposes `--ob-editor-*` tokens for
 its own typography and token colours; see that package's README.

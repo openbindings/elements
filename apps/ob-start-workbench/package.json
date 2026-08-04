@@ -8,7 +8,6 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@openbindings/interface-sources": "workspace:^",
     "@openbindings/obi-editor": "workspace:^",
     "@openbindings/obi-explorer": "workspace:^",
     "@openbindings/operation-detail": "workspace:^",
@@ -18,6 +17,7 @@
     "@openbindings/operation-tabs": "workspace:^",
     "@openbindings/operation-workbench": "workspace:^",
     "@openbindings/sdk": "link:../../../openbindings-ts/packages/sdk",
+    "@openbindings/source-detail": "workspace:^",
     "@openbindings/ui-core": "workspace:^"
   }
 }

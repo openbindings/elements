@@ -179,6 +179,121 @@ describe("OperationTabsElement", () => {
   });
 });
 
+describe("workspace-item tabs (rev 16)", () => {
+  function mount(tabs: OperationTabsElement["tabs"]): OperationTabsElement {
+    const element = document.createElement(
+      OPERATION_TABS_TAG,
+    ) as OperationTabsElement;
+    element.tabs = tabs;
+    document.body.append(element);
+    return element;
+  }
+
+  it("renders the kind as a muted subtitle line under the label", async () => {
+    const element = mount([
+      { key: "s1", label: "placeOrder", kind: "operation" },
+      { key: "s2", label: "openapi", kind: "source" },
+      { key: "s3", label: "plain" },
+    ]);
+    await settled();
+
+    const kinds = [
+      ...element.shadowRoot!.querySelectorAll<HTMLElement>(".tab-shell"),
+    ].map(shell => {
+      const kind = shell.querySelector<HTMLElement>(".kind");
+      return kind && !kind.hidden ? kind.textContent : null;
+    });
+    expect(kinds).toEqual(["operation", "source", null]);
+  });
+
+  it("renames through an inline edit: F2 begins, Enter commits, Esc cancels", async () => {
+    const element = mount([{ key: "s1", label: "placeOrder" }]);
+    element.activeKey = "s1";
+    const renamed = vi.fn();
+    element.addEventListener("ob-tab-rename", renamed);
+    await settled();
+
+    const button = element.shadowRoot!.querySelector<HTMLButtonElement>(
+      '.tab-button[data-focus-key="s1"]',
+    )!;
+    button.focus();
+    button.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "F2", bubbles: true }),
+    );
+    await settled();
+    const input = element.shadowRoot!.querySelector<HTMLInputElement>(
+      ".rename-input",
+    )!;
+    expect(input).toBeTruthy();
+    expect(input.value).toBe("placeOrder");
+
+    input.value = "order · smoke";
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+    );
+    await settled();
+    expect(renamed).toHaveBeenCalledTimes(1);
+    expect(renamed.mock.calls[0]?.[0].detail).toEqual({
+      key: "s1",
+      label: "order · smoke",
+    });
+    expect(element.shadowRoot!.querySelector(".rename-input")).toBeNull();
+
+    // Esc cancels without an event.
+    button.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "F2", bubbles: true }),
+    );
+    await settled();
+    const second = element.shadowRoot!.querySelector<HTMLInputElement>(
+      ".rename-input",
+    )!;
+    second.value = "discarded";
+    second.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+    await settled();
+    expect(renamed).toHaveBeenCalledTimes(1);
+    expect(element.shadowRoot!.querySelector(".rename-input")).toBeNull();
+  });
+
+  it("begins a rename on label double-click and refuses an empty commit", async () => {
+    const element = mount([{ key: "s1", label: "one" }]);
+    const renamed = vi.fn();
+    element.addEventListener("ob-tab-rename", renamed);
+    await settled();
+
+    element.shadowRoot!
+      .querySelector<HTMLElement>('[data-tab-key="s1"] .label')!
+      .dispatchEvent(new MouseEvent("dblclick", { bubbles: true, composed: true }));
+    await settled();
+    const input = element.shadowRoot!.querySelector<HTMLInputElement>(
+      ".rename-input",
+    )!;
+    expect(input).toBeTruthy();
+    input.value = "   ";
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+    );
+    await settled();
+    // An all-whitespace label is a cancel, not a rename to nothing.
+    expect(renamed).not.toHaveBeenCalled();
+    expect(element.shadowRoot!.querySelector(".rename-input")).toBeNull();
+  });
+
+  it("offers Duplicate tab in the action menu for the active tab", async () => {
+    const element = mount([{ key: "s1" }, { key: "s2" }]);
+    element.activeKey = "s2";
+    const duplicated = vi.fn();
+    element.addEventListener("ob-tab-duplicate", duplicated);
+    await settled();
+
+    element.shadowRoot!
+      .querySelector<HTMLButtonElement>('[data-action="duplicate"]')!
+      .click();
+    expect(duplicated.mock.calls[0]?.[0].detail).toEqual({ key: "s2" });
+  });
+});
+
 async function settled(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();

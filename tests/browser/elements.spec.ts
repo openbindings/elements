@@ -322,6 +322,60 @@ test("tab overflow hint fades the tabs themselves — no scrim painted over them
   expect(probe.settled.listMask).toBe("none");
 });
 
+test("workspace-item tabs show kind subtitles and rename inline with real input events", async ({
+  page,
+}) => {
+  // Rev 16: tabs are named workspace items. The kind renders as a muted
+  // subtitle; double-click opens an inline rename committed with Enter.
+  await page.evaluate(() => {
+    const strip = document.createElement("ob-operation-tabs") as HTMLElement & {
+      tabs: { key: string; label: string; kind?: string }[];
+      activeKey: string | null;
+    };
+    strip.id = "rename-probe";
+    strip.style.cssText = "display:block;width:36rem";
+    document.body.append(strip);
+    strip.tabs = [
+      { key: "s1", label: "placeOrder", kind: "operation" },
+      { key: "s2", label: "openapi", kind: "source" },
+    ];
+    strip.activeKey = "s1";
+    (window as unknown as { renames: unknown[] }).renames = [];
+    strip.addEventListener("ob-tab-rename", event => {
+      (window as unknown as { renames: unknown[] }).renames.push(
+        (event as CustomEvent).detail,
+      );
+    });
+  });
+  const strip = page.locator("#rename-probe");
+  await expect(strip.locator(".kind").nth(0)).toHaveText("operation");
+  await expect(strip.locator(".kind").nth(1)).toHaveText("source");
+  // The subtitle is visually muted and smaller than the label.
+  const sizes = await strip.evaluate(el => {
+    const root = el.shadowRoot!;
+    const label = getComputedStyle(root.querySelector(".label")!);
+    const kind = getComputedStyle(root.querySelector(".kind")!);
+    return {
+      label: Number.parseFloat(label.fontSize),
+      kind: Number.parseFloat(kind.fontSize),
+      differs: label.color !== kind.color,
+    };
+  });
+  expect(sizes.kind).toBeLessThan(sizes.label);
+  expect(sizes.differs).toBe(true);
+
+  await strip.locator('[data-tab-key="s1"] .label').dblclick();
+  const input = strip.locator(".rename-input");
+  await expect(input).toBeVisible();
+  await input.fill("order · smoke");
+  await input.press("Enter");
+  await expect(strip.locator(".rename-input")).toHaveCount(0);
+  expect(await page.evaluate(() => (window as unknown as { renames: unknown[] }).renames)).toEqual([
+    { key: "s1", label: "order · smoke" },
+  ]);
+  await page.evaluate(() => document.querySelector("#rename-probe")?.remove());
+});
+
 test("the tabs overflow menu escapes ancestor clipping and its actions fire", async ({
   page,
 }) => {

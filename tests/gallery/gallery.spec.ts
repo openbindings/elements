@@ -125,13 +125,21 @@ async function selectOperation(page: Page, key: string): Promise<void> {
 }
 
 async function setEditorValue(workbench: Locator, value: string): Promise<void> {
+  // Author through the element contract (CodeMirror owns the DOM): assign the
+  // text and announce it the way a keystroke would.
   await workbench
     .locator("ob-json-editor")
     .first()
     .evaluate((el, text) => {
-      const textarea = el.shadowRoot!.querySelector("textarea")!;
-      textarea.value = text;
-      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      const editor = el as HTMLElement & { text: string };
+      editor.text = text;
+      editor.dispatchEvent(
+        new CustomEvent("ob-json-input", {
+          detail: { text, structured: false },
+          bubbles: true,
+          composed: true,
+        }),
+      );
     }, value);
 }
 
@@ -218,9 +226,9 @@ async function sweep(page: Page, theme: Theme, width: Width): Promise<void> {
   });
 
   await shoot("cockpit-input", "focused-editor", async () => {
-    const textarea = active.locator("ob-json-editor textarea").first();
-    await textarea.click();
-    await expect(textarea).toBeFocused();
+    const content = active.locator("ob-json-editor .cm-content").first();
+    await content.click();
+    await expect(content).toBeFocused();
     return active.locator(".input-column");
   });
 

@@ -21,7 +21,45 @@ import type {
   OperationInvokerInputFrame,
   OperationInvokerOutputFrame,
 } from "./frames.js";
+import {
+  analyzeInputSchema,
+  appendArrayItemAtPath,
+  buildPayloadFromDefaults,
+  conformsToSchema,
+  createSchemaFormModel,
+  defaultForField,
+  getValueAtPath,
+  isArrayField,
+  isObjectField,
+  isPrimitiveField,
+  parseJsonObjectInput,
+  payloadToPrettyJson,
+  removeArrayItemAtPath,
+  setValueAtPath,
+  unsetValueAtPath,
+  type InputSchemaAnalysis,
+  type SchemaField,
+  type SchemaFormModel,
+  type SchemaObjectField,
+  type SchemaPrimitiveField,
+} from "./input-model.js";
 import { invokeOperationRequirement } from "./requirement.js";
+
+export {
+  analyzeInputSchema,
+  createSchemaFormModel,
+  resolveLocalSchemaRefs,
+} from "./input-model.js";
+export type {
+  FormCapability,
+  InputSchemaAnalysis,
+  OneOfBranchInfo,
+  SchemaArrayField,
+  SchemaField,
+  SchemaFormModel,
+  SchemaObjectField,
+  SchemaPrimitiveField,
+} from "./input-model.js";
 
 export {
   invokeOperationRequirement,
@@ -38,7 +76,11 @@ export type {
 export const OPERATION_WORKBENCH_TAG = "ob-operation-workbench";
 export const DEFAULT_MAX_DISPLAYED_OUTPUTS = 100;
 export type OperationInputMode = "single" | "sequence";
+export type OperationInputView = "json" | "form";
 export type OperationWorkbenchLayout = "stacked" | "split";
+
+const SEQUENCE_FORM_REASON =
+  'Form view edits one JSON value. Switch the cardinality to "One value" to use it.';
 
 const SPLIT_RATIO_MIN = 0.2;
 const SPLIT_RATIO_MAX = 0.8;
@@ -183,6 +225,13 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
   #lastStatusAnnouncement = "";
   #lastAnnouncedOutputCount = 0;
   #bindingOptionsSignature = "";
+  #inputView: OperationInputView = "json";
+  #oneOfIndex = 0;
+  #shapeOptionsSignature = "";
+  /** Guard against form DOM rebuilds: set after a build, matched per render. */
+  #formRendered: { signature: string; text: string } | null = null;
+  /** The last capability-supported model, for payload defaults in handlers. */
+  #formModel: SchemaFormModel | null = null;
   #layout: OperationWorkbenchLayout = "stacked";
   #splitRatio = 0.5;
   #narrow = false;
@@ -231,6 +280,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     if (value === this.#obi) return;
     this.#obi = value;
     this.#inputTouched = false;
+    this.#resetInputPresentation();
     this.#resetInput();
     this.#clearResult();
     void this.cancel();
@@ -245,6 +295,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     if (value === this.#operationKey) return;
     this.#operationKey = value;
     this.#inputTouched = false;
+    this.#resetInputPresentation();
     this.#resetInput();
     this.#clearResult();
     void this.cancel();
@@ -310,6 +361,22 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     this.requestRender();
   }
 
+  get inputView(): OperationInputView {
+    return this.#inputView;
+  }
+
+  set inputView(value: OperationInputView) {
+    if (value !== "json" && value !== "form") {
+      throw new TypeError('inputView must be "json" or "form"');
+    }
+    if (value === this.#inputView) return;
+    this.#inputView = value;
+    // Assignment is honest even when the form cannot render: the form pane
+    // then shows its decline-with-reason banner rather than silently staying
+    // on the JSON editor.
+    this.requestRender();
+  }
+
   get layout(): OperationWorkbenchLayout {
     return this.#layout;
   }
@@ -364,7 +431,10 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     if (!operation || operation.input === undefined || operation.input === null) {
       return false;
     }
-    const sample = sampleFromSchema(operation.input, this.#obi);
+    // Starter generation targets the effective schema: local refs resolved,
+    // and the currently selected oneOf branch when the input declares one.
+    const effective = this.#analyzeInput(operation).effective;
+    const sample = sampleFromSchema(effective, this.#obi);
     if (!sample.available) return false;
     this.#inputTouched = false;
     this.#inputText = JSON.stringify(sample.value, null, 2) ?? "";
@@ -723,6 +793,60 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     refs
       .find(".reset-input")
       ?.addEventListener("click", () => this.resetInputToSchema());
+
+    refs.find(".view-json")?.addEventListener("click", () => {
+      if (this.#inputView !== "json") this.inputView = "json";
+    });
+    refs.find(".view-form")?.addEventListener("click", () => {
+      if (this.#inputView === "form") return;
+      this.inputView = "form";
+      // Entering form mode with an empty editor seeds the schema defaults so
+      // the form starts from a committed payload (benchmark behavior).
+      if (!parseJsonObjectInput(this.#inputText).empty) return;
+      const operation =
+        this.#obi && this.#operationKey
+          ? this.#obi.operations[this.#operationKey]
+          : undefined;
+      if (!operation || operation.input === undefined || operation.input === null) {
+        return;
+      }
+      const { capability, model } = createSchemaFormModel(
+        this.#analyzeInput(operation).effective,
+      );
+      if (!capability.supported || !model) return;
+      this.#inputTouched = true;
+      this.#inputText = payloadToPrettyJson(buildPayloadFromDefaults(model));
+      this.#emitInputChange();
+      this.requestRender();
+    });
+
+    refs
+      .find<HTMLSelectElement>(".input-shape")
+      ?.addEventListener("change", event => {
+        const index = Number((event.target as HTMLSelectElement).value);
+        if (!Number.isInteger(index)) return;
+        this.#selectOneOfBranch(index);
+      });
+
+    refs.find(".form-banner-json")?.addEventListener("click", () => {
+      if (this.#inputView !== "json") this.inputView = "json";
+    });
+    refs
+      .find(".form-banner-reset")
+      ?.addEventListener("click", () => this.resetInputToSchema());
+
+    // Cmd/Ctrl+Enter runs from the form surface too.
+    refs.find(".form-view")?.addEventListener("keydown", event => {
+      const key = event as KeyboardEvent;
+      if (
+        key.key === "Enter" &&
+        (key.metaKey || key.ctrlKey) &&
+        !this.#running
+      ) {
+        key.preventDefault();
+        void this.run();
+      }
+    });
     refs.find(".run")?.addEventListener("click", () => void this.run());
     refs.find(".cancel")?.addEventListener("click", () => void this.cancel());
     refs
@@ -919,8 +1043,18 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     }
     const hasInput =
       operation.input !== undefined && operation.input !== null;
+    const analysis = hasInput ? this.#analyzeInput(operation) : null;
+    const form = hasInput
+      ? createSchemaFormModel(analysis?.effective)
+      : { capability: { supported: false as const }, model: null };
+    this.#formModel = form.capability.supported ? form.model : null;
+    const starterAvailable = hasInput
+      ? sampleFromSchema(analysis?.effective, this.#obi).available
+      : false;
+    const showForm = hasInput && this.#inputView === "form";
+    this.#syncInputPanel(refs, analysis, form, hasInput, showForm, starterAvailable);
     if (editor) {
-      editor.hidden = !hasInput;
+      editor.hidden = !hasInput || showForm;
       editor.readOnly = this.#running;
       editor.text = this.#inputText;
       editor.label = `Input for ${this.#operationKey ?? "operation"} as JSON`;
@@ -940,15 +1074,15 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     }
     if (resetInput) {
       resetInput.hidden = !hasInput;
-      resetInput.disabled =
-        this.#running ||
-        !sampleFromSchema(operation.input, this.#obi).available;
+      resetInput.disabled = this.#running || !starterAvailable;
     }
     if (inputHint) {
       inputHint.textContent = hasInput
-        ? this.#inputMode === "single"
-          ? "One JSON value"
-          : "JSON array → input values"
+        ? !form.capability.supported && form.capability.reason
+          ? `Form view unavailable: ${form.capability.reason}`
+          : this.#inputMode === "single"
+            ? "One JSON value"
+            : "JSON array → input values"
         : "This operation declares no input";
     }
 
@@ -1127,6 +1261,429 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       "aria-label",
       `Binding for ${this.#operationKey ?? "operation"}`,
     );
+  }
+
+  /** Dereferenced input schema analysis for the current oneOf selection. */
+  #analyzeInput(operation: Operation): InputSchemaAnalysis {
+    const schemas = this.#obi?.schemas as Record<string, unknown> | undefined;
+    return analyzeInputSchema(operation.input, schemas, this.#oneOfIndex);
+  }
+
+  /** Input presentation state that must not leak across operations. */
+  #resetInputPresentation(): void {
+    this.#oneOfIndex = 0;
+    this.#inputView = "json";
+    this.#formRendered = null;
+    this.#formModel = null;
+    this.#shapeOptionsSignature = "";
+  }
+
+  #selectOneOfBranch(index: number): void {
+    if (index === this.#oneOfIndex) return;
+    this.#oneOfIndex = index;
+    const operation =
+      this.#obi && this.#operationKey
+        ? this.#obi.operations[this.#operationKey]
+        : undefined;
+    if (operation && operation.input !== undefined && operation.input !== null) {
+      // Switching shapes regenerates the starter for the chosen branch; the
+      // previous branch's value cannot be assumed meaningful for this one.
+      const sample = sampleFromSchema(
+        this.#analyzeInput(operation).effective,
+        this.#obi,
+      );
+      this.#inputTouched = false;
+      this.#inputText = sample.available
+        ? (JSON.stringify(sample.value, null, 2) ?? "")
+        : "";
+      this.#runtimeError = null;
+      this.#emitInputChange();
+    }
+    this.requestRender();
+  }
+
+  /**
+   * The input surface: Source/Form toggle, oneOf shape picker, and the two
+   * panes. Form and JSON share `inputText` as the single source of truth —
+   * form edits patch the JSON text through the same change pipeline the
+   * editor uses, so `run()` and `ob-input-change` see one input path.
+   */
+  #syncInputPanel(
+    refs: Refs,
+    analysis: InputSchemaAnalysis | null,
+    form: { capability: { supported: boolean; reason?: string }; model: SchemaFormModel | null },
+    hasInput: boolean,
+    showForm: boolean,
+    starterAvailable: boolean,
+  ): void {
+    const toggle = refs.find(".input-view-toggle");
+    const viewJson = refs.find<HTMLButtonElement>(".view-json");
+    const viewForm = refs.find<HTMLButtonElement>(".view-form");
+    const shapeBar = refs.find(".input-shape-bar");
+    const shape = refs.find<HTMLSelectElement>(".input-shape");
+    const formView = refs.find(".form-view");
+    const formFields = refs.find<HTMLFieldSetElement>(".form-fields");
+    const formStatus = refs.find(".form-status");
+    const formStatusText = refs.find(".form-status-text");
+    const bannerReset = refs.find<HTMLButtonElement>(".form-banner-reset");
+
+    const sequence = this.#inputMode === "sequence";
+    const blockedReason = sequence
+      ? SEQUENCE_FORM_REASON
+      : !form.capability.supported
+        ? (form.capability.reason ?? "Form view is unavailable for this schema.")
+        : null;
+
+    if (toggle) toggle.hidden = !hasInput;
+    if (viewJson) {
+      viewJson.setAttribute("aria-pressed", String(!showForm));
+    }
+    if (viewForm) {
+      viewForm.setAttribute("aria-pressed", String(showForm));
+      viewForm.disabled = this.#running || blockedReason !== null;
+      viewForm.title = blockedReason ?? "Edit as a schema-driven form";
+    }
+
+    if (shapeBar && shape) {
+      const branches = analysis?.oneOfBranches ?? null;
+      shapeBar.hidden = !hasInput || !branches;
+      if (branches) {
+        const signature = branches.map(branch => branch.label).join("");
+        if (signature !== this.#shapeOptionsSignature) {
+          this.#shapeOptionsSignature = signature;
+          shape.replaceChildren(
+            ...branches.map((branch, index) => {
+              const option = document.createElement("option");
+              option.value = String(index);
+              option.textContent = branch.label;
+              return option;
+            }),
+          );
+        }
+        shape.value = String(analysis?.clampedOneOfIndex ?? 0);
+        shape.disabled = this.#running;
+      }
+    }
+
+    if (formView) formView.hidden = !showForm;
+    if (!showForm || !formView || !formFields || !formStatus || !formStatusText) {
+      return;
+    }
+
+    // Decline-with-reason doctrine: every state where the form cannot render
+    // is a visible banner with a way out, never a silent fallback.
+    const banner = (message: string, offerReset: boolean): void => {
+      formStatus.hidden = false;
+      formStatusText.textContent = message;
+      if (bannerReset) bannerReset.hidden = !offerReset || !starterAvailable;
+      formFields.hidden = true;
+      this.#formRendered = null;
+    };
+
+    if (blockedReason !== null) {
+      banner(blockedReason, false);
+      return;
+    }
+    const model = form.model;
+    if (!model) {
+      banner("Form view is unavailable for this schema.", false);
+      return;
+    }
+    const parsed = parseJsonObjectInput(this.#inputText);
+    if (parsed.error) {
+      banner(
+        `${parsed.error} Edit it as JSON or reset to the schema starter.`,
+        true,
+      );
+      return;
+    }
+    if (parsed.payload && !conformsToSchema(parsed.payload, analysis?.effective)) {
+      banner(
+        "Current input doesn't match the operation's input schema, so it " +
+          "can't be shown as a form. Edit it as JSON or reset to the schema starter.",
+        true,
+      );
+      return;
+    }
+
+    formStatus.hidden = true;
+    formFields.hidden = false;
+    formFields.disabled = this.#running;
+    const payload = parsed.payload ?? buildPayloadFromDefaults(model);
+    const signature = `${this.#operationKey ?? ""}${
+      analysis?.clampedOneOfIndex ?? 0
+    }`;
+    if (
+      !this.#formRendered ||
+      this.#formRendered.signature !== signature ||
+      this.#formRendered.text !== this.#inputText
+    ) {
+      this.#rebuildForm(formFields, model, payload);
+      this.#formRendered = { signature, text: this.#inputText };
+    }
+  }
+
+  #rebuildForm(
+    container: HTMLElement,
+    model: SchemaFormModel,
+    payload: Record<string, unknown>,
+  ): void {
+    if (model.fields.length === 0) {
+      const none = document.createElement("p");
+      none.className = "form-empty";
+      none.textContent = "This operation's input declares no fields.";
+      container.replaceChildren(none);
+      return;
+    }
+    container.replaceChildren(
+      ...model.fields.map(field =>
+        this.#buildFieldRow(field, payload, field.path),
+      ),
+    );
+  }
+
+  #buildFieldRow(
+    field: SchemaField,
+    payload: Record<string, unknown>,
+    path: Array<string | number>,
+  ): HTMLElement {
+    if (isPrimitiveField(field)) {
+      return this.#buildPrimitiveRow(field, payload, path);
+    }
+    if (isObjectField(field)) {
+      return this.#buildObjectRow(field, payload, path);
+    }
+    return this.#buildArrayRow(field, payload, path);
+  }
+
+  #buildPrimitiveRow(
+    field: SchemaPrimitiveField,
+    payload: Record<string, unknown>,
+    path: Array<string | number>,
+  ): HTMLElement {
+    const row = document.createElement("div");
+    row.className = "form-row";
+    row.setAttribute("part", "form-row");
+    const id = fieldID(path);
+    row.append(buildFieldLabel(field.label, field.required, id));
+    if (field.description) row.append(buildFieldHelp(field.description));
+
+    const current = getValueAtPath(payload, path);
+    if (field.enumValues && field.enumValues.length > 0) {
+      const select = document.createElement("select");
+      select.id = id;
+      if (!field.required) {
+        const unset = document.createElement("option");
+        unset.value = "";
+        unset.textContent = "(unset)";
+        select.append(unset);
+      }
+      for (const choice of field.enumValues) {
+        const option = document.createElement("option");
+        option.value = String(choice);
+        option.textContent = String(choice);
+        select.append(option);
+      }
+      select.value = current === undefined || current === null ? "" : String(current);
+      select.addEventListener("change", () =>
+        this.#applyPrimitive(field, path, select.value),
+      );
+      row.append(select);
+      return row;
+    }
+    if (field.valueType === "boolean") {
+      const check = document.createElement("input");
+      check.type = "checkbox";
+      check.id = id;
+      check.checked = Boolean(current);
+      check.addEventListener("change", () =>
+        this.#applyPrimitive(field, path, check.checked),
+      );
+      row.append(check);
+      return row;
+    }
+    const input = document.createElement("input");
+    input.id = id;
+    input.type = field.valueType === "string" ? "text" : "number";
+    if (field.valueType === "integer") input.step = "1";
+    input.value = current === undefined || current === null ? "" : String(current);
+    input.addEventListener("input", () =>
+      this.#applyPrimitive(field, path, input.value),
+    );
+    row.append(input);
+    return row;
+  }
+
+  #buildObjectRow(
+    field: SchemaObjectField,
+    payload: Record<string, unknown>,
+    path: Array<string | number>,
+  ): HTMLElement {
+    const group = document.createElement("fieldset");
+    group.className = "form-group";
+    group.setAttribute("part", "form-row");
+    const legend = document.createElement("legend");
+    legend.append(field.label);
+    if (field.required) legend.append(buildRequiredMark());
+    group.append(legend);
+    if (field.description) group.append(buildFieldHelp(field.description));
+    if (field.fields.length === 0) {
+      const none = document.createElement("p");
+      none.className = "form-empty";
+      none.textContent = "No nested fields.";
+      group.append(none);
+      return group;
+    }
+    for (const child of field.fields) {
+      group.append(this.#buildFieldRow(child, payload, [...path, child.key]));
+    }
+    return group;
+  }
+
+  #buildArrayRow(
+    field: SchemaField & { kind: "array" },
+    payload: Record<string, unknown>,
+    path: Array<string | number>,
+  ): HTMLElement {
+    const row = document.createElement("div");
+    row.className = "form-row form-array";
+    row.setAttribute("part", "form-row");
+    const header = document.createElement("div");
+    header.className = "form-array-header";
+    header.append(buildFieldLabel(field.label, field.required, null));
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "form-add subtle";
+    add.setAttribute("part", "form-add");
+    add.textContent = "Add";
+    add.setAttribute("aria-label", `Add ${field.label} item`);
+    add.addEventListener("click", () => {
+      const base = this.#formPayloadBase();
+      let item = defaultForField(field.item);
+      if (item === undefined) {
+        item = isObjectField(field.item)
+          ? {}
+          : field.item.valueType === "boolean"
+            ? false
+            : field.item.valueType === "string"
+              ? ""
+              : 0;
+      }
+      this.#commitFormPayload(appendArrayItemAtPath(base, path, item), true);
+    });
+    header.append(add);
+    row.append(header);
+    if (field.description) row.append(buildFieldHelp(field.description));
+
+    const items = getValueAtPath(payload, path);
+    const entries = Array.isArray(items) ? items : [];
+    if (entries.length === 0) {
+      const none = document.createElement("p");
+      none.className = "form-empty";
+      none.textContent = "No items.";
+      row.append(none);
+      return row;
+    }
+    entries.forEach((_, index) => {
+      const item = document.createElement("div");
+      item.className = "form-array-item";
+      const body = document.createElement("div");
+      body.className = "item-body";
+      if (isPrimitiveField(field.item)) {
+        body.append(
+          this.#buildFieldRow(field.item, payload, [...path, index]),
+        );
+      } else {
+        const group = document.createElement("fieldset");
+        group.className = "form-group";
+        const legend = document.createElement("legend");
+        legend.textContent = `Item ${index + 1}`;
+        group.append(legend);
+        for (const child of field.item.fields) {
+          group.append(
+            this.#buildFieldRow(child, payload, [...path, index, child.key]),
+          );
+        }
+        body.append(group);
+      }
+      item.append(body);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "form-remove subtle";
+      remove.setAttribute("part", "form-remove");
+      remove.textContent = "Remove";
+      remove.setAttribute(
+        "aria-label",
+        `Remove ${field.label} item ${index + 1}`,
+      );
+      remove.addEventListener("click", () => {
+        this.#commitFormPayload(
+          removeArrayItemAtPath(this.#formPayloadBase(), path, index),
+          true,
+        );
+      });
+      item.append(remove);
+      row.append(item);
+    });
+    return row;
+  }
+
+  /** Panjir's primitive write semantics: empty clears optional, floors required. */
+  #applyPrimitive(
+    field: SchemaPrimitiveField,
+    path: Array<string | number>,
+    raw: string | boolean,
+  ): void {
+    const base = this.#formPayloadBase();
+    if (field.valueType === "boolean") {
+      this.#commitFormPayload(setValueAtPath(base, path, Boolean(raw)), false);
+      return;
+    }
+    const text = String(raw);
+    if (text === "") {
+      if (field.required) {
+        const fallback = field.valueType === "string" ? "" : 0;
+        this.#commitFormPayload(setValueAtPath(base, path, fallback), false);
+      } else {
+        this.#commitFormPayload(unsetValueAtPath(base, path), false);
+      }
+      return;
+    }
+    if (field.valueType === "string") {
+      this.#commitFormPayload(setValueAtPath(base, path, text), false);
+      return;
+    }
+    const numeric = Number(text);
+    if (Number.isNaN(numeric)) return;
+    const value = field.valueType === "integer" ? Math.trunc(numeric) : numeric;
+    this.#commitFormPayload(setValueAtPath(base, path, value), false);
+  }
+
+  #formPayloadBase(): Record<string, unknown> {
+    const parsed = parseJsonObjectInput(this.#inputText);
+    if (parsed.payload) return parsed.payload;
+    if (this.#formModel) return buildPayloadFromDefaults(this.#formModel);
+    return {};
+  }
+
+  /**
+   * Every form edit lands in `inputText` — the same pipeline as typed JSON.
+   * Value edits pre-sync the rebuild guard so the control keeps focus;
+   * structural edits (array add/remove) leave it stale so the rows rebuild.
+   */
+  #commitFormPayload(
+    next: Record<string, unknown>,
+    structural: boolean,
+  ): void {
+    const text = payloadToPrettyJson(next);
+    this.#inputTouched = true;
+    this.#inputText = text;
+    this.#runtimeError = null;
+    if (!structural && this.#formRendered) {
+      this.#formRendered = { ...this.#formRendered, text };
+    }
+    this.#emitInputChange();
+    this.requestRender();
   }
 
   #resetInput(): void {
@@ -1313,6 +1870,39 @@ function operationBindingEntries(
 
 const COPY_FEEDBACK_MS = 1600;
 const PREVIEW_LIMIT = 80;
+
+/** Stable, shadow-scoped control id for a payload path. */
+function fieldID(path: Array<string | number>): string {
+  return `f-${path.map(String).join("-")}`.replace(/[^A-Za-z0-9_-]/g, "-");
+}
+
+function buildRequiredMark(): HTMLElement {
+  const mark = document.createElement("span");
+  mark.className = "required";
+  mark.setAttribute("aria-hidden", "true");
+  mark.textContent = "*";
+  return mark;
+}
+
+function buildFieldLabel(
+  text: string,
+  required: boolean,
+  forID: string | null,
+): HTMLElement {
+  const label = document.createElement(forID ? "label" : "span");
+  label.className = "form-label";
+  if (forID) (label as HTMLLabelElement).htmlFor = forID;
+  label.append(text);
+  if (required) label.append(buildRequiredMark());
+  return label;
+}
+
+function buildFieldHelp(text: string): HTMLElement {
+  const help = document.createElement("p");
+  help.className = "form-help";
+  help.textContent = text;
+  return help;
+}
 
 /** Rounds a ratio to 0.1% so keyboard steps stay exact decimals. */
 function roundRatio(value: number): number {
@@ -1781,6 +2371,10 @@ const CONTENT_SHELL = `
                <h3>Input</h3>
                <div class="input-options">
                  <span class="input-hint"></span>
+                 <span class="input-view-toggle" part="input-mode-toggle" role="group" aria-label="Input editing view" hidden>
+                   <button class="view-json subtle" type="button" aria-pressed="true">Source</button>
+                   <button class="view-form subtle" type="button" aria-pressed="false">Form</button>
+                 </span>
                  <button class="format-input subtle" part="format-input" type="button">Format JSON</button>
                  <button class="reset-input subtle" part="reset-input" type="button">Reset starter</button>
                  <label>
@@ -1792,7 +2386,23 @@ const CONTENT_SHELL = `
                  </label>
                </div>
              </div>
+             <div class="input-shape-bar" hidden>
+               <label class="input-shape-row">
+                 <span class="input-shape-label">Input shape</span>
+                 <select class="input-shape" part="input-shape"></select>
+               </label>
+             </div>
              <ob-json-editor part="input" class="input-editor"></ob-json-editor>
+             <div class="form-view" hidden>
+               <div class="form-status" hidden>
+                 <p class="form-status-text"></p>
+                 <div class="form-status-actions">
+                   <button class="form-banner-json subtle" type="button">Edit as JSON</button>
+                   <button class="form-banner-reset subtle" type="button">Reset starter</button>
+                 </div>
+               </div>
+               <fieldset class="form-fields"></fieldset>
+             </div>
              <div class="actions">
                <button class="run" part="run" type="button">Run</button>
                <button class="cancel" part="cancel" type="button">Cancel</button>
@@ -1945,6 +2555,12 @@ const styles = `
     min-height: 13rem;
   }
 
+  .workspace.split .form-view {
+    flex: 1 1 0;
+    min-height: 13rem;
+    max-height: none;
+  }
+
   .workspace.split .output-view {
     flex: 1 1 0;
     min-height: 13rem;
@@ -2017,7 +2633,8 @@ const styles = `
   }
 
   .input-mode,
-  .binding-select {
+  .binding-select,
+  .input-shape {
     min-height: 1.8rem;
     padding: 0.2rem 0.35rem;
     color: var(--_ob-color-text);
@@ -2025,6 +2642,171 @@ const styles = `
     background: var(--_ob-color-background);
     border: 1px solid var(--_ob-color-border);
     border-radius: var(--_ob-radius);
+  }
+
+  .input-view-toggle {
+    display: inline-flex;
+    overflow: hidden;
+    border: 1px solid var(--_ob-color-border);
+    border-radius: var(--_ob-radius);
+  }
+
+  .input-view-toggle button {
+    min-height: 1.8rem;
+    padding: 0.2rem 0.5rem;
+    color: var(--_ob-color-text-muted);
+    font-size: 0.68rem;
+    background: var(--_ob-color-background);
+    border: 0;
+    border-radius: 0;
+  }
+
+  .input-view-toggle button + button {
+    border-left: 1px solid var(--_ob-color-border);
+  }
+
+  .input-view-toggle button[aria-pressed="true"] {
+    color: var(--_ob-color-accent-contrast);
+    background: var(--_ob-color-accent);
+  }
+
+  .input-shape-bar {
+    margin-bottom: 0.45rem;
+  }
+
+  .input-shape-row {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    color: var(--_ob-color-text-muted);
+    font-size: 0.7rem;
+  }
+
+  .input-shape {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--_ob-font-mono);
+  }
+
+  .form-view {
+    min-height: 13rem;
+    max-height: 26rem;
+    padding: var(--_ob-space);
+    overflow: auto;
+    background: var(--_ob-color-surface);
+    border: 1px solid var(--_ob-color-border);
+    border-radius: var(--_ob-radius);
+  }
+
+  .form-fields {
+    min-width: 0;
+    padding: 0;
+    margin: 0;
+    border: 0;
+  }
+
+  .form-row {
+    min-width: 0;
+    margin-bottom: 0.6rem;
+  }
+
+  .form-row:last-child {
+    margin-bottom: 0;
+  }
+
+  .form-label {
+    display: block;
+    margin-bottom: 0.2rem;
+    color: var(--_ob-color-text);
+    font-size: 0.72rem;
+    font-weight: 600;
+  }
+
+  .required {
+    margin-left: 0.15rem;
+    color: var(--_ob-color-danger);
+  }
+
+  .form-help {
+    display: -webkit-box;
+    margin: 0 0 0.25rem;
+    overflow: hidden;
+    color: var(--_ob-color-text-muted);
+    font-size: 0.68rem;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .form-row input[type="text"],
+  .form-row input[type="number"],
+  .form-row select {
+    width: 100%;
+    min-height: 1.8rem;
+    padding: 0.2rem 0.35rem;
+    color: var(--_ob-color-text);
+    font: inherit;
+    background: var(--_ob-color-background);
+    border: 1px solid var(--_ob-color-border);
+    border-radius: var(--_ob-radius);
+  }
+
+  .form-group {
+    min-width: 0;
+    margin: 0 0 0.6rem;
+    padding: 0.45rem 0.55rem;
+    border: 1px dashed var(--_ob-color-border);
+    border-radius: calc(var(--_ob-radius) * 0.8);
+  }
+
+  .form-group legend {
+    padding: 0 0.25rem;
+    color: var(--_ob-color-text-muted);
+    font-size: 0.7rem;
+  }
+
+  .form-array-header {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .form-array-item {
+    display: flex;
+    gap: 0.45rem;
+    align-items: flex-start;
+    margin-top: 0.4rem;
+  }
+
+  .form-array-item > .item-body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .form-empty {
+    margin: 0.15rem 0 0;
+    color: var(--_ob-color-text-muted);
+    font-size: 0.7rem;
+    font-style: italic;
+  }
+
+  .form-status {
+    padding: 0.65rem 0.75rem;
+    margin-bottom: 0.6rem;
+    color: var(--_ob-color-text);
+    font-size: 0.74rem;
+    background: var(--_ob-color-surface-strong);
+    border: 1px solid var(--_ob-color-border);
+    border-radius: var(--_ob-radius);
+  }
+
+  .form-status-text {
+    margin: 0 0 0.4rem;
+  }
+
+  .form-status-actions {
+    display: flex;
+    gap: 0.4rem;
   }
 
   .binding-select {

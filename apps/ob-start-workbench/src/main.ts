@@ -1,4 +1,3 @@
-import "@openbindings/interface-sources/define";
 import "@openbindings/obi-editor/define";
 import "@openbindings/obi-explorer/define";
 import "@openbindings/operation-detail/define";
@@ -10,6 +9,7 @@ import {
 } from "@openbindings/operation-graph-model";
 import "@openbindings/operation-graph-viewer/define";
 import "@openbindings/operation-tabs/define";
+import "@openbindings/source-detail/define";
 import {
   OPERATION_INVOKER_OPERATION,
   type OperationFrameError,
@@ -27,7 +27,6 @@ import {
   type OBInterface,
 } from "@openbindings/sdk";
 import { OperationEnvironment, debounce } from "@openbindings/ui-core";
-import type { InterfaceSourcesElement } from "@openbindings/interface-sources";
 import type { OBIEditorElement } from "@openbindings/obi-editor";
 import type { OBIExplorerElement } from "@openbindings/obi-explorer";
 import type { OperationDetailElement } from "@openbindings/operation-detail";
@@ -38,6 +37,10 @@ import type {
 import type { OperationGraphViewerElement } from "@openbindings/operation-graph-viewer";
 import type { OperationTabsElement } from "@openbindings/operation-tabs";
 import type { OperationWorkbenchElement } from "@openbindings/operation-workbench";
+import type {
+  SourceDetailElement,
+  SourceInspection,
+} from "@openbindings/source-detail";
 import {
   adaptOBStartFrameBindings,
   OBStartFrameInvoker,
@@ -61,10 +64,8 @@ interface GraphSelection {
 const explorer = requiredElement<OBIExplorerElement>("ob-obi-explorer");
 const interfaceEditor =
   requiredElement<OBIEditorElement>("ob-obi-editor");
-const interfaceSources = requiredElement<InterfaceSourcesElement>(
-  "ob-interface-sources",
-);
 const detail = requiredElement<OperationDetailElement>("ob-operation-detail");
+const sourceDetail = requiredElement<SourceDetailElement>("ob-source-detail");
 const graphViewer = requiredElement<OperationGraphViewerElement>(
   "ob-operation-graph-viewer",
 );
@@ -169,15 +170,16 @@ const requirementBannerAction = requiredElement<HTMLButtonElement>(
 const themeToggle = requiredElement<HTMLButtonElement>("#theme-toggle");
 const layoutMenu = requiredElement<HTMLDetailsElement>(".layout-menu");
 const workbenchGrid = requiredElement<HTMLElement>(".workbench-grid");
-const operationColumn = requiredElement<HTMLElement>(".operation-column");
 const railGutter = requiredElement<HTMLElement>("#rail-gutter");
-const detailGutter = requiredElement<HTMLElement>("#detail-gutter");
+const sheetGutter = requiredElement<HTMLElement>("#sheet-gutter");
 const sourceGutter = requiredElement<HTMLElement>("#source-gutter");
+const tabContent = requiredElement<HTMLElement>("#tab-content");
+const sheetStatus = requiredElement<HTMLElement>("#sheet-status");
+const sheetRun = requiredElement<HTMLButtonElement>("#sheet-run");
+const sheetToggle = requiredElement<HTMLButtonElement>("#sheet-toggle");
 const showExplorer =
   requiredElement<HTMLInputElement>("#show-explorer");
-const showDetail = requiredElement<HTMLInputElement>("#show-detail");
-const showInvocation =
-  requiredElement<HTMLInputElement>("#show-invocation");
+const showOperation = requiredElement<HTMLInputElement>("#show-operation");
 const showSource = requiredElement<HTMLInputElement>("#show-source");
 const resetLayoutButton =
   requiredElement<HTMLButtonElement>("#reset-layout");
@@ -217,14 +219,15 @@ const themeStorageKey = "openbindings.ob-start.theme.v1";
 const tabsStoragePrefix = "openbindings.ob-start.operation-tabs.v1.";
 const defaultWorkspaceLayout: WorkspaceLayout = {
   explorer: true,
-  detail: true,
-  invocation: true,
+  operation: true,
   source: true,
   railWidth: 352,
-  detailRatio: 0.45,
   sourceWidth: 420,
   execSplit: 0.5,
 };
+const DEFAULT_SHEET_RATIO = 0.45;
+const SHEET_RATIO_MIN = 0.05;
+const SHEET_RATIO_MAX = 0.95;
 let sessionToken = tokenFromFragment() || restoreSessionToken();
 /**
  * What is actually known about the session credential. "Ready" and
@@ -254,11 +257,77 @@ let targetInterface: OBInterface | null = null;
 let targetLabel = "";
 let targetContext: Record<string, unknown> | null = null;
 let pendingInterfaceDraft: OBInterface | null = null;
-let selectedOperationKey: string | null = null;
 let targetSessionID = "";
-let openOperationKeys: string[] = [];
-const invocationByOperation = new Map<string, OperationWorkbenchElement>();
-const runningOperations = new Set<string>();
+
+// --- The tab model (rev 16): tabs are workspace items -----------------------
+//
+// A tab is a named workspace item keyed by a generated session id — NOT by
+// operation key. The operation key is data inside an invocation session, so
+// several sessions of the same operation (different inputs, bindings, output
+// histories) coexist. Rail clicks focus the most-recently-active session for
+// an operation, or open one; duplication is the explicit act that creates a
+// second session. Persisted state carries schema version 2 and migrates the
+// v1 operation-keyed shape once.
+
+interface SessionRunStatus {
+  state: "idle" | "running" | "done" | "failed";
+  outputCount?: number;
+  durationMs?: number;
+  code?: string;
+}
+
+interface OperationSession {
+  id: string;
+  kind: "operation";
+  operationKey: string;
+  label: string;
+  /** Bottom-sheet state, per session (rev 16): collapsed strip or open. */
+  collapsed: boolean;
+  /** Sheet height as a fraction of the tab content, 0.05–0.95. */
+  ratio: number;
+  lastActiveAt: number;
+  element: OperationWorkbenchElement;
+  status: SessionRunStatus;
+}
+
+/**
+ * A source view (rev 16): one source's facts, verbs, and derived bindings,
+ * shown through the shared ob-source-detail element. No invocation sheet, no
+ * dirty state; `running` while a pull for it is in flight.
+ */
+interface SourceSession {
+  id: string;
+  kind: "source";
+  sourceKey: string;
+  label: string;
+  lastActiveAt: number;
+  status: SessionRunStatus;
+}
+
+type WorkspaceSession = OperationSession | SourceSession;
+
+const sessionsById = new Map<string, WorkspaceSession>();
+let openSessionIds: string[] = [];
+let activeSessionId: string | null = null;
+let sessionCounter = 0;
+
+function generateSessionId(): string {
+  sessionCounter += 1;
+  const random =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID().slice(0, 8)
+      : Math.random().toString(36).slice(2, 10);
+  return `s-${random}-${sessionCounter.toString(36)}`;
+}
+
+function activeSession(): WorkspaceSession | null {
+  return activeSessionId ? sessionsById.get(activeSessionId) ?? null : null;
+}
+
+function activeOperationKey(): string | null {
+  const session = activeSession();
+  return session?.kind === "operation" ? session.operationKey : null;
+}
 const graphDraftByBinding = new Map<string, OperationGraph>();
 let activeGraphSelection: GraphSelection | null = null;
 let editingGraph = false;
@@ -284,11 +353,10 @@ const preflightCache = new Map<string, ContextRequiredDetails | null>();
 let workspaceLayout = restoreWorkspaceLayout();
 if (
   !workspaceLayout.explorer &&
-  !workspaceLayout.detail &&
-  !workspaceLayout.invocation &&
+  !workspaceLayout.operation &&
   !workspaceLayout.source
 ) {
-  workspaceLayout.invocation = true;
+  workspaceLayout.operation = true;
 }
 
 persistSessionToken(sessionToken);
@@ -302,25 +370,20 @@ applyWorkspaceLayout();
 explorer.hideIdentity = true;
 
 // Panjir's master pane (rev 15.1): the rail is ONE scroll container
-// (.rail-column, styles.css). Both rail elements flow to content height and
-// pin their sticky rows — the explorer's filter, then the Operations and
-// Sources section headings — against that scroller. One filter narrows both
-// sections (wiring below).
+// (.rail-column, styles.css). The explorer flows to content height and pins
+// its sticky rows — filter, then the Operations and Sources section
+// headings — against that scroller. Since rev 16 the sources overview lives
+// inside the explorer, so its one filter narrows both sections natively.
 explorer.flowContent = true;
-interfaceSources.flowContent = true;
-
-explorer.addEventListener("ob-filter-change", event => {
-  interfaceSources.filter = event.detail.filter;
-});
-// ob-filter-change only fires when the visible operation set changes; the
-// composed input event keeps the sources section narrowing on keystrokes
-// that changed no operation rows (e.g. typing past zero matches).
-explorer.addEventListener("input", () => {
-  interfaceSources.filter = explorer.filter;
-});
 
 explorer.addEventListener("ob-operation-select", event => {
   activateOperation(event.detail.operationKey);
+});
+
+// Source overview rows (rev 16): the rail opens/focuses the source's
+// workspace tab; the detail lives there, not in the rail.
+explorer.addEventListener("ob-source-select", event => {
+  activateSource(event.detail.sourceKey);
 });
 
 // Binding roles (rev 15): the operation detail's bindings disclosure is
@@ -334,8 +397,10 @@ explorer.addEventListener("ob-operation-select", event => {
 invocationSessions.addEventListener("ob-layout-change", event => {
   const layoutEvent = event as CustomEvent<{ splitRatio: number }>;
   workspaceLayout.execSplit = layoutEvent.detail.splitRatio;
-  for (const invocation of invocationByOperation.values()) {
-    invocation.splitRatio = workspaceLayout.execSplit;
+  for (const session of sessionsById.values()) {
+    if (session.kind === "operation") {
+      session.element.splitRatio = workspaceLayout.execSplit;
+    }
   }
   persistWorkspaceLayout();
 });
@@ -351,42 +416,165 @@ invocationSessions.addEventListener("ob-binding-select", event => {
 });
 
 operationTabs.addEventListener("ob-tab-activate", event => {
-  activateOperation(event.detail.key);
+  focusSession(event.detail.key);
 });
 
 operationTabs.addEventListener("ob-tab-close", event => {
-  closeOperation(event.detail.key);
+  closeSession(event.detail.key);
+});
+
+operationTabs.addEventListener("ob-tab-rename", event => {
+  renameSession(event.detail.key, event.detail.label);
+});
+
+operationTabs.addEventListener("ob-tab-duplicate", event => {
+  duplicateSession(event.detail.key);
 });
 
 operationTabs.addEventListener("ob-tab-reorder", event => {
   const proposed = event.detail.keys;
   if (
-    proposed.length !== openOperationKeys.length ||
-    proposed.some(key => !openOperationKeys.includes(key))
+    proposed.length !== openSessionIds.length ||
+    proposed.some(id => !openSessionIds.includes(id))
   ) {
     return;
   }
-  openOperationKeys = [...proposed];
+  openSessionIds = [...proposed];
   renderOperationTabs();
-  persistOperationTabs();
+  persistSessions();
 });
 
 operationTabs.addEventListener("ob-tabs-close-unselected", () => {
-  for (const key of [...openOperationKeys]) {
-    if (key !== selectedOperationKey) removeOperationSession(key);
+  for (const id of [...openSessionIds]) {
+    if (id !== activeSessionId) removeSession(id);
   }
-  openOperationKeys = selectedOperationKey ? [selectedOperationKey] : [];
+  openSessionIds = activeSessionId ? [activeSessionId] : [];
   renderOperationTabs();
-  persistOperationTabs();
+  persistSessions();
 });
 
 operationTabs.addEventListener("ob-tabs-close-all", () => {
-  for (const key of [...openOperationKeys]) removeOperationSession(key);
-  openOperationKeys = [];
+  for (const id of [...openSessionIds]) removeSession(id);
+  openSessionIds = [];
   showNoActiveOperation();
   renderOperationTabs();
-  persistOperationTabs();
+  persistSessions();
 });
+
+// --- The invocation bottom sheet (rev 16) ----------------------------------
+//
+// Per-session {collapsed, ratio}: three tabs can hold the same operation
+// collapsed, half-open, and full-bleed simultaneously. Running from the
+// collapsed strip NEVER auto-expands — the strip itself reports completion.
+
+sheetToggle.addEventListener("click", () => {
+  toggleSheetCollapsed();
+});
+
+sheetGutter.addEventListener("dblclick", () => {
+  toggleSheetCollapsed();
+});
+
+sheetRun.addEventListener("click", () => {
+  const session = activeSession();
+  if (session?.kind === "operation") void session.element.run();
+});
+
+sheetGutter.addEventListener("pointerdown", event => {
+  if (event.button !== 0) return;
+  const session = activeSession();
+  if (session?.kind !== "operation" || session.collapsed) return;
+  const bounds = tabContent.getBoundingClientRect();
+  startPointerResize(sheetGutter, event, move => {
+    session.ratio = clamp(
+      (bounds.bottom - move.clientY) / bounds.height,
+      SHEET_RATIO_MIN,
+      SHEET_RATIO_MAX,
+    );
+    applySheetLayout();
+  });
+});
+
+sheetGutter.addEventListener("keydown", event => {
+  const session = activeSession();
+  if (session?.kind !== "operation") return;
+  let ratio = session.ratio;
+  if (event.key === "ArrowUp") ratio += 0.04;
+  else if (event.key === "ArrowDown") ratio -= 0.04;
+  else if (event.key === "Home") ratio = SHEET_RATIO_MIN;
+  else if (event.key === "End") ratio = SHEET_RATIO_MAX;
+  else return;
+  event.preventDefault();
+  session.ratio = clamp(ratio, SHEET_RATIO_MIN, SHEET_RATIO_MAX);
+  applySheetLayout();
+  persistSessions();
+});
+
+function toggleSheetCollapsed(): void {
+  const session = activeSession();
+  if (session?.kind !== "operation") return;
+  session.collapsed = !session.collapsed;
+  applySheetLayout();
+  persistSessions();
+  sheetToggle.focus();
+}
+
+function applySheetLayout(): void {
+  const active = activeSession();
+  // The invocation sheet belongs to operation sessions only; a source tab
+  // (or no tab) shows the detail region full-height.
+  const session = active?.kind === "operation" ? active : null;
+  tabContent.classList.toggle("no-session", !session);
+  if (!session) {
+    updateSheetStatus();
+    return;
+  }
+  tabContent.classList.toggle("sheet-collapsed", session.collapsed);
+  tabContent.style.setProperty(
+    "--sheet-size",
+    `${Math.round(session.ratio * 1000) / 10}%`,
+  );
+  sheetGutter.setAttribute(
+    "aria-valuenow",
+    String(Math.round(session.ratio * 100)),
+  );
+  sheetToggle.textContent = session.collapsed ? "Expand" : "Collapse";
+  sheetToggle.setAttribute("aria-expanded", String(!session.collapsed));
+  sheetToggle.title = session.collapsed
+    ? "Expand the invocation sheet"
+    : "Collapse the invocation sheet";
+  // The Run button is the collapsed strip's standing invitation; expanded,
+  // the workbench has its own Run.
+  sheetRun.hidden = !session.collapsed;
+  updateSheetStatus();
+}
+
+/**
+ * The collapsed strip's honest status line: Ready / running… /
+ * "N values · duration" / "failed · CODE" with the danger treatment. Also
+ * shown expanded, where it doubles as a compact run summary.
+ */
+function updateSheetStatus(): void {
+  const session = activeSession();
+  const status = session?.status ?? { state: "idle" as const };
+  let text = "Ready";
+  let danger = false;
+  if (status.state === "running") text = "running…";
+  else if (status.state === "done") {
+    const count = status.outputCount ?? 0;
+    text = `${count} value${count === 1 ? "" : "s"} · ${formatDuration(status.durationMs ?? 0)}`;
+  } else if (status.state === "failed") {
+    text = `failed · ${status.code ?? "ERROR"}`;
+    danger = true;
+  }
+  sheetStatus.textContent = text;
+  sheetStatus.classList.toggle("danger", danger);
+}
+
+function formatDuration(durationMs: number): string {
+  if (durationMs < 1000) return `${Math.max(1, Math.round(durationMs))}ms`;
+  return `${(durationMs / 1000).toFixed(1)}s`;
+}
 
 // Direct editing (rev 14.3, dogfood: "what would Apply do that Export
 // doesn't?"): the editor IS the living document. A valid edit commits on
@@ -423,28 +611,28 @@ for (const [button, pane] of [
   button.addEventListener("click", () => setArtifactPane(pane));
 }
 
-interfaceSources.addEventListener("ob-source-select", event => {
-  interfaceSources.selectedSourceKey = event.detail.sourceKey;
-});
-
-// Navigation, not selection (rev 15): clicking a binding in the rail's
-// sources section activates its operation, but the invocation keeps its own
-// binding choice — only the cockpit's binding-select changes it.
-interfaceSources.addEventListener("ob-binding-select", event => {
-  interfaceSources.selectedSourceKey = event.detail.sourceKey;
-  interfaceSources.selectedBindingKey = event.detail.bindingKey;
-  activateOperation(event.detail.operationKey);
-});
-
-interfaceSources.addEventListener("ob-source-refresh", event => {
+// The source tab's verbs (rev 16): each is an intent the app commits through
+// the contract — pullSource, inspectSource, removeSource, unbindOperation.
+sourceDetail.addEventListener("ob-source-pull", event => {
   void refreshSource(event.detail.sourceKey);
 });
 
-interfaceSources.addEventListener("ob-source-remove", event => {
+sourceDetail.addEventListener("ob-source-inspect", event => {
+  void inspectSource(event.detail.sourceKey);
+});
+
+sourceDetail.addEventListener("ob-source-remove", event => {
   void removeSource(event.detail.sourceKey);
 });
 
-interfaceSources.addEventListener("ob-binding-remove", event => {
+// Navigation, not selection (rev 15): clicking a binding in the source tab
+// activates its operation, but the invocation keeps its own binding choice —
+// only the cockpit's binding-select changes it.
+sourceDetail.addEventListener("ob-binding-select", event => {
+  activateOperation(event.detail.operationKey);
+});
+
+sourceDetail.addEventListener("ob-binding-remove", event => {
   void removeBinding(
     event.detail.bindingKey,
     event.detail.operationKey,
@@ -648,7 +836,7 @@ function openDocument(obi: OBInterface, provenance: string): void {
   resolveAttempt += 1;
   setTarget(obi, obi.name?.trim() || provenance, documentKey(obi));
   const first = Object.keys(obi.operations)[0];
-  if (!selectedOperationKey && first) activateOperation(first);
+  if (!activeSession() && first) activateOperation(first);
   markDocument(false);
   recentsRemember(obi);
 }
@@ -858,7 +1046,7 @@ openThisOBButton.addEventListener("click", () => {
     obInterface.operations["openbindings.ob.describe"]
       ? "openbindings.ob.describe"
       : Object.keys(obInterface.operations)[0];
-  if (!selectedOperationKey && preferred) activateOperation(preferred);
+  if (!activeSession() && preferred) activateOperation(preferred);
   markDocument(false);
   bootstrapMessage.textContent =
     "Using this ob start instance through its published OpenBindings interface.";
@@ -1043,21 +1231,15 @@ document.addEventListener("keydown", event => {
   layoutMenu.querySelector<HTMLElement>("summary")?.focus();
 });
 
-for (const control of [showExplorer, showDetail, showInvocation, showSource]) {
+for (const control of [showExplorer, showOperation, showSource]) {
   control.addEventListener("change", () => {
-    if (
-      !showExplorer.checked &&
-      !showDetail.checked &&
-      !showInvocation.checked &&
-      !showSource.checked
-    ) {
+    if (!showExplorer.checked && !showOperation.checked && !showSource.checked) {
       control.checked = true;
     }
     workspaceLayout = {
       ...workspaceLayout,
       explorer: showExplorer.checked,
-      detail: showDetail.checked,
-      invocation: showInvocation.checked,
+      operation: showOperation.checked,
       source: showSource.checked,
     };
     applyWorkspaceLayout();
@@ -1067,8 +1249,10 @@ for (const control of [showExplorer, showDetail, showInvocation, showSource]) {
 
 resetLayoutButton.addEventListener("click", () => {
   workspaceLayout = { ...defaultWorkspaceLayout };
-  for (const invocation of invocationByOperation.values()) {
-    invocation.splitRatio = workspaceLayout.execSplit;
+  for (const session of sessionsById.values()) {
+    if (session.kind === "operation") {
+      session.element.splitRatio = workspaceLayout.execSplit;
+    }
   }
   applyWorkspaceLayout();
   persistWorkspaceLayout();
@@ -1095,31 +1279,6 @@ railGutter.addEventListener("keydown", event => {
     workspaceLayout.railWidth + (event.key === "ArrowLeft" ? -24 : 24),
     240,
     560,
-  );
-  applyWorkspaceLayout();
-  persistWorkspaceLayout();
-});
-
-detailGutter.addEventListener("pointerdown", event => {
-  if (event.button !== 0) return;
-  const bounds = operationColumn.getBoundingClientRect();
-  startPointerResize(detailGutter, event, move => {
-    workspaceLayout.detailRatio = clamp(
-      (move.clientY - bounds.top) / bounds.height,
-      0.2,
-      0.75,
-    );
-    applyWorkspaceLayout();
-  });
-});
-
-detailGutter.addEventListener("keydown", event => {
-  if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-  event.preventDefault();
-  workspaceLayout.detailRatio = clamp(
-    workspaceLayout.detailRatio + (event.key === "ArrowUp" ? -0.04 : 0.04),
-    0.2,
-    0.75,
   );
   applyWorkspaceLayout();
   persistWorkspaceLayout();
@@ -1189,7 +1348,7 @@ async function bootstrap(): Promise<void> {
       obInterface.operations["openbindings.ob.describe"]
         ? "openbindings.ob.describe"
         : Object.keys(obInterface.operations)[0];
-    if (!selectedOperationKey && preferred) activateOperation(preferred);
+    if (!activeSession() && preferred) activateOperation(preferred);
 
     // Public discovery only proves the server answers anonymous requests.
     // The pill claims Ready when — and only when — the authenticated probe
@@ -1452,9 +1611,9 @@ function setTarget(obi: OBInterface, label: string, sessionID: string): void {
   preflightKey = null;
   preflightCache.clear();
   hideContextChallenge();
-  for (const key of [...openOperationKeys]) removeOperationSession(key);
-  openOperationKeys = [];
-  selectedOperationKey = null;
+  for (const id of [...openSessionIds]) removeSession(id);
+  openSessionIds = [];
+  activeSessionId = null;
   targetSessionID = sessionID;
   targetLabel = label;
   graphDraftByBinding.clear();
@@ -1467,10 +1626,9 @@ function setTarget(obi: OBInterface, label: string, sessionID: string): void {
   targetInterface = obi;
   explorer.obi = obi;
   explorer.selectedOperation = null;
-  interfaceSources.obi = obi;
-  interfaceSources.selectedSourceKey =
-    Object.keys(obi.sources ?? {})[0] ?? null;
-  interfaceSources.selectedBindingKey = null;
+  explorer.selectedSource = null;
+  sourceDetail.obi = obi;
+  sourceDetail.sourceKey = null;
   detail.obi = obi;
   detail.operationKey = null;
   detail.selectedBindingKey = null;
@@ -1479,7 +1637,7 @@ function setTarget(obi: OBInterface, label: string, sessionID: string): void {
   applyTargetContext();
   renderTargetContextState();
   renderDocumentBar(obi);
-  restoreOperationTabs();
+  restoreSessions();
   refreshGraphSurface();
 }
 
@@ -1493,24 +1651,30 @@ function setTarget(obi: OBInterface, label: string, sessionID: string): void {
  */
 function updateCurrentTarget(obi: OBInterface, label: string): void {
   const previous = targetInterface;
-  const previousOperation = selectedOperationKey;
-  const previousSource = interfaceSources.selectedSourceKey;
-  const previousBinding = interfaceSources.selectedBindingKey;
+  const previousActiveId = activeSessionId;
 
-  for (const key of [...invocationByOperation.keys()]) {
-    if (!obi.operations[key]) removeOperationSession(key);
+  // Sessions whose subject vanished from the document close; the rest keep
+  // their state.
+  for (const [id, session] of [...sessionsById]) {
+    if (session.kind === "operation" && !obi.operations[session.operationKey]) {
+      removeSession(id);
+    } else if (session.kind === "source" && !obi.sources?.[session.sourceKey]) {
+      removeSession(id);
+    }
   }
-  openOperationKeys = openOperationKeys.filter(key => Boolean(obi.operations[key]));
+  openSessionIds = openSessionIds.filter(id => sessionsById.has(id));
 
-  for (const [key, invocation] of invocationByOperation) {
+  for (const session of sessionsById.values()) {
+    if (session.kind !== "operation") continue;
+    const invocation = session.element;
     invocation.obi = obi;
-    invocation.operationKey = key;
+    invocation.operationKey = session.operationKey;
     invocation.operationSource = operationEnvironment;
     invocation.context = effectiveTargetContext();
     const bindingKey = invocation.bindingKey;
     const binding = bindingKey ? obi.bindings?.[bindingKey] : null;
-    if (!binding || binding.operation !== key) {
-      invocation.bindingKey = preferredBindingKey(obi, key);
+    if (!binding || binding.operation !== session.operationKey) {
+      invocation.bindingKey = preferredBindingKey(obi, session.operationKey);
     }
   }
 
@@ -1537,13 +1701,7 @@ function updateCurrentTarget(obi: OBInterface, label: string): void {
   targetInterface = obi;
   targetLabel = label;
   explorer.obi = obi;
-  interfaceSources.obi = obi;
-  interfaceSources.selectedSourceKey =
-    (previousSource && obi.sources?.[previousSource] ? previousSource : null) ??
-    Object.keys(obi.sources ?? {})[0] ??
-    null;
-  interfaceSources.selectedBindingKey =
-    previousBinding && obi.bindings?.[previousBinding] ? previousBinding : null;
+  sourceDetail.obi = obi;
   detail.obi = obi;
   interfaceEditor.value = obi;
   pendingInterfaceDraft = null;
@@ -1552,55 +1710,122 @@ function updateCurrentTarget(obi: OBInterface, label: string): void {
   // binding removal, metadata, merges) — the dirty marker reflects it.
   markDocument(true);
 
-  if (previousOperation && obi.operations[previousOperation]) {
-    activateOperation(previousOperation);
+  if (previousActiveId && sessionsById.has(previousActiveId)) {
+    focusSession(previousActiveId);
   } else {
     showNoActiveOperation();
     renderOperationTabs();
-    persistOperationTabs();
+    persistSessions();
   }
   refreshGraphSurface();
 }
 
+/**
+ * Rail navigation: focus the most-recently-active session for this
+ * operation, or open one. Duplication (the tab menu) is the only act that
+ * creates a second session for an operation the workspace already holds.
+ */
 function activateOperation(operationKey: string): void {
   if (!targetInterface?.operations[operationKey]) return;
-
-  // Selecting an operation that is already open focuses its existing tab and
-  // its existing session — input text, output, binding choice and any running
-  // invocation are all keyed by operation, so a second tab for the same
-  // operation would alias the same state rather than give you a second draft.
-  // Re-running the activation path here also meant a redundant preflight
-  // round trip on every click, which is most of why switching felt slow.
-  if (selectedOperationKey === operationKey && openOperationKeys.includes(operationKey)) {
-    focusOperationTab(operationKey);
+  const existing = mostRecentSessionFor(operationKey);
+  if (existing) {
+    if (activeSessionId === existing.id) {
+      focusTabButton(existing.id);
+      return;
+    }
+    focusSession(existing.id);
     return;
   }
-
-
-  const invocation = ensureOperationSession(operationKey);
-  if (!openOperationKeys.includes(operationKey)) {
-    openOperationKeys.push(operationKey);
-  }
-  for (const [key, candidate] of invocationByOperation) {
-    candidate.hidden = key !== operationKey;
-  }
-  explorer.selectedOperation = operationKey;
-  detail.operationKey = operationKey;
-  detail.selectedBindingKey = invocation.bindingKey;
-  selectedOperationKey = operationKey;
-  renderOperationTabs();
-  persistOperationTabs();
-  updateOperationDeepLink(operationKey);
-  describeBindingChoices(operationKey);
-  refreshGraphSurface();
-  schedulePreflight();
+  const session = createOperationSession({ operationKey });
+  focusSession(session.id);
 }
 
-function ensureOperationSession(
-  operationKey: string,
-): OperationWorkbenchElement {
-  const existing = invocationByOperation.get(operationKey);
-  if (existing) return existing;
+function mostRecentSessionFor(operationKey: string): WorkspaceSession | null {
+  let best: WorkspaceSession | null = null;
+  for (const id of openSessionIds) {
+    const session = sessionsById.get(id);
+    if (!session || session.kind !== "operation") continue;
+    if (session.operationKey !== operationKey) continue;
+    if (!best || session.lastActiveAt > best.lastActiveAt) best = session;
+  }
+  return best;
+}
+
+/**
+ * Rail navigation for sources (rev 16): focus the source's view tab, or open
+ * one. A source has at most one view tab — there is nothing to fork.
+ */
+function activateSource(sourceKey: string): void {
+  if (!targetInterface?.sources?.[sourceKey]) return;
+  for (const id of openSessionIds) {
+    const session = sessionsById.get(id);
+    if (session?.kind === "source" && session.sourceKey === sourceKey) {
+      if (activeSessionId === id) focusTabButton(id);
+      else focusSession(id);
+      return;
+    }
+  }
+  const session: SourceSession = {
+    id: generateSessionId(),
+    kind: "source",
+    sourceKey,
+    label: sourceKey,
+    lastActiveAt: Date.now(),
+    status: { state: "idle" },
+  };
+  sessionsById.set(session.id, session);
+  focusSession(session.id);
+}
+
+/** Makes a session the visible workspace item and syncs every mirror. */
+function focusSession(id: string): void {
+  const session = sessionsById.get(id);
+  if (!session) return;
+  if (!openSessionIds.includes(id)) openSessionIds.push(id);
+  activeSessionId = id;
+  session.lastActiveAt = Date.now();
+  const operation = session.kind === "operation" ? session : null;
+  for (const [otherId, other] of sessionsById) {
+    if (other.kind === "operation") other.element.hidden = otherId !== id;
+  }
+  // The detail region shows the active item's kind: the operation contract,
+  // or the source view. Both elements stay mounted; [hidden] flips.
+  detail.hidden = !operation;
+  sourceDetail.hidden = Boolean(operation);
+  if (operation) {
+    explorer.selectedOperation = operation.operationKey;
+    explorer.selectedSource = null;
+    detail.operationKey = operation.operationKey;
+    detail.selectedBindingKey = operation.element.bindingKey;
+    updateOperationDeepLink(operation.operationKey);
+    describeBindingChoices(operation.operationKey);
+  } else if (session.kind === "source") {
+    explorer.selectedOperation = null;
+    explorer.selectedSource = session.sourceKey;
+    detail.operationKey = null;
+    detail.selectedBindingKey = null;
+    sourceDetail.sourceKey = session.sourceKey;
+    updateOperationDeepLink(null);
+    hideContextChallenge();
+  }
+  renderOperationTabs();
+  persistSessions();
+  applySheetLayout();
+  refreshGraphSurface();
+  if (operation) schedulePreflight();
+}
+
+interface OperationSessionSeed {
+  id?: string;
+  operationKey: string;
+  label?: string;
+  collapsed?: boolean;
+  ratio?: number;
+}
+
+function createOperationSession(seed: OperationSessionSeed): OperationSession {
+  const id = seed.id ?? generateSessionId();
+  const operationKey = seed.operationKey;
   const invocation = document.createElement(
     "ob-operation-workbench",
   ) as OperationWorkbenchElement;
@@ -1613,18 +1838,54 @@ function ensureOperationSession(
   invocation.context = effectiveTargetContext();
   invocation.hidden = true;
   invocation.dataset.operationKey = operationKey;
-  invocation.addEventListener("ob-invocation-start", () => {
-    runningOperations.add(operationKey);
-    renderOperationTabs();
-  });
-  const markSettled = () => {
-    runningOperations.delete(operationKey);
-    renderOperationTabs();
+  invocation.dataset.sessionId = id;
+
+  const session: OperationSession = {
+    id,
+    kind: "operation",
+    operationKey,
+    label: seed.label?.trim() || operationKey,
+    collapsed: seed.collapsed ?? false,
+    ratio: clamp(
+      seed.ratio ?? DEFAULT_SHEET_RATIO,
+      SHEET_RATIO_MIN,
+      SHEET_RATIO_MAX,
+    ),
+    lastActiveAt: Date.now(),
+    element: invocation,
+    status: { state: "idle" },
   };
-  invocation.addEventListener("ob-invocation-complete", markSettled);
-  invocation.addEventListener("ob-invocation-error", markSettled);
+
+  invocation.addEventListener("ob-invocation-start", () => {
+    session.status = { state: "running" };
+    renderOperationTabs();
+    if (activeSessionId === id) updateSheetStatus();
+  });
+  invocation.addEventListener("ob-invocation-complete", event => {
+    session.status = {
+      state: "done",
+      outputCount: event.detail.outputCount,
+      durationMs: event.detail.durationMs,
+    };
+    renderOperationTabs();
+    // NO auto-expand: a run finishing while the sheet is collapsed only
+    // updates the strip (and a background tab only its running dot).
+    if (activeSessionId === id) updateSheetStatus();
+  });
+  invocation.addEventListener("ob-invocation-error", event => {
+    const error = event.detail.error;
+    session.status = {
+      state: "failed",
+      code:
+        typeof (error as { code?: unknown }).code === "string"
+          ? ((error as { code: string }).code)
+          : "ERROR",
+    };
+    renderOperationTabs();
+    if (activeSessionId === id) updateSheetStatus();
+  });
   invocation.addEventListener("ob-context-required", event => {
-    if (operationKey !== selectedOperationKey) activateOperation(operationKey);
+    if (activeSessionId !== id) focusSession(id);
     setConnectionPanel(true);
     if (targetInterface === obInterface && !sessionToken) {
       bootstrapMessage.textContent =
@@ -1645,127 +1906,336 @@ function ensureOperationSession(
       targetContextInput.focus();
     }
   });
-  invocationByOperation.set(operationKey, invocation);
+
+  sessionsById.set(id, session);
   invocationSessions.append(invocation);
-  return invocation;
+  return session;
 }
 
-function closeOperation(operationKey: string): void {
-  const index = openOperationKeys.indexOf(operationKey);
+/**
+ * Forks an invocation session: same operation, copied input (text, mode,
+ * view) and binding choice, fresh output history. The label counts up —
+ * "placeOrder · 2", "placeOrder · 3" — from the number of sessions the
+ * operation already has.
+ */
+function duplicateSession(id: string): void {
+  const source = sessionsById.get(id);
+  if (!source || source.kind !== "operation") return;
+  const count = [...sessionsById.values()].filter(
+    candidate =>
+      candidate.kind === "operation" &&
+      candidate.operationKey === source.operationKey,
+  ).length;
+  const session = createOperationSession({
+    operationKey: source.operationKey,
+    label: `${source.operationKey} · ${count + 1}`,
+    collapsed: source.collapsed,
+    ratio: source.ratio,
+  });
+  session.element.inputText = source.element.inputText;
+  session.element.inputMode = source.element.inputMode;
+  session.element.inputView = source.element.inputView;
+  session.element.bindingKey = source.element.bindingKey;
+  const index = openSessionIds.indexOf(id);
+  if (index >= 0) openSessionIds.splice(index + 1, 0, session.id);
+  focusSession(session.id);
+}
+
+function renameSession(id: string, label: string): void {
+  const session = sessionsById.get(id);
+  const next = label.trim();
+  if (!session || !next || session.label === next) return;
+  session.label = next;
+  renderOperationTabs();
+  persistSessions();
+}
+
+function closeSession(id: string): void {
+  const index = openSessionIds.indexOf(id);
   if (index < 0) return;
-  const wasActive = selectedOperationKey === operationKey;
-  removeOperationSession(operationKey);
-  openOperationKeys.splice(index, 1);
+  const wasActive = activeSessionId === id;
+  removeSession(id);
+  openSessionIds.splice(index, 1);
 
   if (wasActive) {
     // Prefer the tab that slid into this slot, else the new last tab.
     const neighbor =
-      openOperationKeys[Math.min(index, openOperationKeys.length - 1)] ?? null;
+      openSessionIds[Math.min(index, openSessionIds.length - 1)] ?? null;
     if (neighbor) {
-      // activateOperation renders and persists on its own.
-      activateOperation(neighbor);
+      // focusSession renders and persists on its own.
+      focusSession(neighbor);
       return;
     }
     showNoActiveOperation();
   }
 
-  // Closing the final tab took the `wasActive` branch with no neighbor, which
-  // used to fall out of the function without redrawing the strip or updating
-  // storage — so the last tab appeared to be unclosable, and reloading
-  // brought it back.
   renderOperationTabs();
-  persistOperationTabs();
+  persistSessions();
 }
 
-function removeOperationSession(operationKey: string): void {
-  const invocation = invocationByOperation.get(operationKey);
-  if (!invocation) return;
-  void invocation.cancel();
-  invocation.remove();
-  invocationByOperation.delete(operationKey);
-  runningOperations.delete(operationKey);
+function removeSession(id: string): void {
+  const session = sessionsById.get(id);
+  if (!session) return;
+  if (session.kind === "operation") {
+    void session.element.cancel();
+    session.element.remove();
+  }
+  sessionsById.delete(id);
+  if (activeSessionId === id) activeSessionId = null;
 }
 
 function showNoActiveOperation(): void {
-  selectedOperationKey = null;
+  activeSessionId = null;
   explorer.selectedOperation = null;
+  explorer.selectedSource = null;
+  detail.hidden = false;
+  sourceDetail.hidden = true;
   detail.operationKey = null;
   detail.selectedBindingKey = null;
   hideContextChallenge();
   updateOperationDeepLink(null);
+  applySheetLayout();
   refreshGraphSurface();
 }
 
 function activeInvocation(): OperationWorkbenchElement | null {
-  return selectedOperationKey
-    ? invocationByOperation.get(selectedOperationKey) ?? null
-    : null;
+  const session = activeSession();
+  return session?.kind === "operation" ? session.element : null;
 }
 
-function focusOperationTab(operationKey: string): void {
+function focusTabButton(sessionId: string): void {
   operationTabs.shadowRoot
     ?.querySelector<HTMLElement>(
-      `.tab-shell[data-tab-key="${CSS.escape(operationKey)}"] .tab-button`,
+      `.tab-shell[data-tab-key="${CSS.escape(sessionId)}"] .tab-button`,
     )
     ?.focus();
 }
 
 function renderOperationTabs(): void {
-  operationTabs.tabs = openOperationKeys.map(key => ({
-    key,
-    running: runningOperations.has(key),
-  }));
-  operationTabs.activeKey = selectedOperationKey;
+  operationTabs.tabs = openSessionIds.flatMap(id => {
+    const session = sessionsById.get(id);
+    if (!session) return [];
+    return [
+      {
+        key: id,
+        label: session.label,
+        kind: session.kind,
+        running: session.status.state === "running",
+      },
+    ];
+  });
+  operationTabs.activeKey = activeSessionId;
 }
 
-function restoreOperationTabs(): void {
+// --- Session persistence: schema v2 ----------------------------------------
+//
+// sessionStorage survives a reload, dies with the browser tab, and two tabs
+// never trample each other (review/100 P4/P6). Version 2 stores workspace
+// items keyed by session id; the v1 operation-keyed shape is migrated once
+// (each open operation becomes one session) and the next persist writes v2.
+
+interface PersistedOperationSessionV2 {
+  id: string;
+  kind: "operation";
+  operationKey: string;
+  label: string;
+  collapsed: boolean;
+  ratio: number;
+}
+
+interface PersistedSourceSessionV2 {
+  id: string;
+  kind: "source";
+  sourceKey: string;
+  label: string;
+}
+
+type PersistedSessionV2 =
+  | PersistedOperationSessionV2
+  | PersistedSourceSessionV2;
+
+function restoreSessions(): void {
   const available = targetInterface?.operations ?? {};
-  let restoredKeys: string[] = [];
-  let restoredActive: string | null = null;
+  let records: PersistedSessionV2[] = [];
+  let restoredActiveId: string | null = null;
   try {
-    // Per-tab working state (review/100 P4/P6): sessionStorage survives a
-    // reload, dies with the tab, and two tabs can never trample each other.
     const raw = globalThis.sessionStorage.getItem(operationTabsStorageKey());
     const parsed = raw ? (JSON.parse(raw) as unknown) : null;
-    if (isRecord(parsed) && Array.isArray(parsed.keys)) {
-      restoredKeys = parsed.keys
+    if (isRecord(parsed) && parsed.version === 2 && Array.isArray(parsed.sessions)) {
+      const availableSources = targetInterface?.sources ?? {};
+      const seen = new Set<string>();
+      for (const candidate of parsed.sessions) {
+        if (!isRecord(candidate)) continue;
+        if (typeof candidate.id !== "string" || !candidate.id) continue;
+        if (seen.has(candidate.id)) continue;
+        if (candidate.kind === "operation") {
+          if (
+            typeof candidate.operationKey !== "string" ||
+            !available[candidate.operationKey]
+          ) {
+            continue;
+          }
+          seen.add(candidate.id);
+          records.push({
+            id: candidate.id,
+            kind: "operation",
+            operationKey: candidate.operationKey,
+            label:
+              typeof candidate.label === "string" && candidate.label.trim()
+                ? candidate.label.trim()
+                : candidate.operationKey,
+            collapsed: candidate.collapsed === true,
+            ratio:
+              typeof candidate.ratio === "number"
+                ? clamp(candidate.ratio, SHEET_RATIO_MIN, SHEET_RATIO_MAX)
+                : DEFAULT_SHEET_RATIO,
+          });
+        } else if (candidate.kind === "source") {
+          if (
+            typeof candidate.sourceKey !== "string" ||
+            !availableSources[candidate.sourceKey]
+          ) {
+            continue;
+          }
+          seen.add(candidate.id);
+          records.push({
+            id: candidate.id,
+            kind: "source",
+            sourceKey: candidate.sourceKey,
+            label:
+              typeof candidate.label === "string" && candidate.label.trim()
+                ? candidate.label.trim()
+                : candidate.sourceKey,
+          });
+        }
+      }
+      records = records.slice(0, 30);
+      restoredActiveId =
+        typeof parsed.activeId === "string" &&
+        records.some(record => record.id === parsed.activeId)
+          ? parsed.activeId
+          : records[0]?.id ?? null;
+    } else if (isRecord(parsed) && Array.isArray(parsed.keys)) {
+      // One-shot v1 migration: each operation-keyed tab becomes a session.
+      const keys = parsed.keys
         .filter(
           (key): key is string =>
             typeof key === "string" && Boolean(available[key]),
         )
-        .filter((key, index, keys) => keys.indexOf(key) === index)
+        .filter((key, index, all) => all.indexOf(key) === index)
         .slice(0, 30);
-      restoredActive =
-        typeof parsed.activeKey === "string" &&
-        restoredKeys.includes(parsed.activeKey)
-          ? parsed.activeKey
-          : restoredKeys[0] ?? null;
+      records = keys.map(key => ({
+        id: generateSessionId(),
+        kind: "operation" as const,
+        operationKey: key,
+        label: key,
+        collapsed: false,
+        ratio: DEFAULT_SHEET_RATIO,
+      }));
+      const activeKey =
+        typeof parsed.activeKey === "string" ? parsed.activeKey : null;
+      restoredActiveId =
+        records.find(
+          record =>
+            record.kind === "operation" && record.operationKey === activeKey,
+        )?.id ??
+        records[0]?.id ??
+        null;
     }
   } catch {
     // A malformed or unavailable local store must not block the workbench.
   }
   const deepLinked = operationFromDeepLink();
-  if (deepLinked && available[deepLinked]) {
-    if (!restoredKeys.includes(deepLinked)) restoredKeys.push(deepLinked);
-    restoredActive = deepLinked;
+  const restoredActive = records.find(
+    record => record.id === restoredActiveId,
+  );
+  if (
+    deepLinked &&
+    available[deepLinked] &&
+    !(
+      restoredActive?.kind === "operation" &&
+      restoredActive.operationKey === deepLinked
+    )
+  ) {
+    // The stored active session does not satisfy the deep link; prefer an
+    // existing session of the linked operation, else open one.
+    const match = records.find(
+      record =>
+        record.kind === "operation" && record.operationKey === deepLinked,
+    );
+    if (match) {
+      restoredActiveId = match.id;
+    } else {
+      const record: PersistedSessionV2 = {
+        id: generateSessionId(),
+        kind: "operation",
+        operationKey: deepLinked,
+        label: deepLinked,
+        collapsed: false,
+        ratio: DEFAULT_SHEET_RATIO,
+      };
+      records.push(record);
+      restoredActiveId = record.id;
+    }
   }
-  openOperationKeys = restoredKeys;
-  for (const key of restoredKeys) ensureOperationSession(key);
-  if (restoredActive) activateOperation(restoredActive);
-  else {
+  openSessionIds = [];
+  for (const record of records) {
+    if (record.kind === "operation") {
+      const session = createOperationSession(record);
+      openSessionIds.push(session.id);
+    } else {
+      const session: SourceSession = {
+        id: record.id,
+        kind: "source",
+        sourceKey: record.sourceKey,
+        label: record.label,
+        lastActiveAt: Date.now(),
+        status: { state: "idle" },
+      };
+      sessionsById.set(session.id, session);
+      openSessionIds.push(session.id);
+    }
+  }
+  if (restoredActiveId && sessionsById.has(restoredActiveId)) {
+    focusSession(restoredActiveId);
+  } else {
     showNoActiveOperation();
     renderOperationTabs();
   }
 }
 
-function persistOperationTabs(): void {
+function persistSessions(): void {
   if (!targetSessionID) return;
   try {
     globalThis.sessionStorage.setItem(
       operationTabsStorageKey(),
       JSON.stringify({
-        keys: openOperationKeys,
-        activeKey: selectedOperationKey,
+        version: 2,
+        sessions: openSessionIds.flatMap<PersistedSessionV2>(id => {
+          const session = sessionsById.get(id);
+          if (!session) return [];
+          if (session.kind === "source") {
+            return [
+              {
+                id: session.id,
+                kind: "source",
+                sourceKey: session.sourceKey,
+                label: session.label,
+              },
+            ];
+          }
+          return [
+            {
+              id: session.id,
+              kind: "operation",
+              operationKey: session.operationKey,
+              label: session.label,
+              collapsed: session.collapsed,
+              ratio: session.ratio,
+            },
+          ];
+        }),
+        activeId: activeSessionId,
       }),
     );
   } catch {
@@ -1959,7 +2429,7 @@ function resolveActiveGraph(): {
   message: string;
 } {
   const obi = targetInterface;
-  const operationKey = selectedOperationKey;
+  const operationKey = activeOperationKey();
   if (!obi || !operationKey) {
     return {
       selection: null,
@@ -2126,7 +2596,10 @@ function applyActiveGraphDraft(): void {
 async function refreshSource(sourceKey: string): Promise<void> {
   const obi = targetInterface;
   if (!obi || !ensureWorkbenchSession()) return;
-  bootstrapMessage.textContent = `Refreshing source ${sourceKey} through ob…`;
+  bootstrapMessage.textContent = `Pulling source ${sourceKey} through ob…`;
+  // The source's view tab reports the pull honestly: running dot on the tab,
+  // disabled Pull verb while in flight (open question 1, review/110).
+  setSourceSessionRunning(sourceKey, true);
   try {
     const output = await invokeThroughOB<
       { interface: OBInterface; sourceKeys: string[] },
@@ -2138,9 +2611,46 @@ async function refreshSource(sourceKey: string): Promise<void> {
     applyManagedInterface(
       output.interface,
       output.warnings?.length
-        ? `Source refreshed in the local workspace with ${output.warnings.length} warning${output.warnings.length === 1 ? "" : "s"}. No interface file was saved.`
-        : `Source ${sourceKey} refreshed in the local workspace. No interface file was saved.`,
+        ? `Source pulled in the local workspace with ${output.warnings.length} warning${output.warnings.length === 1 ? "" : "s"}. No interface file was saved.`
+        : `Source ${sourceKey} pulled in the local workspace. No interface file was saved.`,
     );
+  } catch (error) {
+    bootstrapMessage.textContent = errorText(error);
+  } finally {
+    setSourceSessionRunning(sourceKey, false);
+  }
+}
+
+function setSourceSessionRunning(sourceKey: string, running: boolean): void {
+  for (const session of sessionsById.values()) {
+    if (session.kind === "source" && session.sourceKey === sourceKey) {
+      session.status = { state: running ? "running" : "idle" };
+    }
+  }
+  if (sourceDetail.sourceKey === sourceKey) sourceDetail.pulling = running;
+  renderOperationTabs();
+}
+
+/**
+ * inspectSource (rev 16): asks ob what bindable targets the source offers
+ * and hands the report to the source tab. Read-only — the document is
+ * unchanged.
+ */
+async function inspectSource(sourceKey: string): Promise<void> {
+  const obi = targetInterface;
+  const source = obi?.sources?.[sourceKey];
+  if (!obi || !source || !ensureWorkbenchSession()) return;
+  bootstrapMessage.textContent = `Inspecting source ${sourceKey} through ob…`;
+  try {
+    const inspection = await invokeThroughOB<
+      { source: typeof source },
+      SourceInspection
+    >(obInterface!, "openbindings.ob.inspectSource", { source });
+    if (sourceDetail.sourceKey === sourceKey) {
+      sourceDetail.inspection = inspection;
+    }
+    const count = inspection.targets?.length ?? 0;
+    bootstrapMessage.textContent = `Source ${sourceKey} offers ${count} bindable target${count === 1 ? "" : "s"}.`;
   } catch (error) {
     bootstrapMessage.textContent = errorText(error);
   }
@@ -2320,8 +2830,8 @@ function applyTargetContext(): void {
   // never become an arbitrary remote target's bearer token. It is supplied
   // as target context only when the selected target is the server itself.
   const context = effectiveTargetContext();
-  for (const invocation of invocationByOperation.values()) {
-    invocation.context = context;
+  for (const session of sessionsById.values()) {
+    if (session.kind === "operation") session.element.context = context;
   }
 }
 
@@ -2364,7 +2874,7 @@ function schedulePreflight(): void {
 
 /** Identity of everything the preflight answer depends on. */
 function currentPreflightKey(): string | null {
-  const operation = selectedOperationKey;
+  const operation = activeOperationKey();
   if (!targetInterface || !operation) return null;
   const binding = activeInvocation()?.bindingKey ?? "";
   const context = effectiveTargetContext();
@@ -2379,7 +2889,7 @@ function currentPreflightKey(): string | null {
 
 async function preflightTarget(): Promise<void> {
   const target = targetInterface;
-  const operation = selectedOperationKey;
+  const operation = activeOperationKey();
   const invocation = activeInvocation();
   const binding = invocation?.bindingKey ?? null;
   // Preflight rides the local session carrier, so it can only be meaningful
@@ -2426,7 +2936,7 @@ async function preflightTarget(): Promise<void> {
     if (
       attempt !== preflightAttempt ||
       target !== targetInterface ||
-      operation !== selectedOperationKey ||
+      operation !== activeOperationKey() ||
       binding !== activeInvocation()?.bindingKey
     ) {
       return;
@@ -2731,28 +3241,23 @@ function restoreTheme(): boolean {
 
 interface WorkspaceLayout {
   explorer: boolean;
-  detail: boolean;
-  invocation: boolean;
+  operation: boolean;
   source: boolean;
   railWidth: number;
-  detailRatio: number;
   sourceWidth: number;
   execSplit: number;
 }
 
 function applyWorkspaceLayout(): void {
   showExplorer.checked = workspaceLayout.explorer;
-  showDetail.checked = workspaceLayout.detail;
-  showInvocation.checked = workspaceLayout.invocation;
+  showOperation.checked = workspaceLayout.operation;
   showSource.checked = workspaceLayout.source;
 
   const railOnly =
     workspaceLayout.explorer &&
-    !workspaceLayout.detail &&
-    !workspaceLayout.invocation &&
+    !workspaceLayout.operation &&
     !workspaceLayout.source;
-  const operationVisible =
-    workspaceLayout.detail || workspaceLayout.invocation;
+  const operationVisible = workspaceLayout.operation;
   workbenchGrid.classList.toggle(
     "hide-explorer",
     !workspaceLayout.explorer,
@@ -2760,18 +3265,9 @@ function applyWorkspaceLayout(): void {
   workbenchGrid.classList.toggle("rail-only", railOnly);
   workbenchGrid.classList.toggle("hide-source", !workspaceLayout.source);
   workbenchGrid.classList.toggle("hide-operation", !operationVisible);
-  operationColumn.classList.toggle("hide-detail", !workspaceLayout.detail);
-  operationColumn.classList.toggle(
-    "hide-invocation",
-    !workspaceLayout.invocation,
-  );
   workbenchGrid.style.setProperty(
     "--rail-width",
     `${workspaceLayout.railWidth}px`,
-  );
-  operationColumn.style.setProperty(
-    "--detail-size",
-    `${workspaceLayout.detailRatio * 100}%`,
   );
   workbenchGrid.style.setProperty(
     "--source-width",
@@ -2780,14 +3276,6 @@ function applyWorkspaceLayout(): void {
   railGutter.setAttribute(
     "aria-valuenow",
     String(Math.round(workspaceLayout.railWidth)),
-  );
-  detailGutter.setAttribute(
-    "aria-valuenow",
-    String(Math.round(workspaceLayout.detailRatio * 100)),
-  );
-  detailGutter.setAttribute(
-    "aria-valuetext",
-    `${Math.round(workspaceLayout.detailRatio * 100)}% to operation detail`,
   );
   sourceGutter.setAttribute(
     "aria-valuenow",
@@ -2806,14 +3294,15 @@ function restoreWorkspaceLayout(): WorkspaceLayout {
         typeof parsed.explorer === "boolean"
           ? parsed.explorer
           : defaultWorkspaceLayout.explorer,
-      detail:
-        typeof parsed.detail === "boolean"
-          ? parsed.detail
-          : defaultWorkspaceLayout.detail,
-      invocation:
-        typeof parsed.invocation === "boolean"
-          ? parsed.invocation
-          : defaultWorkspaceLayout.invocation,
+      // Rev 16 folds the old detail/invocation checkboxes into one tab
+      // column; a stored pre-16 layout maps to "visible if either was".
+      operation:
+        typeof parsed.operation === "boolean"
+          ? parsed.operation
+          : typeof parsed.detail === "boolean" ||
+              typeof parsed.invocation === "boolean"
+            ? parsed.detail === true || parsed.invocation === true
+            : defaultWorkspaceLayout.operation,
       source:
         typeof parsed.source === "boolean"
           ? parsed.source
@@ -2822,10 +3311,6 @@ function restoreWorkspaceLayout(): WorkspaceLayout {
         typeof parsed.railWidth === "number"
           ? clamp(parsed.railWidth, 240, 560)
           : defaultWorkspaceLayout.railWidth,
-      detailRatio:
-        typeof parsed.detailRatio === "number"
-          ? clamp(parsed.detailRatio, 0.2, 0.75)
-          : defaultWorkspaceLayout.detailRatio,
       sourceWidth:
         typeof parsed.sourceWidth === "number"
           ? clamp(parsed.sourceWidth, 300, 720)

@@ -1,10 +1,8 @@
+import "@openbindings/json-editor/define";
 import { defineElement } from "@openbindings/ui-core";
-import {
-  INTERFACE_SOURCES_TAG,
-  InterfaceSourcesElement,
-} from "./index.js";
+import { SOURCE_DETAIL_TAG, SourceDetailElement } from "./index.js";
 
-defineElement(INTERFACE_SOURCES_TAG, InterfaceSourcesElement);
+defineElement(SOURCE_DETAIL_TAG, SourceDetailElement);
 
 // Re-export the package surface so this entry ships full types (element
 // class, HTMLElementTagNameMap and event-map augmentations), not just the

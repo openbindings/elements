@@ -11,42 +11,42 @@
   },
   "openbindings.ob.addOperation": {
     "status": "deferred",
-    "rev": 15,
+    "rev": 17,
     "detail": "authoring verbs on the rail and detail panel"
   },
   "openbindings.ob.addOperationAlias": {
     "status": "deferred",
-    "rev": 15,
+    "rev": 17,
     "detail": "authoring verbs on the detail panel"
   },
   "openbindings.ob.removeOperation": {
     "status": "deferred",
-    "rev": 15,
+    "rev": 17,
     "detail": "authoring verbs on the rail and detail panel"
   },
   "openbindings.ob.removeOperationAlias": {
     "status": "deferred",
-    "rev": 15,
+    "rev": 17,
     "detail": "authoring verbs on the detail panel"
   },
   "openbindings.ob.renameOperation": {
     "status": "deferred",
-    "rev": 15,
+    "rev": 17,
     "detail": "authoring verbs on the detail panel"
   },
   "openbindings.ob.setOperation": {
     "status": "deferred",
-    "rev": 15,
+    "rev": 17,
     "detail": "authoring verbs on the detail panel"
   },
   "openbindings.ob.setOperationOutputSchema": {
     "status": "deferred",
-    "rev": 15,
+    "rev": 17,
     "detail": "authoring verbs on the detail panel"
   },
   "openbindings.ob.setOperationCodegenName": {
     "status": "deferred",
-    "rev": 16,
+    "rev": 18,
     "detail": "ships with the codegen export menu"
   },
   "openbindings.ob.mergeInterfaces": {
@@ -56,12 +56,12 @@
   },
   "openbindings.ob.conform": {
     "status": "deferred",
-    "rev": 16,
+    "rev": 18,
     "detail": "document tools menu, after authoring verbs"
   },
   "openbindings.ob.purifyInterface": {
     "status": "deferred",
-    "rev": 16,
+    "rev": 18,
     "detail": "document tools menu"
   },
   "openbindings.ob.resolveInterface": {
@@ -76,41 +76,41 @@
   },
   "openbindings.ob.addSource": {
     "status": "deferred",
-    "rev": 14.2,
+    "rev": 17,
     "detail": "explicit source registration UI; the Add flow merges the resolved artifact and its source entries ride along"
   },
   "openbindings.ob.listSources": {
     "status": "covered",
-    "detail": "rail sources section renders the document's sources directly, beneath the operations"
+    "detail": "rail source overview rows in the explorer, beneath the operations"
   },
   "openbindings.ob.inspectSource": {
-    "status": "deferred",
-    "rev": 14.2,
-    "detail": "preview step inside the Add flow"
+    "status": "affordance",
+    "detail": "Inspect verb on the source tab reports the source's bindable targets",
+    "selector": "inspectSource"
   },
   "openbindings.ob.pullSource": {
     "status": "affordance",
-    "detail": "per-source Pull in the rail sources section",
+    "detail": "Pull verb on the source tab; the tab reports the run",
     "selector": "pullSource"
   },
   "openbindings.ob.removeSource": {
     "status": "affordance",
-    "detail": "per-source Remove in the rail sources section",
+    "detail": "Remove verb on the source tab; the vanished source closes its tab",
     "selector": "removeSource"
   },
   "openbindings.ob.bindOperation": {
     "status": "deferred",
-    "rev": 15,
+    "rev": 17,
     "detail": "binding verbs on the detail panel"
   },
   "openbindings.ob.detachOperation": {
     "status": "deferred",
-    "rev": 15,
+    "rev": 17,
     "detail": "binding verbs on the detail panel"
   },
   "openbindings.ob.unbindOperation": {
     "status": "affordance",
-    "detail": "per-binding unbind in the rail sources section",
+    "detail": "per-binding unbind in the source tab's bindings list",
     "selector": "unbindOperation"
   },
   "openbindings.ob.listBindings": {
@@ -119,7 +119,7 @@
   },
   "openbindings.ob.listBindingSpecs": {
     "status": "deferred",
-    "rev": 14.2,
+    "rev": 17,
     "detail": "Add flow: show which binding specs can be ingested"
   },
   "openbindings.ob.prepareBinding": {
@@ -160,17 +160,17 @@
   },
   "openbindings.ob.compareInterfaces": {
     "status": "deferred",
-    "rev": 14.2,
-    "detail": "drift preview inside per-source Pull"
+    "rev": 16.1,
+    "detail": "drift preview inside the source tab's Pull (@codemirror/merge)"
   },
   "openbindings.ob.reportInterfaceStatus": {
     "status": "deferred",
-    "rev": 16,
+    "rev": 18,
     "detail": "document tools menu"
   },
   "openbindings.ob.reportCompatibility": {
     "status": "deferred",
-    "rev": 16,
+    "rev": 18,
     "detail": "document tools menu"
   },
   "openbindings.ob.getContext": {
@@ -189,12 +189,12 @@
   },
   "openbindings.ob.listContexts": {
     "status": "deferred",
-    "rev": 16,
+    "rev": 18,
     "detail": "Connection panel stored-context list"
   },
   "openbindings.ob.codegen": {
     "status": "deferred",
-    "rev": 16,
+    "rev": 18,
     "detail": "Export menu: export as typed invoker"
   },
   "openbindings.ob.registerDelegate": {

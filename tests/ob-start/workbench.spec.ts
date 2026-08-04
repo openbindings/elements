@@ -174,10 +174,12 @@ test("the workbench layout is adjustable, accessible, and persistent", async ({
   await sourceGutter.press("ArrowLeft");
   await expect(sourceGutter).toHaveAttribute("aria-valuenow", "444");
 
+  // Rev 16: the Panels menu shrinks to rail / tab column / document editor —
+  // the invocation sheet replaced the detail/invocation checkboxes.
   await page.locator(".layout-menu summary").click();
-  await page.locator("#show-detail").uncheck();
-  await expect(page.locator("ob-operation-detail")).toBeHidden();
-  await page.locator("#show-invocation").uncheck();
+  await expect(page.locator("#show-detail")).toHaveCount(0);
+  await expect(page.locator("#show-invocation")).toHaveCount(0);
+  await page.locator("#show-operation").uncheck();
   await expect(page.locator(".operation-column")).toBeHidden();
   await expect(page.locator("ob-obi-explorer")).toBeVisible();
 
@@ -188,6 +190,13 @@ test("the workbench layout is adjustable, accessible, and persistent", async ({
   ).toBeVisible();
   await expect(railGutter).toHaveAttribute("aria-valuenow", "352");
   await expect(sourceGutter).toHaveAttribute("aria-valuenow", "420");
+
+  // The invocation sheet's gutter resizes per-session (5–95 range).
+  const sheetGutter = page.locator("#sheet-gutter");
+  await expect(sheetGutter).toHaveAttribute("aria-valuenow", "45");
+  await sheetGutter.focus();
+  await sheetGutter.press("ArrowUp");
+  await expect(sheetGutter).toHaveAttribute("aria-valuenow", "49");
 
   await railGutter.press("ArrowRight");
   await page.locator("#theme-toggle").click();
@@ -333,15 +342,13 @@ test("document, source, and graph elements compose through explicit local drafts
     element.scrollTop = 0;
   });
 
-  // One filter, both sections: "openapi" keeps only the matching source and
-  // narrows the operation rows (the count flips to its N / total honesty).
+  // One filter, both sections: "openapi" keeps only the matching source row
+  // and narrows the operation rows (both counts flip to N / total honesty).
   await railFilter.fill("openapi");
-  const railSources = page.locator("ob-interface-sources");
-  await expect(railSources.locator("[data-source-select]")).toHaveCount(1);
-  await expect(railSources.locator("[data-source-select]")).toContainText(
-    "openapi",
-  );
+  await expect(explorer.locator('[part~="source"]')).toHaveCount(1);
+  await expect(explorer.locator('[part~="source"]')).toContainText("openapi");
   await expect(explorer.locator(".count")).toContainText("/");
+  await expect(explorer.locator(".sources-count")).toContainText("/");
   await railFilter.fill("");
 
   await explorer.locator('input[type="search"]').fill("graphDemo");
@@ -375,26 +382,32 @@ test("document, source, and graph elements compose through explicit local drafts
     "No source file was saved",
   );
 
-  // The rail's sources section needs no pane switch.
-  const sources = page.locator("ob-interface-sources");
-  await sources
+  // A source is a workspace item (rev 16): its rail row opens a source tab —
+  // kind subtitle, ob-source-detail content, no invocation sheet — where the
+  // facts and the unbind verb live.
+  await railFilter.fill("");
+  await explorer
     .locator('[part~="source"]')
     .filter({ hasText: "graphSource" })
     .click();
-  await expect(sources.locator('[part~="binding"]')).toContainText(
+  const tabs = page.locator("ob-operation-tabs");
+  const sourceTab = tabs
+    .locator('[role="tab"][aria-selected="true"]')
+    .filter({ hasText: "graphSource" });
+  await expect(sourceTab).toHaveCount(1);
+  await expect(sourceTab.locator(".kind")).toHaveText("source");
+  const sourceDetail = page.locator("ob-source-detail");
+  await expect(sourceDetail).toBeVisible();
+  await expect(page.locator("#invocation-sheet")).toBeHidden();
+  await expect(sourceDetail.locator('[part~="binding"]')).toContainText(
     "graphDemo.graph",
   );
-  await sources.locator("[data-binding-remove]").click();
+  await sourceDetail.locator("[data-binding-remove]").click();
   await expect(page.locator("#confirmation-dialog")).toBeVisible();
   await page.locator("#confirmation-accept").click();
-  // With its binding gone, graphSource no longer matches the "graphDemo"
-  // rail filter — clear it before re-selecting the source.
-  await railFilter.fill("");
-  await sources
-    .locator('[part~="source"]')
-    .filter({ hasText: "graphSource" })
-    .click();
-  await expect(sources.locator('[part~="binding"]')).toHaveCount(0);
+  // The source tab survives the edit; its binding list is honestly empty.
+  await expect(sourceDetail.locator("[data-binding-key]")).toHaveCount(0);
+  await expect(sourceDetail).toBeVisible();
 });
 
 test("operation tabs retain independent invocation sessions, reorder, close, and restore", async ({
@@ -459,6 +472,66 @@ test("operation tabs retain independent invocation sessions, reorder, close, and
   await expect(
     tabs.locator('[role="tab"][aria-selected="true"]'),
   ).toContainText("openbindings.ob.describe");
+});
+
+test("tabs are workspace items: duplicate forks a session, rename sticks, the collapsed sheet reports runs without expanding", async ({
+  page,
+}) => {
+  await page.goto("/#token=test-token");
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+  const tabs = page.locator("ob-operation-tabs");
+  await expect(tabs.locator('[role="tab"]')).toHaveCount(1);
+  // The workspace-item kind renders as a muted subtitle under the label.
+  await expect(tabs.locator(".kind").first()).toHaveText("operation");
+
+  // Duplicate forks the session: same operation, its own tab and history.
+  await tabs.locator(".menu-toggle").click();
+  await tabs.locator('[data-action="duplicate"]').click();
+  await expect(tabs.locator('[role="tab"]')).toHaveCount(2);
+  const labels = await tabs.locator(".label").allTextContents();
+  expect(labels).toEqual([
+    "openbindings.ob.describe",
+    "openbindings.ob.describe · 2",
+  ]);
+  // A rail click focuses an existing session rather than opening a third.
+  await page
+    .locator('ob-obi-explorer [part~="operation"]')
+    .filter({ hasText: "openbindings.ob.describe" })
+    .first()
+    .click();
+  await expect(tabs.locator('[role="tab"]')).toHaveCount(2);
+
+  // Rename: double-click the label, type, Enter commits.
+  await tabs.locator(".tab-shell.active .label").dblclick();
+  const rename = tabs.locator(".rename-input");
+  await expect(rename).toBeVisible();
+  await rename.fill("describe · smoke");
+  await rename.press("Enter");
+  await expect(
+    tabs.locator('[role="tab"]').filter({ hasText: "describe · smoke" }),
+  ).toHaveCount(1);
+
+  // Collapse the sheet; run from the strip. The strip reports completion —
+  // and the sheet NEVER auto-expands.
+  await page.locator("#sheet-toggle").click();
+  await expect(page.locator("#invocation-sessions")).toBeHidden();
+  await expect(page.locator("#sheet-run")).toBeVisible();
+  await page.locator("#sheet-run").click();
+  await expect(page.locator("#sheet-status")).toContainText("value", {
+    timeout: 15_000,
+  });
+  await expect(page.locator("#invocation-sessions")).toBeHidden();
+
+  // Sessions, labels, and per-session sheet state survive a reload (schema
+  // v2 in sessionStorage).
+  await page.reload();
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+  await expect(tabs.locator('[role="tab"]')).toHaveCount(2);
+  await expect(
+    tabs.locator('[role="tab"]').filter({ hasText: "describe · smoke" }),
+  ).toHaveCount(1);
+  await expect(page.locator("#invocation-sessions")).toBeHidden();
+  await expect(page.locator("#sheet-run")).toBeVisible();
 });
 
 test("a raw API artifact is synthesized and invoked without a browser binding-family client", async ({

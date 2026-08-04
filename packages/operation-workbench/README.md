@@ -42,6 +42,23 @@ requirement against that source.
 - `inputText: string`
 - `inputMode: "single" | "sequence"` — sequence mode interprets the editor as
   one JSON array and writes each member as a distinct input value
+- `inputView: "json" | "form"` — how the single input value is edited;
+  defaults to `"json"`. (The property is named `inputView` because `inputMode`
+  already names input cardinality.) Form view renders a schema-driven form
+  whose edits patch `inputText` — both views share the JSON text as the single
+  source of truth, and `run()` and `ob-input-change` see one input pipeline.
+  Form view supports object schemas of primitive, enum, boolean,
+  nested-object, and array-of-(primitive|object) fields. It declines with a
+  visible reason (disabled toggle title + hint, or an in-pane banner) for
+  combinators (`allOf`/`anyOf`/`oneOf`/`not`/`if`), non-object roots,
+  unresolvable references, invalid property schemas, and sequence cardinality.
+  Improvement over the benchmarked model: local `#/schemas/<name>` references
+  are resolved recursively (with a cycle guard) against the interface's
+  schemas BEFORE capability analysis, so `$ref`-rooted operation inputs —
+  the OpenBindings norm — form-render instead of declining; only genuinely
+  unresolvable references decline. When the current text does not parse or
+  does not structurally match the schema, the form shows a "no-match" banner
+  with Edit-as-JSON and Reset-starter affordances — never a silent fallback.
 - `maxDisplayedOutputs: number` — bounded retained display window; defaults to
   `100`. Every output still emits `ob-output`.
 - `layout: "stacked" | "split"` — invocation body geometry; defaults to
@@ -103,10 +120,17 @@ surface.
 ## Customization
 
 The element inherits shared `--ob-*` tokens and exposes `container`, `status`,
-`binding-bar`, `binding-select`, `input`, `input-mode`, `format-input`,
+`binding-bar`, `binding-select`, `input`, `input-mode`, `input-mode-toggle`,
+`input-shape`, `form-row`, `form-add`, `form-remove`, `format-input`,
 `reset-input`, `run`, `cancel`, `layout-gutter`, `output`, `output-view`,
 `output-item`, `output-timing`, `copy-output`, `clear-output`, `empty`, and
 `error` parts.
+
+When the resolved input schema is a top-level `oneOf`, an "Input shape"
+select (`input-shape` part) appears above the editor in both views. Switching
+shapes regenerates the evidence-based starter for the chosen branch and
+re-evaluates form capability per branch. `Reset starter` likewise targets the
+selected branch.
 
 The split gutter (`layout-gutter`) is a `role="separator"` with
 `aria-valuenow` as the input share in percent; it resizes by pointer drag

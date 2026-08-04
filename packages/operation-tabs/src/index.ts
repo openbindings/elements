@@ -11,12 +11,23 @@ export const OPERATION_TABS_TAG = "ob-operation-tabs";
 export interface OperationTab {
   key: string;
   label?: string;
+  /**
+   * Workspace-item kind (rev 16), rendered as a smaller muted subtitle line
+   * under the label — a token, not a color code. The element stays generic:
+   * any string renders; it knows nothing about what the kinds mean.
+   */
+  kind?: string;
   dirty?: boolean;
   running?: boolean;
 }
 
 export interface OperationTabKeyDetail {
   key: string;
+}
+
+export interface OperationTabRenameDetail {
+  key: string;
+  label: string;
 }
 
 export interface OperationTabReorderDetail {
@@ -26,6 +37,8 @@ export interface OperationTabReorderDetail {
 export interface OperationTabsEventMap {
   "ob-tab-activate": CustomEvent<OperationTabKeyDetail>;
   "ob-tab-close": CustomEvent<OperationTabKeyDetail>;
+  "ob-tab-rename": CustomEvent<OperationTabRenameDetail>;
+  "ob-tab-duplicate": CustomEvent<OperationTabKeyDetail>;
   "ob-tab-reorder": CustomEvent<OperationTabReorderDetail>;
   "ob-tabs-close-unselected": CustomEvent<Record<string, never>>;
   "ob-tabs-close-all": CustomEvent<Record<string, never>>;
@@ -46,6 +59,7 @@ export interface OperationTabsEventMap {
 export class OperationTabsElement extends OpenBindingsElement {
   #tabs: OperationTab[] = [];
   #activeKey: string | null = null;
+  #renamingKey: string | null = null;
   #dragKey: string | null = null;
   #scrolledKey: string | null = null;
   #resizeObserver: ResizeObserver | null = null;
@@ -67,6 +81,7 @@ export class OperationTabsElement extends OpenBindingsElement {
         {
           key,
           ...(tab.label?.trim() ? { label: tab.label.trim() } : {}),
+          ...(tab.kind?.trim() ? { kind: tab.kind.trim() } : {}),
           ...(tab.dirty ? { dirty: true } : {}),
           ...(tab.running ? { running: true } : {}),
         },
@@ -106,10 +121,21 @@ export class OperationTabsElement extends OpenBindingsElement {
     });
 
     list.addEventListener("keydown", event => {
+      // Keys typed into an inline rename belong to the rename, not the strip.
+      if ((event.target as HTMLElement | null)?.closest(".rename-input")) return;
       const key = (event.target as HTMLElement | null)?.closest<HTMLElement>(
         ".tab-shell",
       )?.dataset.tabKey;
       if (key) this.#handleTabKeydown(event, key);
+    });
+
+    // Rename intent: double-click on the tab's label area (F2 from the
+    // focused tab reaches the same inline edit through #handleTabKeydown).
+    list.addEventListener("dblclick", event => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest(".tab-button")) return;
+      const key = target.closest<HTMLElement>(".tab-shell")?.dataset.tabKey;
+      if (key) this.#beginRename(key);
     });
 
     list.addEventListener("dragstart", event => {
@@ -259,7 +285,9 @@ export class OperationTabsElement extends OpenBindingsElement {
       this.#closeMenu();
       if (action === "move-left") this.#requestActiveMove(-1);
       else if (action === "move-right") this.#requestActiveMove(1);
-      else if (action === "close-unselected") {
+      else if (action === "duplicate") {
+        if (this.#activeKey) this.emit("ob-tab-duplicate", { key: this.#activeKey });
+      } else if (action === "close-unselected") {
         this.emit("ob-tabs-close-unselected", {});
       } else if (action === "close-all") this.emit("ob-tabs-close-all", {});
     });
@@ -287,6 +315,7 @@ export class OperationTabsElement extends OpenBindingsElement {
     refs.require(".menu").hidden = this.#tabs.length === 0;
     setDisabled(refs, '[data-action="move-left"]', !this.#canMoveActive(-1));
     setDisabled(refs, '[data-action="move-right"]', !this.#canMoveActive(1));
+    setDisabled(refs, '[data-action="duplicate"]', !hasActive);
     setDisabled(refs, '[data-action="close-unselected"]', this.#tabs.length < 2);
 
     // scrollIntoView forces a synchronous layout, so it runs only when the
@@ -349,6 +378,12 @@ export class OperationTabsElement extends OpenBindingsElement {
     const labelNode = node.querySelector(".label");
     if (labelNode) setTextIfChanged(labelNode, label);
 
+    const kindNode = node.querySelector<HTMLElement>(".kind");
+    if (kindNode) {
+      setTextIfChanged(kindNode, tab.kind ?? "");
+      kindNode.hidden = !tab.kind;
+    }
+
     const status = node.querySelector<HTMLElement>(".status");
     if (status) {
       const state = tab.running ? "running" : tab.dirty ? "dirty" : "";
@@ -373,6 +408,12 @@ export class OperationTabsElement extends OpenBindingsElement {
     const keys = this.#tabs.map(tab => tab.key);
     const index = keys.indexOf(key);
     if (index < 0) return;
+
+    if (event.key === "F2") {
+      event.preventDefault();
+      this.#beginRename(key);
+      return;
+    }
 
     if (
       event.altKey &&
@@ -407,6 +448,76 @@ export class OperationTabsElement extends OpenBindingsElement {
     event.preventDefault();
     const nextKey = keys[target];
     if (nextKey) this.#buttonFor(nextKey)?.focus();
+  }
+
+  /**
+   * Inline rename (rev 16): an overlay input on the tab shell. Enter commits
+   * (emitting `ob-tab-rename`), Esc or focus loss cancels; an all-whitespace
+   * or unchanged value is a cancel, never a rename to nothing.
+   */
+  #beginRename(key: string): void {
+    const tab = this.#tabs.find(candidate => candidate.key === key);
+    if (!tab || this.#renamingKey === key) return;
+    this.#endRename();
+    const shell = this.#shellFor(key);
+    if (!shell) return;
+    this.#renamingKey = key;
+    shell.classList.add("renaming");
+    const input = document.createElement("input");
+    input.className = "rename-input";
+    input.type = "text";
+    input.value = tab.label || tab.key;
+    input.setAttribute("aria-label", `Rename tab ${tab.label || tab.key}`);
+    input.addEventListener("keydown", event => {
+      event.stopPropagation();
+      if (event.key === "Enter") {
+        event.preventDefault();
+        this.#commitRename(key, input.value);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        this.#endRename();
+        this.#buttonFor(key)?.focus();
+      }
+    });
+    input.addEventListener("click", event => event.stopPropagation());
+    input.addEventListener("blur", () => {
+      if (this.#renamingKey === key) this.#endRename();
+    });
+    shell.append(input);
+    input.focus();
+    input.select();
+  }
+
+  #commitRename(key: string, raw: string): void {
+    const tab = this.#tabs.find(candidate => candidate.key === key);
+    this.#endRename();
+    this.#buttonFor(key)?.focus();
+    const label = raw.trim();
+    if (!tab || !label || label === (tab.label || tab.key)) return;
+    this.emit("ob-tab-rename", { key, label });
+  }
+
+  #endRename(): void {
+    if (this.#renamingKey === null) return;
+    this.#renamingKey = null;
+    for (const input of this.renderRoot?.querySelectorAll(".rename-input") ??
+      []) {
+      input.remove();
+    }
+    for (const shell of this.renderRoot?.querySelectorAll(
+      ".tab-shell.renaming",
+    ) ?? []) {
+      shell.classList.remove("renaming");
+    }
+  }
+
+  #shellFor(key: string): HTMLElement | null {
+    for (const shell of this.renderRoot?.querySelectorAll<HTMLElement>(
+      ".tab-shell",
+    ) ?? []) {
+      if (shell.dataset.tabKey === key) return shell;
+    }
+    return null;
   }
 
   #buttonFor(key: string): HTMLButtonElement | null {
@@ -459,6 +570,7 @@ function sameTabs(
       other !== undefined &&
       tab.key === other.key &&
       tab.label === other.label &&
+      tab.kind === other.kind &&
       Boolean(tab.dirty) === Boolean(other.dirty) &&
       Boolean(tab.running) === Boolean(other.running)
     );
@@ -482,9 +594,16 @@ function createTab(key: string): HTMLElement {
   status.setAttribute("part", "status");
   status.hidden = true;
 
+  const stack = document.createElement("span");
+  stack.className = "label-stack";
   const label = document.createElement("span");
   label.className = "label";
-  button.append(status, label);
+  const kind = document.createElement("span");
+  kind.className = "kind";
+  kind.setAttribute("part", "kind");
+  kind.hidden = true;
+  stack.append(label, kind);
+  button.append(status, stack);
 
   const close = document.createElement("button");
   close.type = "button";
@@ -534,6 +653,7 @@ const SHELL = `
     <div class="menu" part="menu">
       <button type="button" class="menu-toggle" popovertarget="tabs-menu-popover" aria-haspopup="menu" aria-expanded="false" aria-label="Operation tab actions" title="Operation tab actions">•••</button>
       <div class="menu-popover" id="tabs-menu-popover" popover="auto">
+        <button type="button" data-action="duplicate">Duplicate tab</button>
         <button type="button" data-action="move-left">Move active tab left</button>
         <button type="button" data-action="move-right">Move active tab right</button>
         <button type="button" data-action="close-unselected">Close other tabs</button>
@@ -682,10 +802,43 @@ const styles = `
     text-align: left;
   }
 
-  .label {
+  .label-stack {
+    display: grid;
+    min-width: 0;
+    gap: 0.05rem;
+  }
+
+  .label,
+  .kind {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* The workspace-item kind: a smaller, muted second line — a token, never
+     a color code alone. */
+  .kind {
+    color: var(--_ob-color-text-muted);
+    font-size: 0.62rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .kind[hidden] {
+    display: none;
+  }
+
+  .rename-input {
+    position: absolute;
+    inset: 0.25rem 2.1rem 0.25rem 0.45rem;
+    z-index: 2;
+    min-width: 0;
+    padding: 0 0.4rem;
+    color: var(--_ob-color-text);
+    font: inherit;
+    background: var(--_ob-color-background);
+    border: 1px solid var(--_ob-color-accent);
+    border-radius: calc(var(--_ob-radius) * 0.55);
   }
 
   .status {

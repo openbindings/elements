@@ -38,9 +38,6 @@ importers:
 
   apps/ob-start-workbench:
     dependencies:
-      '@openbindings/interface-sources':
-        specifier: workspace:^
-        version: link:../../packages/interface-sources
       '@openbindings/obi-editor':
         specifier: workspace:^
         version: link:../../packages/obi-editor
@@ -68,6 +65,9 @@ importers:
       '@openbindings/sdk':
         specifier: link:../../../openbindings-ts/packages/sdk
         version: link:../../../openbindings-ts/packages/sdk
+      '@openbindings/source-detail':
+        specifier: workspace:^
+        version: link:../../packages/source-detail
       '@openbindings/ui-core':
         specifier: workspace:^
         version: link:../../packages/ui-core
@@ -92,12 +92,6 @@ importers:
       '@openbindings/ui-core':
         specifier: workspace:^
         version: link:../../packages/ui-core
-
-  packages/interface-sources:
-    dependencies:
-      '@openbindings/ui-core':
-        specifier: workspace:^
-        version: link:../ui-core
 
   packages/json-editor:
     dependencies:
@@ -186,6 +180,15 @@ importers:
         version: link:../ui-core
 
   packages/operation-workbench:
+    dependencies:
+      '@openbindings/json-editor':
+        specifier: workspace:^
+        version: link:../json-editor
+      '@openbindings/ui-core':
+        specifier: workspace:^
+        version: link:../ui-core
+
+  packages/source-detail:
     dependencies:
       '@openbindings/json-editor':
         specifier: workspace:^

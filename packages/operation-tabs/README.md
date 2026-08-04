@@ -46,9 +46,17 @@ included in every event.
 
 - `ob-tab-activate` with `{ key }`
 - `ob-tab-close` with `{ key }`
+- `ob-tab-rename` with `{ key, label }` — inline rename (double-click the
+  label, or F2 on the focused tab; Enter commits, Esc cancels)
+- `ob-tab-duplicate` with `{ key }` — "Duplicate tab" in the ••• menu, for
+  the active tab
 - `ob-tab-reorder` with `{ keys }`
 - `ob-tabs-close-unselected`
 - `ob-tabs-close-all`
+
+Tabs are `{ key, label?, kind?, dirty?, running? }`; `kind` renders as a
+smaller muted subtitle line under the label (a workspace-item token — the
+element stays generic and knows nothing about what kinds mean).
 
 Events are bubbling and composed. They communicate user intent; the element
 does not mutate the supplied tab list. Consumers can accept, reject, persist,

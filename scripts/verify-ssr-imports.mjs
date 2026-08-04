@@ -7,12 +7,8 @@ const packages = [
   { name: "ui-core", expected: "OperationEnvironment", define: false },
   { name: "obi-editor", expected: "OBIEditorElement", define: true },
   { name: "obi-explorer", expected: "OBIExplorerElement", define: true },
-  {
-    name: "interface-sources",
-    expected: "InterfaceSourcesElement",
-    define: true,
-  },
   { name: "operation-detail", expected: "OperationDetailElement", define: true },
+  { name: "source-detail", expected: "SourceDetailElement", define: true },
   {
     name: "operation-graph-model",
     expected: "layoutOperationGraph",

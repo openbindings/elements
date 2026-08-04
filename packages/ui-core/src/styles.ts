@@ -35,6 +35,8 @@ export const baseStyles = `
     --_ob-radius: var(--ob-radius, 0.5rem);
     --_ob-space: var(--ob-space, 0.75rem);
     --_ob-focus-ring: var(--ob-focus-ring, 0 0 0 3px color-mix(in srgb, var(--_ob-color-accent) 28%, transparent));
+    --_ob-shadow: var(--ob-shadow, 0 1px 2px color-mix(in srgb, var(--_ob-color-text) 12%, transparent));
+    --_ob-duration: var(--ob-duration, 120ms);
 
     color: var(--_ob-color-text);
     font: 400 var(--_ob-font-size) / 1.45 var(--_ob-font-family);

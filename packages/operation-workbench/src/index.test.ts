@@ -1372,6 +1372,282 @@ describe("formatDuration", () => {
   });
 });
 
+describe("form input view", () => {
+  const formOBI: OBInterface = {
+    openbindings: "0.2.0",
+    name: "Target",
+    operations: {
+      order: {
+        input: { $ref: "#/schemas/OrderInput" },
+        output: { type: "object" },
+      },
+    },
+    schemas: {
+      OrderInput: {
+        type: "object",
+        properties: {
+          message: { type: "string", description: "What to send" },
+          size: { type: "string", enum: ["v1", "v2"] },
+          active: { type: "boolean" },
+          count: { type: "integer", default: 2 },
+        },
+        required: ["message"],
+      },
+    },
+  };
+
+  function mountForm(obi: OBInterface = formOBI): {
+    element: OperationWorkbenchElement;
+    root: ShadowRoot;
+    formButton: () => HTMLButtonElement | null;
+    formView: () => HTMLElement | null;
+    banner: () => HTMLElement | null;
+  } {
+    const element = document.createElement(
+      OPERATION_WORKBENCH_TAG,
+    ) as OperationWorkbenchElement;
+    element.obi = obi;
+    element.operationKey = Object.keys(obi.operations)[0] ?? null;
+    document.body.append(element);
+    const root = element.shadowRoot!;
+    return {
+      element,
+      root,
+      formButton: () => root.querySelector<HTMLButtonElement>(".view-form"),
+      formView: () => root.querySelector<HTMLElement>(".form-view"),
+      banner: () => root.querySelector<HTMLElement>(".form-status"),
+    };
+  }
+
+  it("renders a Source/Form toggle that enters form mode with labeled, wired fields", async () => {
+    const { element, root, formButton, formView } = mountForm();
+    await settled();
+    // $ref-rooted schema: the local reference resolves before capability
+    // analysis, so the form toggle is available.
+    expect(formButton()?.disabled).toBe(false);
+    expect(element.inputView).toBe("json");
+
+    formButton()!.click();
+    await settled();
+    expect(element.inputView).toBe("form");
+    expect(formView()?.hidden).toBe(false);
+    expect(
+      root.querySelector<HTMLElement>(".input-editor")?.hidden,
+    ).toBe(true);
+    expect(formButton()?.getAttribute("aria-pressed")).toBe("true");
+
+    const messageInput = root.querySelector<HTMLInputElement>("#f-message");
+    expect(messageInput).toBeTruthy();
+    const messageLabel = root.querySelector<HTMLLabelElement>(
+      'label[for="f-message"]',
+    );
+    expect(messageLabel?.textContent).toContain("message");
+    expect(messageLabel?.textContent).toContain("*");
+    expect(
+      root.querySelector<HTMLSelectElement>("select#f-size"),
+    ).toBeTruthy();
+    expect(
+      Array.from(
+        root.querySelectorAll<HTMLOptionElement>("select#f-size option"),
+      ).map(option => option.value),
+    ).toContain("v2");
+    expect(
+      root.querySelector<HTMLInputElement>("#f-active")?.type,
+    ).toBe("checkbox");
+    expect(root.querySelector<HTMLInputElement>("#f-count")?.type).toBe(
+      "number",
+    );
+    // Descriptions render muted next to their field.
+    expect(root.textContent).toContain("What to send");
+
+    // Switching back rewrites nothing: text is the single source of truth.
+    const before = element.inputText;
+    root.querySelector<HTMLButtonElement>(".view-json")!.click();
+    await settled();
+    expect(element.inputText).toBe(before);
+    expect(formView()?.hidden).toBe(true);
+  });
+
+  it("disables the toggle with the capability reason for unsupported schemas and sequence mode", async () => {
+    const combinator = mountForm({
+      ...formOBI,
+      operations: {
+        order: {
+          input: { allOf: [{ type: "object" }] },
+        },
+      },
+    });
+    await settled();
+    expect(combinator.formButton()?.disabled).toBe(true);
+    expect(combinator.formButton()?.title).toContain('"allOf"');
+    expect(
+      combinator.root.querySelector(".input-hint")?.textContent,
+    ).toContain('"allOf"');
+
+    const sequence = mountForm();
+    sequence.element.inputMode = "sequence";
+    await settled();
+    expect(sequence.formButton()?.disabled).toBe(true);
+    expect(sequence.formButton()?.title).toContain("one JSON value");
+  });
+
+  it("patches inputText through the shared pipeline so run carries form edits", async () => {
+    const binding = new LocalOperationInvokerBinding();
+    const environment = new OperationEnvironment([
+      {
+        interface: operationInvokerCandidate(),
+        invoker: new OperationInvoker([binding]),
+      },
+    ]);
+    const { element, root, formButton } = mountForm();
+    element.operationSource = environment;
+    const changed = vi.fn();
+    element.addEventListener("ob-input-change", changed);
+    await waitFor(() =>
+      element.shadowRoot?.querySelector(".status")?.textContent === "Ready",
+    );
+
+    formButton()!.click();
+    await settled();
+    const messageInput = root.querySelector<HTMLInputElement>("#f-message")!;
+    messageInput.value = "hello from form";
+    messageInput.dispatchEvent(new Event("input", { bubbles: true }));
+    await settled();
+
+    expect(changed).toHaveBeenCalled();
+    expect(JSON.parse(element.inputText)).toMatchObject({
+      message: "hello from form",
+    });
+
+    await element.run();
+    expect(binding.receivedInputs.length).toBe(1);
+    expect(binding.receivedInputs[0]).toMatchObject({
+      message: "hello from form",
+    });
+  });
+
+  it("shows the no-match banner with JSON and reset affordances, never silently", async () => {
+    const { element, root, formButton, banner } = mountForm();
+    element.inputText = "[1, 2]";
+    await settled();
+    formButton()!.click();
+    await settled();
+
+    // A non-object top level is a parse-shape banner…
+    expect(banner()?.hidden).toBe(false);
+    expect(banner()?.textContent).toContain(
+      "must be an object at the top level",
+    );
+
+    // …while conforming JSON that misses the schema is the no-match banner.
+    element.inputText = '{"message": 42}';
+    await settled();
+    expect(banner()?.hidden).toBe(false);
+    expect(banner()?.textContent).toContain("doesn't match");
+    const resetButton =
+      root.querySelector<HTMLButtonElement>(".form-banner-reset");
+    expect(
+      root.querySelector<HTMLButtonElement>(".form-banner-json"),
+    ).toBeTruthy();
+    expect(resetButton).toBeTruthy();
+
+    resetButton!.click();
+    await settled();
+    expect(banner()?.hidden).toBe(true);
+    expect(root.querySelector("#f-message")).toBeTruthy();
+    expect(JSON.parse(element.inputText)).toMatchObject({ message: "" });
+  });
+
+  it("renders the oneOf picker, regenerating the branch starter and capability", async () => {
+    const { element, root } = mountForm({
+      ...formOBI,
+      operations: {
+        order: {
+          input: {
+            oneOf: [
+              {
+                title: "ById",
+                type: "object",
+                properties: { id: { type: "string" } },
+                required: ["id"],
+              },
+              {
+                title: "ByName",
+                type: "object",
+                properties: { name: { type: "string", default: "n" } },
+                required: ["name"],
+              },
+              {
+                title: "Opaque",
+                allOf: [{ type: "object" }],
+              },
+            ],
+          },
+        },
+      },
+    });
+    await settled();
+    const shape = root.querySelector<HTMLSelectElement>(".input-shape");
+    expect(shape).toBeTruthy();
+    expect(
+      Array.from(shape!.options).map(option => option.textContent),
+    ).toEqual(["ById", "ByName", "Opaque"]);
+    expect(JSON.parse(element.inputText)).toEqual({ id: "" });
+
+    shape!.value = "1";
+    shape!.dispatchEvent(new Event("change", { bubbles: true }));
+    await settled();
+    expect(JSON.parse(element.inputText)).toEqual({ name: "n" });
+    expect(
+      root.querySelector<HTMLButtonElement>(".view-form")?.disabled,
+    ).toBe(false);
+
+    shape!.value = "2";
+    shape!.dispatchEvent(new Event("change", { bubbles: true }));
+    await settled();
+    // Per-branch capability: the combinator branch declines with reason.
+    expect(
+      root.querySelector<HTMLButtonElement>(".view-form")?.disabled,
+    ).toBe(true);
+    expect(
+      root.querySelector<HTMLButtonElement>(".view-form")?.title,
+    ).toContain('"allOf"');
+  });
+
+  it("supports array fields with add and remove flowing through the text pipeline", async () => {
+    const { element, root, formButton } = mountForm({
+      ...formOBI,
+      operations: {
+        order: {
+          input: {
+            type: "object",
+            properties: {
+              tags: { type: "array", items: { type: "string" } },
+            },
+          },
+        },
+      },
+    });
+    await settled();
+    formButton()!.click();
+    await settled();
+
+    const add = root.querySelector<HTMLButtonElement>('[part~="form-add"]');
+    expect(add).toBeTruthy();
+    add!.click();
+    await settled();
+    expect(JSON.parse(element.inputText)).toEqual({ tags: [""] });
+
+    const remove = root.querySelector<HTMLButtonElement>(
+      '[part~="form-remove"]',
+    );
+    expect(remove).toBeTruthy();
+    remove!.click();
+    await settled();
+    expect(JSON.parse(element.inputText)).toEqual({ tags: [] });
+  });
+});
+
 describe("split layout", () => {
   function mountLayout(): {
     element: OperationWorkbenchElement;

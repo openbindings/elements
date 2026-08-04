@@ -15,8 +15,8 @@ The public package set contains:
 - `@openbindings/obi-explorer`
 - `@openbindings/obi-editor`
 - `@openbindings/json-editor`
-- `@openbindings/interface-sources`
 - `@openbindings/operation-detail`
+- `@openbindings/source-detail`
 - `@openbindings/operation-workbench`
 - `@openbindings/operation-tabs`
 - `@openbindings/operation-graph-model`
@@ -24,7 +24,7 @@ The public package set contains:
 - `@openbindings/operation-graph-editor`
 
 The packages remain independent. For example, a documentation site can use
-the explorer, detail, source inspector, and graph viewer without shipping
+the explorer, the detail views, and the graph viewer without shipping
 invocation or graph-authoring code. An application can use the tab strip for
 any keyed sessions; it has no OpenBindings dependency.
 

@@ -421,7 +421,7 @@ const styles = `
     border: 1px solid var(--_ob-color-border);
     border-left: 4px solid var(--_ob-color-text-muted);
     border-radius: var(--_ob-radius);
-    box-shadow: 0 0.25rem 0.8rem rgb(0 0 0 / 8%);
+    box-shadow: var(--_ob-shadow);
     cursor: pointer;
   }
 

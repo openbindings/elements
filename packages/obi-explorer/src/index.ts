@@ -20,9 +20,17 @@ export interface FilterChangeDetail {
   totalCount: number;
 }
 
+export type OBISource = NonNullable<OBInterface["sources"]>[string];
+
+export interface SourceSelectDetail {
+  sourceKey: string;
+  source: OBISource;
+}
+
 export interface OBIExplorerEventMap {
   "ob-operation-select": CustomEvent<OperationSelectDetail>;
   "ob-filter-change": CustomEvent<FilterChangeDetail>;
+  "ob-source-select": CustomEvent<SourceSelectDetail>;
 }
 
 export class OBIExplorerElement extends OpenBindingsElement {
@@ -30,6 +38,7 @@ export class OBIExplorerElement extends OpenBindingsElement {
 
   #obi: OBInterface | null = null;
   #selectedOperation: string | null = null;
+  #selectedSource: string | null = null;
   #filter = "";
   #hideIdentity = false;
   #flowContent = false;
@@ -67,6 +76,12 @@ export class OBIExplorerElement extends OpenBindingsElement {
     ) {
       this.#selectedOperation = null;
     }
+    if (
+      this.#selectedSource &&
+      !Object.hasOwn(value?.sources ?? {}, this.#selectedSource)
+    ) {
+      this.#selectedSource = null;
+    }
     this.requestRender();
   }
 
@@ -81,6 +96,23 @@ export class OBIExplorerElement extends OpenBindingsElement {
     // the scroll viewport; user clicks are necessarily already in view, so the
     // click path sets the field directly and never schedules a scroll.
     this.#pendingSelectionScroll = value !== null;
+    this.requestRender();
+  }
+
+  /**
+   * The source overview row currently highlighted (rev 16: sources live in
+   * the rail as overview rows; their detail is a workspace tab). Assigned by
+   * the host to mirror the active source tab; clicking a row emits
+   * `ob-source-select` and highlights it.
+   */
+  get selectedSource(): string | null {
+    return this.#selectedSource;
+  }
+
+  set selectedSource(value: string | null) {
+    const normalized = value?.trim() || null;
+    if (normalized === this.#selectedSource) return;
+    this.#selectedSource = normalized;
     this.requestRender();
   }
 
@@ -212,6 +244,23 @@ export class OBIExplorerElement extends OpenBindingsElement {
         this.#applyRoving();
       }
     });
+
+    // Source overview rows (rev 16): one delegated listener, mirroring the
+    // operations list. Selection is emitted as an intent; the highlight
+    // follows the host's `selectedSource` writes.
+    refs.require(".source-list").addEventListener("click", event => {
+      const key = (event.target as HTMLElement | null)?.closest<HTMLElement>(
+        "li[data-source-key]",
+      )?.dataset.sourceKey;
+      const source = key ? this.#obi?.sources?.[key] : undefined;
+      if (!key || !source) return;
+      this.#selectedSource = key;
+      this.requestRender();
+      this.emit<SourceSelectDetail>("ob-source-select", {
+        sourceKey: key,
+        source,
+      });
+    });
   }
 
   protected render(): void {
@@ -252,6 +301,7 @@ export class OBIExplorerElement extends OpenBindingsElement {
       reconcile(list, [], { key: () => "", create: () => document.createElement("li") });
       this.#visible = [];
       this.#rovingKey = null;
+      this.#renderSources(refs);
       return;
     }
 
@@ -417,6 +467,88 @@ export class OBIExplorerElement extends OpenBindingsElement {
         });
       }
     }
+
+    this.#renderSources(refs);
+  }
+
+  /**
+   * The sources overview (rev 16): compact rows — key, binding spec, short
+   * origin — beneath the operations, narrowed by the same filter (key, spec,
+   * or location matches). Rows emit `ob-source-select`; the detail lives in a
+   * workspace tab, not in the rail. Hidden entirely when the document
+   * declares no sources.
+   */
+  #renderSources(refs: Refs): void {
+    const heading = refs.require<HTMLElement>(".sources-heading");
+    const list = refs.require<HTMLElement>(".source-list");
+    const countNode = refs.require(".sources-count");
+    const sources = Object.entries(this.#obi?.sources ?? {}).sort(([a], [b]) =>
+      a.localeCompare(b),
+    );
+    const hasSources = sources.length > 0;
+    heading.hidden = !hasSources;
+    list.hidden = !hasSources;
+    if (!hasSources) {
+      reconcile(list, [], {
+        key: () => "",
+        create: () => document.createElement("li"),
+      });
+      return;
+    }
+
+    const query = this.#filter.trim().toLocaleLowerCase();
+    const visible = query
+      ? sources.filter(([key, source]) =>
+          [key, source.bindingSpec, source.location ?? ""]
+            .join("\n")
+            .toLocaleLowerCase()
+            .includes(query),
+        )
+      : sources;
+    setTextIfChanged(
+      countNode,
+      query ? `${visible.length} / ${sources.length}` : String(sources.length),
+    );
+    list.hidden = visible.length === 0;
+
+    reconcile(list, visible, {
+      key: ([key]) => `source:${key}`,
+      create: () => {
+        const item = document.createElement("li");
+        const button = document.createElement("button");
+        button.type = "button";
+        button.setAttribute("part", "source");
+        const keyText = document.createElement("span");
+        keyText.className = "source-key";
+        const meta = document.createElement("span");
+        meta.className = "source-meta";
+        button.append(keyText, meta);
+        item.append(button);
+        return item;
+      },
+      update: (node, [key, source]) => {
+        node.dataset.sourceKey = key;
+        const button = node.querySelector<HTMLButtonElement>("button");
+        if (!button) return;
+        const selected = key === this.#selectedSource;
+        button.classList.toggle("selected", selected);
+        const part = selected ? "source source-selected" : "source";
+        if (button.getAttribute("part") !== part) {
+          button.setAttribute("part", part);
+        }
+        if (selected) button.setAttribute("aria-current", "true");
+        else button.removeAttribute("aria-current");
+        const keyNode = node.querySelector(".source-key");
+        if (keyNode) setTextIfChanged(keyNode, key);
+        const meta = node.querySelector(".source-meta");
+        if (meta) {
+          setTextIfChanged(
+            meta,
+            [source.bindingSpec, shortOrigin(source)].filter(Boolean).join(" · "),
+          );
+        }
+      },
+    });
   }
 
   /**
@@ -568,6 +700,23 @@ export class OBIExplorerElement extends OpenBindingsElement {
   }
 }
 
+/**
+ * A short, recognizable origin for an overview row: the location's last path
+ * segment with its host ("openapi.yml · raw.githubusercontent.com"), or
+ * "embedded" for location-less sources. Full facts live in the source tab.
+ */
+function shortOrigin(source: OBISource): string {
+  const location = source.location?.trim();
+  if (!location) return source.content === undefined ? "" : "embedded";
+  try {
+    const url = new URL(location);
+    const segment = url.pathname.split("/").filter(Boolean).at(-1);
+    return segment ? `${segment} · ${url.host}` : url.host;
+  } catch {
+    return location.length > 42 ? `…${location.slice(-40)}` : location;
+  }
+}
+
 function createOperationItem(): HTMLElement {
   const item = document.createElement("li");
   const button = document.createElement("button");
@@ -618,6 +767,11 @@ const SHELL = `
     </div>
     <div class="empty" part="empty"></div>
     <ul part="operation-list" aria-label="Operations"></ul>
+    <div class="sources-heading" part="sources-heading" hidden>
+      <h3>Sources</h3>
+      <span class="sources-count"></span>
+    </div>
+    <ul class="source-list" part="source-list" aria-label="Sources" hidden></ul>
   </section>
 `;
 
@@ -671,7 +825,8 @@ const styles = `
     display: none;
   }
 
-  .operations-heading {
+  .operations-heading,
+  .sources-heading {
     display: flex;
     gap: var(--_ob-space);
     align-items: baseline;
@@ -680,11 +835,18 @@ const styles = `
     border-bottom: 1px solid var(--_ob-color-border);
   }
 
-  .operations-heading[hidden] {
+  .sources-heading {
+    margin-top: calc(var(--_ob-space) * 1.5);
+  }
+
+  .operations-heading[hidden],
+  .sources-heading[hidden],
+  .source-list[hidden] {
     display: none;
   }
 
-  .operations-heading h3 {
+  .operations-heading h3,
+  .sources-heading h3 {
     margin: 0;
     color: var(--_ob-color-text-muted);
     font-size: 0.68rem;
@@ -693,10 +855,30 @@ const styles = `
     text-transform: uppercase;
   }
 
-  .operations-count {
+  .operations-count,
+  .sources-count {
     color: var(--_ob-color-text-muted);
     font-size: 0.72rem;
     font-variant-numeric: tabular-nums;
+  }
+
+  .source-list {
+    margin-top: 0.35rem;
+  }
+
+  .source-key {
+    overflow-wrap: anywhere;
+    font-family: var(--_ob-font-mono);
+    font-size: 0.78rem;
+    font-weight: 650;
+  }
+
+  .source-meta {
+    overflow: hidden;
+    color: var(--_ob-color-text-muted);
+    font-size: 0.72rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /*
@@ -721,11 +903,18 @@ const styles = `
     background: var(--_ob-color-background);
   }
 
-  :host([flow-content]) .operations-heading {
+  :host([flow-content]) .operations-heading,
+  :host([flow-content]) .sources-heading {
     position: sticky;
     top: calc(var(--ob-rail-sticky-top, 0px) + var(--ob-rail-filter-height, 3.05rem));
     z-index: 4;
     background: var(--_ob-color-background);
+  }
+
+  /* Later in the flow at the same offset: the Sources heading slides over
+     and replaces the Operations heading as its section scrolls in. */
+  :host([flow-content]) .sources-heading {
+    z-index: 5;
   }
 
   .version, .description {

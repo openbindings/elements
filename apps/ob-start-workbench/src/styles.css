@@ -719,25 +719,16 @@ textarea {
   overscroll-behavior: contain;
 }
 
-/* Sticky rows inside the elements must reach the rail scroller: no overflow
+/* Sticky rows inside the element must reach the rail scroller: no overflow
    clip and no fixed heights between them and .rail-column. */
 .rail-column > ob-obi-explorer {
   display: block;
   overflow: visible;
 }
 
-.rail-column > ob-interface-sources {
-  --ob-rail-sticky-top: var(--ob-rail-filter-height);
-  display: block;
-  height: auto;
-  overflow: visible;
-  border-top: 1px solid var(--page-border);
-}
-
 /* The app-wide part rules pin containers to 100% height for the paned
-   layout; in the rail both elements flow to content height. */
-.rail-column > ob-obi-explorer::part(container),
-.rail-column > ob-interface-sources::part(container) {
+   layout; in the rail the explorer flows to content height. */
+.rail-column > ob-obi-explorer::part(container) {
   height: auto;
 }
 
@@ -789,31 +780,130 @@ textarea {
 }
 
 .operation-column {
-  --detail-size: 45%;
   display: grid;
-  grid-template-rows: 2.35rem minmax(10rem, var(--detail-size)) 1px minmax(14rem, 1fr);
+  grid-template-rows: 2.35rem minmax(0, 1fr);
   gap: 0;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
 
-.operation-column.hide-detail {
-  grid-template-rows: 2.35rem 0 0 minmax(0, 1fr);
+/* The tab content (rev 16): detail scrolls above; the invocation sheet is
+   pinned to the bottom edge. --sheet-size is the ACTIVE session's ratio,
+   applied by the app; collapse reduces the sheet to its one-line strip. */
+.tab-content {
+  --sheet-size: 45%;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 1px minmax(0, var(--sheet-size));
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.operation-column.hide-detail > ob-operation-detail,
-.operation-column.hide-detail > #detail-gutter {
+/* Collapsed, the gutter leaves the grid (display: none) — so the template
+   must shrink to TWO rows, or the sheet auto-places into a 0-height track
+   and its strip renders off-viewport. */
+.tab-content.sheet-collapsed {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.tab-content.sheet-collapsed > #sheet-gutter {
   display: none;
 }
 
-.operation-column.hide-invocation {
-  grid-template-rows: 2.35rem minmax(0, 1fr) 0 0;
+.tab-content.sheet-collapsed .invocation-sessions {
+  display: none;
 }
 
-.operation-column.hide-invocation > .invocation-sessions,
-.operation-column.hide-invocation > #detail-gutter {
+/* No open workspace item: the sheet has nothing to invoke. */
+.tab-content.no-session {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.tab-content.no-session > #sheet-gutter,
+.tab-content.no-session > .invocation-sheet {
   display: none;
+}
+
+.detail-region {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.invocation-sheet {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--page-border);
+}
+
+.tab-content.sheet-collapsed .invocation-sheet {
+  grid-template-rows: auto;
+  border-top: 1px solid var(--page-border);
+}
+
+.sheet-header {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  min-height: 2.1rem;
+  padding: 0 0.6rem;
+  background: var(--page-surface-raised);
+  border-bottom: 1px solid var(--page-border);
+}
+
+.tab-content.sheet-collapsed .sheet-header {
+  border-bottom: 0;
+}
+
+.sheet-title {
+  color: var(--page-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sheet-status {
+  min-width: 0;
+  margin-right: auto;
+  overflow: hidden;
+  color: var(--page-muted);
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet-status.danger {
+  color: var(--danger);
+}
+
+#sheet-run {
+  min-height: 1.6rem;
+  padding: 0 0.7rem;
+  font-size: 0.72rem;
+}
+
+#sheet-run[hidden] {
+  display: none;
+}
+
+#sheet-toggle {
+  min-height: 1.6rem;
+  padding: 0 0.55rem;
+  color: var(--page-muted);
+  font-size: 0.72rem;
+  background: transparent;
+  border: 1px solid transparent;
+}
+
+#sheet-toggle:hover {
+  color: var(--page-text);
+  background: var(--page-surface);
+  border-color: var(--page-border);
 }
 
 ob-operation-tabs {
@@ -859,7 +949,7 @@ ob-operation-tabs::part(container) {
    accent ring the app's controls use, drawn as a box-shadow so the thin
    separator itself lights up. */
 #rail-gutter:focus-visible,
-#detail-gutter:focus-visible,
+#sheet-gutter:focus-visible,
 #source-gutter:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
@@ -897,6 +987,7 @@ ob-operation-tabs::part(container) {
 
 ob-obi-explorer,
 ob-operation-detail,
+ob-source-detail,
 .invocation-sessions,
 .invocation-sessions > ob-operation-workbench {
   display: block;
@@ -905,12 +996,25 @@ ob-operation-detail,
   overflow: hidden;
 }
 
+/* The detail region's class display rules must never beat the UA's [hidden]
+   (the rev-14.3 Sources-pane bug class): the inactive detail stays gone. */
+.detail-region > ob-operation-detail[hidden],
+.detail-region > ob-source-detail[hidden] {
+  display: none !important;
+}
+
 ob-obi-explorer::part(container),
 ob-operation-detail::part(container),
+ob-source-detail::part(container),
 .invocation-sessions > ob-operation-workbench::part(container) {
   height: 100%;
   border: 0;
   border-radius: 0;
+}
+
+.detail-region > ob-operation-detail,
+.detail-region > ob-source-detail {
+  height: 100%;
 }
 
 .invocation-sessions {
@@ -1030,7 +1134,6 @@ ob-obi-editor::part(container) {
   border-radius: 0;
 }
 
-ob-interface-sources,
 ob-operation-graph-viewer,
 ob-operation-graph-editor {
   display: block;
@@ -1040,7 +1143,6 @@ ob-operation-graph-editor {
   min-height: 0;
 }
 
-ob-interface-sources::part(container),
 ob-operation-graph-viewer::part(container),
 ob-operation-graph-editor::part(container) {
   height: 100%;
@@ -1210,16 +1312,14 @@ ob-obi-explorer::part(container) {
 
   .operation-column {
     display: grid;
-    grid-template-rows: 2.35rem minmax(18rem, auto) minmax(24rem, auto);
+    grid-template-rows: 2.35rem minmax(0, auto);
     overflow: visible;
   }
 
-  .operation-column.hide-detail {
-    grid-template-rows: 2.35rem minmax(24rem, auto);
-  }
-
-  .operation-column.hide-invocation {
-    grid-template-rows: 2.35rem minmax(18rem, auto);
+  /* The tab content keeps its internal sheet on mobile inside a capped
+     viewport-relative height, so detail and sheet both stay reachable. */
+  .tab-content {
+    height: clamp(28rem, 72dvh, 42rem);
   }
 
   .source-column {
@@ -1232,10 +1332,10 @@ ob-obi-explorer::part(container) {
   }
 
   ob-operation-detail,
+  ob-source-detail,
   .invocation-sessions,
   .invocation-sessions > ob-operation-workbench,
   ob-obi-editor,
-  ob-interface-sources,
   ob-operation-graph-viewer,
   ob-operation-graph-editor {
     overflow: visible;

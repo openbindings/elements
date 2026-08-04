@@ -1,7 +1,7 @@
 {
-  "name": "@openbindings/interface-sources",
+  "name": "@openbindings/source-detail",
   "version": "0.1.0",
-  "description": "Framework-neutral OpenBindings source and binding inspector",
+  "description": "Framework-neutral OpenBindings source detail element",
   "type": "module",
   "sideEffects": ["./dist/define.js"],
   "exports": {
@@ -20,6 +20,7 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
+    "@openbindings/json-editor": "workspace:^",
     "@openbindings/ui-core": "workspace:^"
   },
   "peerDependencies": {
@@ -32,6 +33,6 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/openbindings/elements.git",
-    "directory": "packages/interface-sources"
+    "directory": "packages/source-detail"
   }
 }

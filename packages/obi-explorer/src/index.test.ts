@@ -571,6 +571,85 @@ describe("row cache", () => {
   });
 });
 
+describe("sources overview", () => {
+  const sourced: OBInterface = {
+    ...structuredClone(obi),
+    sources: {
+      petsAPI: {
+        bindingSpec: "openbindings.openapi@1",
+        location: "https://example.test/specs/openapi.yml",
+      },
+      graphSource: {
+        bindingSpec: "openbindings.operation-graph@1",
+        content: { nodes: {} },
+      },
+    },
+  };
+
+  it("renders compact rows — key, spec, short origin — and emits ob-source-select", async () => {
+    const element = await mount(structuredClone(sourced));
+    const root = element.shadowRoot!;
+    const rows = root.querySelectorAll("li[data-source-key]");
+    expect(rows).toHaveLength(2);
+    const pets = [...rows].find(
+      row => (row as HTMLElement).dataset.sourceKey === "petsAPI",
+    )!;
+    expect(pets.querySelector(".source-key")?.textContent).toBe("petsAPI");
+    expect(pets.querySelector(".source-meta")?.textContent).toContain(
+      "openapi.yml · example.test",
+    );
+    const embedded = [...rows].find(
+      row => (row as HTMLElement).dataset.sourceKey === "graphSource",
+    )!;
+    expect(embedded.querySelector(".source-meta")?.textContent).toContain(
+      "embedded",
+    );
+
+    const selected = vi.fn();
+    element.addEventListener("ob-source-select", event =>
+      selected(event.detail.sourceKey),
+    );
+    pets.querySelector("button")!.click();
+    expect(selected).toHaveBeenCalledWith("petsAPI");
+    await settled();
+    expect(element.selectedSource).toBe("petsAPI");
+    expect(pets.querySelector("button")?.getAttribute("aria-current")).toBe(
+      "true",
+    );
+  });
+
+  it("narrows sources with the one shared filter, with count honesty", async () => {
+    const element = await mount(structuredClone(sourced));
+    type(element, "openapi");
+    await settled();
+    const root = element.shadowRoot!;
+    expect(root.querySelectorAll("li[data-source-key]")).toHaveLength(1);
+    expect(root.querySelector(".sources-count")?.textContent).toBe("1 / 2");
+    type(element, "");
+    await settled();
+    expect(root.querySelectorAll("li[data-source-key]")).toHaveLength(2);
+    expect(root.querySelector(".sources-count")?.textContent).toBe("2");
+  });
+
+  it("hides the section entirely when the document declares no sources", async () => {
+    const element = await mount(structuredClone(obi));
+    const root = element.shadowRoot!;
+    expect(
+      root.querySelector<HTMLElement>(".sources-heading")?.hidden,
+    ).toBe(true);
+    expect(root.querySelector<HTMLElement>(".source-list")?.hidden).toBe(true);
+  });
+
+  it("clears a selected source that vanishes on document swap", async () => {
+    const element = await mount(structuredClone(sourced));
+    element.selectedSource = "petsAPI";
+    await settled();
+    element.obi = structuredClone(obi);
+    await settled();
+    expect(element.selectedSource).toBeNull();
+  });
+});
+
 async function settled(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
