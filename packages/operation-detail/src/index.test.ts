@@ -52,7 +52,7 @@ afterEach(() => {
 });
 
 describe("OperationDetailElement", () => {
-  it("renders the operation contract and emits binding intent", async () => {
+  it("renders the operation contract with informational binding rows", async () => {
     const element = document.createElement(
       OPERATION_DETAIL_TAG,
     ) as OperationDetailElement;
@@ -79,20 +79,18 @@ describe("OperationDetailElement", () => {
       element.shadowRoot?.querySelector(".example-list")?.textContent,
     ).toContain("null");
 
-    element.shadowRoot
-      ?.querySelector<HTMLButtonElement>('[part~="binding"]')
-      ?.click();
+    // Rev 15 (binding roles): the detail list is informational only. The
+    // cockpit's binding-select is the single selection surface, so a row is
+    // not a button and clicking it selects nothing and emits nothing.
+    const row = element.shadowRoot?.querySelector<HTMLElement>(
+      '[part~="binding"]',
+    );
+    expect(row?.textContent).toContain("createPetHTTP");
+    expect(row?.closest("button")).toBeNull();
+    (row as HTMLElement).click();
     await settled();
-    expect(selected).toHaveBeenCalledTimes(1);
-    expect(element.selectedBindingKey).toBe("createPetHTTP");
-    expect(
-      element.shadowRoot?.querySelector('[part~="binding"]')?.getAttribute(
-        "aria-pressed",
-      ),
-    ).toBe("true");
-    expect(
-      (selected.mock.calls[0]?.[0] as CustomEvent).detail.bindingKey,
-    ).toBe("createPetHTTP");
+    expect(selected).not.toHaveBeenCalled();
+    expect(element.selectedBindingKey).toBeNull();
   });
 });
 
@@ -240,42 +238,42 @@ describe("OperationDetailElement bindings disclosure", () => {
     expect(summary(element).textContent).toBe("Bindings · 3");
   });
 
-  it("keeps rows clickable inside the disclosure with an unchanged payload", async () => {
+  it("renders informational rows inside the disclosure and highlights the host's selection", async () => {
     const element = mount("listPets");
     const selected = vi.fn();
     element.addEventListener("ob-binding-select", selected);
     await settled();
 
-    const row = element.shadowRoot?.querySelector<HTMLButtonElement>(
+    const row = element.shadowRoot?.querySelector<HTMLElement>(
       '.bindings details [part~="binding"][data-binding-key="listPetsQueue"]',
     );
     expect(row).toBeTruthy();
+    expect(row?.querySelector(".binding-family")?.textContent).toContain(
+      "openbindings.asyncapi@1",
+    );
+    // No selection affordance: clicking a row emits nothing.
     row?.click();
     await settled();
+    expect(selected).not.toHaveBeenCalled();
+    expect(element.selectedBindingKey).toBeNull();
 
-    expect(selected).toHaveBeenCalledTimes(1);
-    const detail = (selected.mock.calls[0]?.[0] as CustomEvent).detail;
-    expect(detail.bindingKey).toBe("listPetsQueue");
-    expect(detail.binding).toBe(multiObi.bindings?.listPetsQueue);
-    expect(row?.getAttribute("aria-pressed")).toBe("true");
+    // The host-assigned selection is a display-only highlight.
+    element.selectedBindingKey = "listPetsQueue";
+    await settled();
+    expect(row?.classList.contains("selected")).toBe(true);
     expect(summary(element).textContent).toBe("Bindings · 3 · via listPetsQueue");
   });
 
-  it("preserves a manual toggle and row focus across selectedBindingKey re-renders", async () => {
+  it("preserves a manual toggle across selectedBindingKey re-renders", async () => {
     const element = mount("listPets");
     await settled();
 
     // User opens the disclosure the render pass defaulted closed.
     details(element).open = true;
-    const row = element.shadowRoot?.querySelector<HTMLButtonElement>(
-      '[data-binding-key="listPetsCLI"]',
-    );
-    row?.focus();
 
     element.selectedBindingKey = "listPetsHTTP";
     await settled();
     expect(details(element).open).toBe(true);
-    expect(element.shadowRoot?.activeElement).toBe(row);
 
     // And the converse: a manual close on an open-by-default operation.
     const other = mount("getPet");

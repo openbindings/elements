@@ -184,13 +184,9 @@ const resetLayoutButton =
 const documentPaneButton = requiredElement<HTMLButtonElement>(
   "#show-document-pane",
 );
-const sourcesPaneButton = requiredElement<HTMLButtonElement>(
-  "#show-sources-pane",
-);
 const graphPaneButton =
   requiredElement<HTMLButtonElement>("#show-graph-pane");
 const documentPane = requiredElement<HTMLElement>("#document-pane");
-const sourcesPane = requiredElement<HTMLElement>("#sources-pane");
 const graphPane = requiredElement<HTMLElement>("#graph-pane");
 const graphStatus = requiredElement<HTMLElement>("#graph-status");
 const toggleGraphEdit = requiredElement<HTMLButtonElement>(
@@ -300,19 +296,19 @@ setTheme(restoreTheme());
 renderSessionState();
 applyWorkspaceLayout();
 
+// The document bar is the document's identity (review/100 P3); the rail
+// repeating the same name/version directly beneath it was a dogfooded
+// duplication. The explorer keeps its description and count.
+explorer.hideIdentity = true;
+
 explorer.addEventListener("ob-operation-select", event => {
   activateOperation(event.detail.operationKey);
 });
 
-detail.addEventListener("ob-binding-select", event => {
-  const invocation = activeInvocation();
-  if (!invocation) return;
-  invocation.bindingKey = event.detail.bindingKey;
-  detail.selectedBindingKey = event.detail.bindingKey;
-  bootstrapMessage.textContent = `Using binding ${event.detail.bindingKey}.`;
-  refreshGraphSurface();
-  schedulePreflight();
-});
+// Binding roles (rev 15): the operation detail's bindings disclosure is
+// informational only — it emits no selection. The cockpit's binding-select in
+// the invocation session is the single selection surface; the detail mirrors
+// it through the display-only `selectedBindingKey` writes below.
 
 // One shared exec split across sessions: any session's resize becomes the
 // workspace ratio, applied everywhere and persisted with the rest of the
@@ -404,7 +400,6 @@ interfaceEditor.addEventListener("ob-interface-edit", event => {
 
 for (const [button, pane] of [
   [documentPaneButton, "document"],
-  [sourcesPaneButton, "sources"],
   [graphPaneButton, "graph"],
 ] as const) {
   button.addEventListener("click", () => setArtifactPane(pane));
@@ -414,15 +409,13 @@ interfaceSources.addEventListener("ob-source-select", event => {
   interfaceSources.selectedSourceKey = event.detail.sourceKey;
 });
 
+// Navigation, not selection (rev 15): clicking a binding in the rail's
+// sources section activates its operation, but the invocation keeps its own
+// binding choice — only the cockpit's binding-select changes it.
 interfaceSources.addEventListener("ob-binding-select", event => {
   interfaceSources.selectedSourceKey = event.detail.sourceKey;
   interfaceSources.selectedBindingKey = event.detail.bindingKey;
   activateOperation(event.detail.operationKey);
-  const invocation = activeInvocation();
-  if (invocation) invocation.bindingKey = event.detail.bindingKey;
-  detail.selectedBindingKey = event.detail.bindingKey;
-  refreshGraphSurface();
-  schedulePreflight();
 });
 
 interfaceSources.addEventListener("ob-source-refresh", event => {
@@ -509,9 +502,16 @@ function renderDocumentBar(obi: OBInterface): void {
   documentName.textContent = obi.name?.trim() || "Untitled interface";
   const operationCount = Object.keys(obi.operations).length;
   const sourceCount = Object.keys(obi.sources ?? {}).length;
-  documentMeta.textContent =
-    `${operationCount} operation${operationCount === 1 ? "" : "s"} · ` +
-    `${sourceCount} source${sourceCount === 1 ? "" : "s"}`;
+  // The rail no longer repeats the document's identity, so the bar's meta
+  // line carries all of it: version, spec version, then the counts.
+  documentMeta.textContent = [
+    obi.version?.trim() ? `v${obi.version.trim()}` : "",
+    obi.openbindings ? `OBI ${obi.openbindings}` : "",
+    `${operationCount} operation${operationCount === 1 ? "" : "s"}`,
+    `${sourceCount} source${sourceCount === 1 ? "" : "s"}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   void refreshDocumentValidity(obi);
 }
 
@@ -1889,10 +1889,9 @@ function withPreferenceSelection(
   };
 }
 
-function setArtifactPane(pane: "document" | "sources" | "graph"): void {
+function setArtifactPane(pane: "document" | "graph"): void {
   const entries = [
     [documentPaneButton, documentPane, "document"],
-    [sourcesPaneButton, sourcesPane, "sources"],
     [graphPaneButton, graphPane, "graph"],
   ] as const;
   for (const [button, panel, name] of entries) {

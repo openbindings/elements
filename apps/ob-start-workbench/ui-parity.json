@@ -81,7 +81,7 @@
   },
   "openbindings.ob.listSources": {
     "status": "covered",
-    "detail": "sources panel renders the document's sources directly"
+    "detail": "rail sources section renders the document's sources directly, beneath the operations"
   },
   "openbindings.ob.inspectSource": {
     "status": "deferred",
@@ -90,12 +90,12 @@
   },
   "openbindings.ob.pullSource": {
     "status": "affordance",
-    "detail": "per-source Pull in the sources panel",
+    "detail": "per-source Pull in the rail sources section",
     "selector": "pullSource"
   },
   "openbindings.ob.removeSource": {
     "status": "affordance",
-    "detail": "per-source Remove in the sources panel",
+    "detail": "per-source Remove in the rail sources section",
     "selector": "removeSource"
   },
   "openbindings.ob.bindOperation": {
@@ -110,7 +110,7 @@
   },
   "openbindings.ob.unbindOperation": {
     "status": "affordance",
-    "detail": "unbind in the detail bindings disclosure",
+    "detail": "per-binding unbind in the rail sources section",
     "selector": "unbindOperation"
   },
   "openbindings.ob.listBindings": {

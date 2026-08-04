@@ -697,9 +697,32 @@ textarea {
     minmax(18rem, var(--source-width));
 }
 
-.workbench-grid.hide-explorer > ob-obi-explorer,
+.workbench-grid.hide-explorer > .rail-column,
 .workbench-grid.hide-explorer > #rail-gutter {
   display: none;
+}
+
+/* Panjir's master-pane pattern (rev 15): one rail, operations first, the
+   document's source artifacts beneath. The wrapper takes the explorer's grid
+   position; the two elements split it vertically with independent scroll. */
+.rail-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.rail-column > ob-obi-explorer {
+  flex: 1 1 60%;
+  min-height: 0;
+}
+
+.rail-column > ob-interface-sources {
+  flex: 1 1 40%;
+  min-height: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--page-border);
 }
 
 .workbench-grid.rail-only {
@@ -1162,9 +1185,22 @@ ob-obi-explorer::part(container) {
     display: none;
   }
 
+  .rail-column {
+    height: auto;
+    overflow: visible;
+  }
+
   ob-obi-explorer {
+    flex: 0 0 auto;
     height: clamp(20rem, 50dvh, 30rem);
     min-height: 0;
+    overflow: hidden;
+    border-bottom: 1px solid var(--page-border);
+  }
+
+  .rail-column > ob-interface-sources {
+    flex: 0 0 auto;
+    height: clamp(16rem, 40dvh, 24rem);
     overflow: hidden;
     border-bottom: 1px solid var(--page-border);
   }

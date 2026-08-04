@@ -26,6 +26,10 @@ Read-only navigation for one OpenBindings interface.
   trigger a scroll, since the clicked row is already visible.
 - `filter: string` — programmatic assignment filters silently; it never
   emits `ob-filter-change` (see Events).
+- `hideIdentity: boolean` (attribute `hide-identity`) — hides only the
+  interface name/version header row, for hosts that already present the
+  document's identity elsewhere. The description blurb and the operation
+  count badge stay.
 
 ## Rows: tags, aliases, and deprecation
 

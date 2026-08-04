@@ -26,9 +26,12 @@ export interface OBIExplorerEventMap {
 }
 
 export class OBIExplorerElement extends OpenBindingsElement {
+  static readonly observedAttributes = ["hide-identity"];
+
   #obi: OBInterface | null = null;
   #selectedOperation: string | null = null;
   #filter = "";
+  #hideIdentity = false;
   #descriptionExpanded = false;
   #sortedFor: OBInterface | null = null;
   #sorted: [string, Operation][] = [];
@@ -89,6 +92,32 @@ export class OBIExplorerElement extends OpenBindingsElement {
     if (normalized === this.#filter) return;
     this.#filter = normalized;
     this.requestRender();
+  }
+
+  /**
+   * Hides the interface name/version identity row. For hosts that already
+   * present the document's identity elsewhere (the workbench document bar),
+   * so the same title is never painted twice. The description blurb and the
+   * operation count badge are unaffected.
+   */
+  get hideIdentity(): boolean {
+    return this.#hideIdentity;
+  }
+
+  set hideIdentity(value: boolean) {
+    const next = Boolean(value);
+    if (next === this.#hideIdentity) return;
+    this.#hideIdentity = next;
+    this.toggleAttribute("hide-identity", next);
+    this.requestRender();
+  }
+
+  attributeChangedCallback(
+    name: string,
+    _oldValue: string | null,
+    newValue: string | null,
+  ): void {
+    if (name === "hide-identity") this.hideIdentity = newValue !== null;
   }
 
   override connectedCallback(): void {
@@ -168,6 +197,9 @@ export class OBIExplorerElement extends OpenBindingsElement {
 
     const title = refs.require("h2");
     const version = refs.require(".version");
+    const identity = refs.require<HTMLElement>(".identity");
+    // Only the name/version row hides; the count badge and description stay.
+    identity.hidden = this.#hideIdentity;
     const description = refs.require(".description");
     const descriptionBlock = refs.require(".description-block");
     const descriptionToggle = refs.require(".description-toggle");
@@ -536,7 +568,7 @@ function createOperationItem(): HTMLElement {
 const SHELL = `
   <section class="container" part="container" aria-label="OpenBindings interface explorer">
     <header part="header">
-      <div>
+      <div class="identity">
         <h2></h2>
         <p class="version"></p>
       </div>
@@ -600,6 +632,10 @@ const styles = `
     margin: 0;
     font-size: 1.05rem;
     line-height: 1.25;
+  }
+
+  .identity[hidden] {
+    display: none;
   }
 
   .version, .description {

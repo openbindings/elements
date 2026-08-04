@@ -1,8 +1,8 @@
 # @openbindings/json-editor
 
 `<ob-json-editor>` — a framework-neutral source editor for JSON and YAML, with
-syntax highlighting, a line-number gutter, structural indent handling, and a
-collapsible tree view.
+syntax highlighting, a line-number gutter, structural indent handling, and
+code folding.
 
 The element is a pure view. It never fetches, persists, authenticates, parses
 against a schema, or decides what a document means; it holds text, shows it
@@ -47,9 +47,8 @@ Importing the class does not register the tag. Import `./define` to register
 | Property | Type | Notes |
 | --- | --- | --- |
 | `text` | `string` | The document source. Assigning does not emit `ob-json-input`. |
-| `language` | `"json" \| "yaml"` | Selects the tokenizer. `yaml` forces the source view. |
-| `view` | `"source" \| "tree"` | Tree view is JSON-only; setting it under YAML falls back to `source`. |
-| `readOnly` | `boolean` | Disables editing and tree value edits. |
+| `language` | `"json" \| "yaml"` | Selects the tokenizer. |
+| `readOnly` | `boolean` | Disables editing. |
 | `placeholder` | `string` | Shown when the document is empty. |
 | `label` | `string` | Accessible name for the editable control. |
 | `errorLine` | `number \| null` | 1-based line to mark in the gutter. |
@@ -58,30 +57,24 @@ Importing the class does not register the tag. Import `./define` to register
 
 - `format()` — reformats JSON with two-space indentation. Returns `false`
   when the document does not parse, rather than throwing.
-- `expandAll()` / `collapseAll()` — tree view only.
 - `focusEditor()` — moves focus to the editable surface.
 
 ## Events
 
 | Event | Detail | When |
 | --- | --- | --- |
-| `ob-json-input` | `{ text, structured }` | The author edited. `structured` is `true` for a tree edit or a `format()`, `false` for a keystroke. |
-| `ob-json-view` | `{ view }` | The author switched view. |
+| `ob-json-input` | `{ text, structured }` | The author edited. `structured` is `true` for a `format()`, `false` for a keystroke. |
 
-Both bubble and are composed.
+The event bubbles and is composed.
 
 ## Editing affordances
 
-Source view handles the things a bare textarea does not: Tab and Shift+Tab
+The editor handles the things a bare textarea does not: Tab and Shift+Tab
 indent and outdent the selected block, Enter preserves the current indent and
 opens a level after `{` or `[`, and typing a bracket or quote at a boundary
 completes the pair or wraps the selection. None of it fires mid-token, so it
-does not fight ordinary typing.
-
-Tree view collapses containers, keeps collapse state keyed by JSON Pointer so
-it survives re-parsing and view switches, pages large containers rather than
-rendering thousands of rows, and edits leaf values in place. Structural edits —
-adding and removing keys — belong in the source view.
+does not fight ordinary typing. The fold gutter collapses containers in
+place, so inspecting a large document needs no separate tree mode.
 
 ## Styling
 
@@ -96,7 +89,7 @@ ob-json-editor {
 }
 ```
 
-Parts: `frame`, `toolbar`, `source`, `gutter`, `input`, `tree`.
+Parts: `frame`, `source`, `input`.
 
 Styles are attached with `adoptedStyleSheets`, so the element emits no inline
 `<style>` and works under a `style-src` policy that forbids inline styles.

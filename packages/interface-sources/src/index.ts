@@ -325,6 +325,10 @@ const styles = `
     display: block;
     min-width: 0;
     min-height: 0;
+    /* The narrow fallback below must answer to the element's own width, not
+       the viewport: in the workbench rail (rev 15) the element is ~22rem wide
+       on a desktop viewport. */
+    container-type: inline-size;
   }
 
   .container {
@@ -544,20 +548,20 @@ const styles = `
     padding: 0.4rem 0;
   }
 
-  @media (max-width: 38rem) {
+  @container (max-width: 38rem) {
+    /* One column: the source list sits above the detail, sized to its
+       content up to a cap (it scrolls past that), and the detail keeps its
+       own scroll. fit-content — not a plain auto row — because the list is
+       a scroll container whose automatic minimum is zero: under a tight
+       height an auto row would collapse it entirely. */
     .workspace {
       grid-template-columns: 1fr;
-      overflow: auto;
+      grid-template-rows: fit-content(9rem) minmax(0, 1fr);
     }
 
     .source-list {
-      max-height: 12rem;
       border-right: 0;
       border-bottom: 1px solid var(--_ob-color-border);
-    }
-
-    .source-detail {
-      overflow: visible;
     }
   }
 `;

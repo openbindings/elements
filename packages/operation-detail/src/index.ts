@@ -1,24 +1,21 @@
-import type { BindingEntry, OBInterface } from "@openbindings/sdk";
+import type { OBInterface } from "@openbindings/sdk";
 import {
   OpenBindingsElement,
   baseStyles,
   formatJSON,
-  type Refs,
   reconcile,
   setTextIfChanged,
 } from "@openbindings/ui-core";
 
 export const OPERATION_DETAIL_TAG = "ob-operation-detail";
 
-export interface BindingSelectDetail {
-  bindingKey: string;
-  binding: BindingEntry;
-}
-
-export interface OperationDetailEventMap {
-  "ob-binding-select": CustomEvent<BindingSelectDetail>;
-}
-
+/**
+ * The operation contract, read-only. Rev 15 (binding roles): the bindings
+ * disclosure is informational — it lists the operation's bindings and can
+ * highlight the invocation's current choice via `selectedBindingKey`, but it
+ * offers no selection affordance and emits nothing. The invocation cockpit's
+ * binding-select is the single surface where a binding is chosen.
+ */
 export class OperationDetailElement extends OpenBindingsElement {
   #obi: OBInterface | null = null;
   #operationKey: string | null = null;
@@ -51,6 +48,10 @@ export class OperationDetailElement extends OpenBindingsElement {
     this.requestRender();
   }
 
+  /**
+   * Display-only highlight of the binding the invocation currently uses.
+   * Assigned by the host; the element itself never changes it.
+   */
   get selectedBindingKey(): string | null {
     return this.#selectedBindingKey;
   }
@@ -59,25 +60,6 @@ export class OperationDetailElement extends OpenBindingsElement {
     if (value === this.#selectedBindingKey) return;
     this.#selectedBindingKey = value;
     this.requestRender();
-  }
-
-  protected override bind(refs: Refs): void {
-    // One delegated listener for the binding list; the buttons themselves are
-    // recreated whenever the operation changes, so per-button closures would
-    // be re-allocated on every switch.
-    refs.require(".binding-list").addEventListener("click", event => {
-      const key = (event.target as HTMLElement | null)?.closest<HTMLElement>(
-        "button[data-binding-key]",
-      )?.dataset.bindingKey;
-      const binding = key ? this.#obi?.bindings?.[key] : undefined;
-      if (!key || !binding) return;
-      this.#selectedBindingKey = key;
-      this.requestRender();
-      this.emit<BindingSelectDetail>("ob-binding-select", {
-        bindingKey: key,
-        binding,
-      });
-    });
   }
 
   protected render(): void {
@@ -169,13 +151,12 @@ export class OperationDetailElement extends OpenBindingsElement {
     );
     reconcile(refs.require(".binding-list"), bindingEntries, {
       key: ([bindingKey]) => bindingKey,
-      create: () => createBindingButton(),
+      create: () => createBindingRow(),
       update: (node, [bindingKey, binding]) => {
         const source = this.#obi?.sources?.[binding.source];
         const selected = bindingKey === this.#selectedBindingKey;
         node.dataset.bindingKey = bindingKey;
         node.classList.toggle("selected", selected);
-        node.setAttribute("aria-pressed", String(selected));
         setTextIfChanged(node.querySelector(".binding-key")!, bindingKey);
         setTextIfChanged(
           node.querySelector(".binding-family")!,
@@ -227,16 +208,17 @@ export class OperationDetailElement extends OpenBindingsElement {
   }
 }
 
-function createBindingButton(): HTMLElement {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.setAttribute("part", "binding");
+/** Informational row — deliberately not a button (rev 15, binding roles). */
+function createBindingRow(): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "binding-row";
+  row.setAttribute("part", "binding");
   const key = document.createElement("span");
   key.className = "binding-key";
   const family = document.createElement("span");
   family.className = "binding-family";
-  button.append(key, family);
-  return button;
+  row.append(key, family);
+  return row;
 }
 
 const SHELL = `
@@ -278,22 +260,6 @@ const SHELL = `
     </div>
   </article>
 `;
-
-export interface OperationDetailElement {
-  addEventListener<K extends keyof OperationDetailEventMap>(
-    type: K,
-    listener: (
-      this: OperationDetailElement,
-      event: OperationDetailEventMap[K],
-    ) => void,
-    options?: boolean | AddEventListenerOptions,
-  ): void;
-  addEventListener(
-    type: string,
-    listener: EventListenerOrEventListenerObject | null,
-    options?: boolean | AddEventListenerOptions,
-  ): void;
-}
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -440,7 +406,7 @@ const styles = `
     max-height: 12rem;
   }
 
-  .binding-list button {
+  .binding-row {
     display: flex;
     flex-wrap: wrap;
     gap: 0.35rem 0.75rem;
@@ -452,14 +418,9 @@ const styles = `
     background: var(--_ob-color-surface);
     border: 1px solid var(--_ob-color-border);
     border-radius: var(--_ob-radius);
-    cursor: pointer;
   }
 
-  .binding-list button:hover {
-    background: var(--_ob-color-surface-strong);
-  }
-
-  .binding-list button.selected {
+  .binding-row.selected {
     background: color-mix(in srgb, var(--_ob-color-accent) 9%, var(--_ob-color-background));
     border-color: color-mix(in srgb, var(--_ob-color-accent) 35%, var(--_ob-color-border));
   }

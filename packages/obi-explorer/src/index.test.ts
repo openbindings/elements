@@ -243,6 +243,54 @@ describe("deprecated operations", () => {
   });
 });
 
+describe("hideIdentity", () => {
+  it("hides only the name/version identity row, keeping description and count", async () => {
+    const element = await mount({
+      ...rich,
+      version: "1.2.3",
+      description: "A described interface.",
+    });
+    const identity = element.shadowRoot!.querySelector<HTMLElement>(
+      "header .identity",
+    )!;
+    expect(element.hideIdentity).toBe(false);
+    expect(identity.hidden).toBe(false);
+
+    element.hideIdentity = true;
+    await settled();
+    expect(identity.hidden).toBe(true);
+    expect(element.hasAttribute("hide-identity")).toBe(true);
+    // The count badge and description blurb stay.
+    expect(
+      element.shadowRoot!.querySelector<HTMLElement>(".count")!.textContent,
+    ).toBe("4");
+    expect(
+      element.shadowRoot!.querySelector<HTMLElement>(".description-block")!
+        .hidden,
+    ).toBe(false);
+
+    element.hideIdentity = false;
+    await settled();
+    expect(identity.hidden).toBe(false);
+    expect(element.hasAttribute("hide-identity")).toBe(false);
+  });
+
+  it("honours the hide-identity attribute", async () => {
+    const element = document.createElement(
+      OBI_EXPLORER_TAG,
+    ) as OBIExplorerElement;
+    element.setAttribute("hide-identity", "");
+    element.obi = rich;
+    document.body.append(element);
+    await settled();
+    expect(element.hideIdentity).toBe(true);
+    expect(
+      element.shadowRoot!.querySelector<HTMLElement>("header .identity")!
+        .hidden,
+    ).toBe(true);
+  });
+});
+
 describe("count and filter announcement", () => {
   it("shows N / total while filtering and announces count changes politely", async () => {
     const element = await mount(rich);

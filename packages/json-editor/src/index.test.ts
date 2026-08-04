@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EditorView as EditorViewCtor } from "@codemirror/view";
 import { JSON_EDITOR_TAG, JSONEditorElement } from "./index.js";
-import { setAtPointer } from "./tree.js";
 
 if (!customElements.get(JSON_EDITOR_TAG)) {
   customElements.define(JSON_EDITOR_TAG, JSONEditorElement);
@@ -37,38 +36,20 @@ function editorOf(root: ShadowRoot): { view: import("@codemirror/view").EditorVi
   return { view: EditorViewCtor.findFromDOM(dom!.closest(".cm-editor") as HTMLElement)! };
 }
 
-
-
-
-describe("setAtPointer", () => {
-  it("writes without mutating the original document", () => {
-    const original = { a: { b: [1, 2] } };
-    const next = setAtPointer(original, "/a/b/1", 9) as typeof original;
-    expect(next.a.b).toEqual([1, 9]);
-    expect(original.a.b).toEqual([1, 2]);
-    expect(next).not.toBe(original);
-  });
-
-  it("ignores pointers that do not resolve", () => {
-    const original = { a: 1 };
-    expect(setAtPointer(original, "/missing", 2)).toEqual({ a: 1 });
-    expect(setAtPointer(original, "", 5)).toBe(5);
-  });
-
-  it("round-trips escaped pointer segments", () => {
-    const original = { "a/b": { "c~d": 1 } };
-    expect(setAtPointer(original, "/a~1b/c~0d", 2)).toEqual({
-      "a/b": { "c~d": 2 },
-    });
-  });
-});
-
 describe("JSONEditorElement", () => {
   it("mounts a CodeMirror editor whose document mirrors the text property", async () => {
     const { root } = await mount('{\n  "a": 1\n}\n');
     const { view } = editorOf(root);
     expect(view.state.doc.toString()).toBe('{\n  "a": 1\n}\n');
     expect(root.querySelector(".cm-gutters")).not.toBeNull();
+  });
+
+  it("renders no view toolbar — folding is the collapse surface (rev 15)", async () => {
+    const { root } = await mount('{"a": 1}');
+    expect(root.querySelector(".toolbar")).toBeNull();
+    expect(root.querySelector(".view-tree")).toBeNull();
+    expect(root.querySelector(".view-source")).toBeNull();
+    expect(root.querySelector(".tree-pane")).toBeNull();
   });
 
   it("emits input for editor-originated edits, never for host assignments", async () => {
@@ -114,50 +95,6 @@ describe("JSONEditorElement", () => {
 
     element.text = "{not json";
     expect(element.format()).toBe(false);
-  });
-
-  it("falls back to the source view when the language cannot be a tree", async () => {
-    const { element } = await mount('{"a":1}');
-    element.view = "tree";
-    expect(element.view).toBe("tree");
-    element.language = "yaml";
-    expect(element.view).toBe("source");
-  });
-
-  it("renders collapsible rows in the tree view", async () => {
-    const { element, root } = await mount('{"a":{"b":1},"c":[1,2]}');
-    element.view = "tree";
-    await settled();
-    const rows = root.querySelectorAll(".tree-row");
-    expect(rows.length).toBeGreaterThan(1);
-    expect(root.querySelectorAll(".twisty").length).toBeGreaterThan(0);
-  });
-
-
-  it("keeps tree collapse state across view switches; resets only on a new document", async () => {
-    const { element, root } = await mount('{"a":{"b":{"c":1}},"d":[1]}');
-    element.view = "tree";
-    await settled();
-    const rowCountBefore = root.querySelectorAll(".tree-row").length;
-    // Collapse the first collapsible node the user can reach.
-    const twisty = root.querySelector<HTMLElement>(".twisty");
-    expect(twisty).not.toBeNull();
-    twisty!.click();
-    await settled();
-    const rowCountCollapsed = root.querySelectorAll(".tree-row").length;
-    expect(rowCountCollapsed).toBeLessThan(rowCountBefore);
-
-    // A round-trip through Source must not forget the user's collapse.
-    element.view = "source";
-    await settled();
-    element.view = "tree";
-    await settled();
-    expect(root.querySelectorAll(".tree-row").length).toBe(rowCountCollapsed);
-
-    // A programmatically assigned NEW document resets to the depth default.
-    element.text = '{"a":{"b":{"c":2}},"d":[1]}';
-    await settled();
-    expect(root.querySelectorAll(".tree-row").length).toBe(rowCountBefore);
   });
 
   it("marks the error line with a line decoration", async () => {

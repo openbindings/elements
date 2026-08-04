@@ -33,7 +33,7 @@ const PLAN: Record<string, string[]> = {
     "streaming-or-multi-value-with-offsets",
     "error-category-card",
   ],
-  "document-editor": ["source-focused", "tree-view"],
+  "document-editor": ["focused"],
   "connection-panel": ["open"],
   "workbench-full": ["default", "panels-menu-open"],
 };
@@ -268,22 +268,12 @@ async function sweep(page: Page, theme: Theme, width: Width): Promise<void> {
 
   // -- document editor ------------------------------------------------------
   const documentEditor = page.locator("ob-obi-editor");
-  await shoot("document-editor", "source-focused", async () => {
-    const textarea = documentEditor.locator("textarea").first();
-    await textarea.click();
-    await expect(textarea).toBeFocused();
+  await shoot("document-editor", "focused", async () => {
+    const content = documentEditor.locator(".cm-content").first();
+    await content.click();
+    await expect(content).toBeFocused();
     return documentEditor;
   });
-
-  await shoot("document-editor", "tree-view", async () => {
-    await documentEditor.locator(".view-tree").click();
-    await expect(documentEditor.locator(".tree-pane")).toBeVisible();
-    return documentEditor;
-  });
-  // Back to source view for any later full-frame shot.
-  if (await documentEditor.locator(".view-source").count()) {
-    await documentEditor.locator(".view-source").click();
-  }
 
   // -- connection panel -----------------------------------------------------
   await shoot("connection-panel", "open", async () => {
