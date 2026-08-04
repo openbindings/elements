@@ -313,15 +313,37 @@ test("document, source, and graph elements compose through explicit local drafts
     `${JSON.stringify(draft, null, 2)}\n`,
   );
   // Direct editing (rev 14.3): a valid document commits on idle — no Apply.
-  // Rail sources (rev 15): the sources section lives in the rail beneath the
-  // operations — visible alongside the explorer with no tab click, and the
-  // Document pane stays visible. Asserted perceptually (WB-VIS-01):
-  await expect(page.locator("ob-interface-sources")).toBeInViewport();
-  await expect(page.locator("ob-obi-explorer")).toBeInViewport();
+  // Rail (rev 15.1, panjir master pane): ONE scroller — operations first,
+  // sources beneath, one sticky filter narrowing both — and the Document
+  // pane stays visible throughout; no tab click reaches the sources.
   await expect(page.locator("#document-pane")).toBeVisible();
   await expect(page.locator("#document-dirty")).toBeVisible({ timeout: 10_000 });
 
+  const rail = page.locator(".rail-column");
   const explorer = page.locator("ob-obi-explorer");
+  const railFilter = explorer.locator('input[type="search"]');
+
+  // The rail scrolls as one unit, and the filter stays pinned while it does.
+  await rail.evaluate(element => {
+    element.scrollTop = 400;
+  });
+  expect(await rail.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+  await expect(railFilter).toBeInViewport();
+  await rail.evaluate(element => {
+    element.scrollTop = 0;
+  });
+
+  // One filter, both sections: "openapi" keeps only the matching source and
+  // narrows the operation rows (the count flips to its N / total honesty).
+  await railFilter.fill("openapi");
+  const railSources = page.locator("ob-interface-sources");
+  await expect(railSources.locator("[data-source-select]")).toHaveCount(1);
+  await expect(railSources.locator("[data-source-select]")).toContainText(
+    "openapi",
+  );
+  await expect(explorer.locator(".count")).toContainText("/");
+  await railFilter.fill("");
+
   await explorer.locator('input[type="search"]').fill("graphDemo");
   await explorer.locator('[part~="operation"]').click();
   await page.locator("#show-graph-pane").click();
@@ -365,6 +387,9 @@ test("document, source, and graph elements compose through explicit local drafts
   await sources.locator("[data-binding-remove]").click();
   await expect(page.locator("#confirmation-dialog")).toBeVisible();
   await page.locator("#confirmation-accept").click();
+  // With its binding gone, graphSource no longer matches the "graphDemo"
+  // rail filter — clear it before re-selecting the source.
+  await railFilter.fill("");
   await sources
     .locator('[part~="source"]')
     .filter({ hasText: "graphSource" })

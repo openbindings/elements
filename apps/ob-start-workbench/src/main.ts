@@ -301,6 +301,24 @@ applyWorkspaceLayout();
 // duplication. The explorer keeps its description and count.
 explorer.hideIdentity = true;
 
+// Panjir's master pane (rev 15.1): the rail is ONE scroll container
+// (.rail-column, styles.css). Both rail elements flow to content height and
+// pin their sticky rows — the explorer's filter, then the Operations and
+// Sources section headings — against that scroller. One filter narrows both
+// sections (wiring below).
+explorer.flowContent = true;
+interfaceSources.flowContent = true;
+
+explorer.addEventListener("ob-filter-change", event => {
+  interfaceSources.filter = event.detail.filter;
+});
+// ob-filter-change only fires when the visible operation set changes; the
+// composed input event keeps the sources section narrowing on keystrokes
+// that changed no operation rows (e.g. typing past zero matches).
+explorer.addEventListener("input", () => {
+  interfaceSources.filter = explorer.filter;
+});
+
 explorer.addEventListener("ob-operation-select", event => {
   activateOperation(event.detail.operationKey);
 });

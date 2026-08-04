@@ -126,6 +126,112 @@ describe("InterfaceSourcesElement", () => {
   });
 });
 
+describe("filter", () => {
+  function mount(filter = ""): InterfaceSourcesElement {
+    const element = document.createElement(
+      INTERFACE_SOURCES_TAG,
+    ) as InterfaceSourcesElement;
+    element.obi = obi;
+    element.filter = filter;
+    document.body.append(element);
+    return element;
+  }
+
+  function sourceKeys(element: InterfaceSourcesElement): string[] {
+    return [
+      ...element.shadowRoot!.querySelectorAll<HTMLElement>(
+        "[data-source-select]",
+      ),
+    ].map(node => node.dataset.sourceSelect!);
+  }
+
+  it("narrows sources by key, bindingSpec, and location, case-insensitively", async () => {
+    const element = mount("OPENAPI");
+    await settled();
+    expect(sourceKeys(element)).toEqual(["api"]);
+
+    element.filter = "example.local";
+    await settled();
+    expect(sourceKeys(element)).toEqual(["embedded"]);
+
+    element.filter = "example.com";
+    await settled();
+    expect(sourceKeys(element)).toEqual(["api"]);
+
+    element.filter = "";
+    await settled();
+    expect(sourceKeys(element)).toEqual(["api", "embedded"]);
+  });
+
+  it("keeps a source visible when only one of its bindings matches, and narrows the binding list", async () => {
+    // "list" matches the api source only through its binding's operation.
+    const element = mount("list");
+    await settled();
+    expect(sourceKeys(element)).toEqual(["api"]);
+    expect(
+      element.shadowRoot!.querySelectorAll('[part~="binding"]'),
+    ).toHaveLength(1);
+
+    element.filter = "no-such-thing";
+    await settled();
+    expect(sourceKeys(element)).toEqual([]);
+    expect(
+      element.shadowRoot!.querySelector(".empty")?.textContent,
+    ).toContain("match");
+  });
+
+  it("reports filtered counts honestly as N / total", async () => {
+    const element = mount("openapi");
+    await settled();
+    const count = element.shadowRoot!.querySelector(".count")!.textContent!;
+    expect(count).toContain("1 / 2 sources");
+    expect(count).toContain("1 / 1 binding");
+
+    element.filter = "";
+    await settled();
+    expect(element.shadowRoot!.querySelector(".count")!.textContent).toBe(
+      "2 sources · 1 binding",
+    );
+  });
+
+  it("falls back to the first visible source when the selection is filtered out", async () => {
+    const element = mount("");
+    element.selectedSourceKey = "embedded";
+    await settled();
+    element.filter = "openapi";
+    await settled();
+    expect(
+      element.shadowRoot!.querySelector(".source-detail h3")?.textContent,
+    ).toBe("api");
+  });
+});
+
+describe("flowContent", () => {
+  it("reflects the attribute and swaps to the compact sticky Sources heading", async () => {
+    const element = document.createElement(
+      INTERFACE_SOURCES_TAG,
+    ) as InterfaceSourcesElement;
+    element.obi = obi;
+    document.body.append(element);
+    await settled();
+    expect(element.flowContent).toBe(false);
+    expect(element.shadowRoot!.querySelector("h2")?.textContent).toBe(
+      "Sources and bindings",
+    );
+
+    element.flowContent = true;
+    await settled();
+    expect(element.hasAttribute("flow-content")).toBe(true);
+    expect(element.shadowRoot!.querySelector("h2")?.textContent).toBe(
+      "Sources",
+    );
+
+    element.removeAttribute("flow-content");
+    await settled();
+    expect(element.flowContent).toBe(false);
+  });
+});
+
 async function settled(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();

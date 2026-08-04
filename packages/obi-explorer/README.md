@@ -30,6 +30,14 @@ Read-only navigation for one OpenBindings interface.
   interface name/version header row, for hosts that already present the
   document's identity elsewhere. The description blurb and the operation
   count badge stay.
+- `flowContent: boolean` (attribute `flow-content`) — master-pane mode: the
+  element does not scroll internally (host height is content height, so an
+  outer rail scroller scrolls), and the filter row plus an "Operations"
+  section heading become `position: sticky` and pin against that scroller.
+  Offsets are tunable via `--ob-rail-sticky-top` (base, default `0`) and
+  `--ob-rail-filter-height` (the filter row's pinned height, default
+  `3.05rem`); a sibling section pins its own heading at
+  `--ob-rail-sticky-top: var(--ob-rail-filter-height)`.
 
 ## Rows: tags, aliases, and deprecation
 

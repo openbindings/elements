@@ -27,9 +27,13 @@ export interface InterfaceSourcesEventMap {
 }
 
 export class InterfaceSourcesElement extends OpenBindingsElement {
+  static readonly observedAttributes = ["flow-content"];
+
   #obi: OBInterface | null = null;
   #selectedSourceKey: string | null = null;
   #selectedBindingKey: string | null = null;
+  #filter = "";
+  #flowContent = false;
 
   get obi(): OBInterface | null {
     return this.#obi;
@@ -63,42 +67,130 @@ export class InterfaceSourcesElement extends OpenBindingsElement {
     this.requestRender();
   }
 
+  /**
+   * Case-insensitive substring narrowing over sources AND bindings: a source
+   * stays visible when its key, bindingSpec, or location matches — or when
+   * any of its bindings match by binding key, operation, or ref. The count
+   * line reports `N / total` honesty while a filter is active. In the
+   * workbench rail this mirrors the explorer's operation filter, so one
+   * query narrows both sections (panjir's master-pane behavior).
+   */
+  get filter(): string {
+    return this.#filter;
+  }
+
+  set filter(value: string) {
+    const next = value ?? "";
+    if (next === this.#filter) return;
+    this.#filter = next;
+    this.requestRender();
+  }
+
+  /**
+   * Master-pane mode (rev 15.1): the element does not scroll internally —
+   * host height is content height, an outer rail scroller scrolls — and the
+   * header becomes a compact sticky "Sources" section heading pinned at
+   * --ob-rail-sticky-top (default 0), which the host sets to sit below the
+   * explorer's sticky filter.
+   */
+  get flowContent(): boolean {
+    return this.#flowContent;
+  }
+
+  set flowContent(value: boolean) {
+    const next = Boolean(value);
+    if (next === this.#flowContent) return;
+    this.#flowContent = next;
+    this.toggleAttribute("flow-content", next);
+    this.requestRender();
+  }
+
+  attributeChangedCallback(
+    name: string,
+    _oldValue: string | null,
+    newValue: string | null,
+  ): void {
+    if (name === "flow-content") this.flowContent = newValue !== null;
+  }
+
   protected override render(): void {
     const root = this.renderRoot;
     if (!root) return;
     const sources = Object.entries(this.#obi?.sources ?? {});
     const bindings = Object.entries(this.#obi?.bindings ?? {});
+
+    const query = this.#filter.trim().toLocaleLowerCase();
+    const matches = (...parts: Array<string | undefined>) =>
+      parts.some(part => part?.toLocaleLowerCase().includes(query));
+    const bindingMatches = (
+      bindingKey: string,
+      binding: NonNullable<OBInterface["bindings"]>[string],
+    ) => matches(bindingKey, binding.operation, binding.ref);
+    const sourceSelfMatches = (
+      key: string,
+      source: NonNullable<OBInterface["sources"]>[string],
+    ) => matches(key, source.bindingSpec, source.location);
+    // A source stays visible when it matches itself or through any of its
+    // bindings; a binding stays visible when it matches itself or its source
+    // does — so one query narrows both lists without hiding a match's home.
+    const visibleSources = query
+      ? sources.filter(
+          ([key, source]) =>
+            sourceSelfMatches(key, source) ||
+            bindings.some(
+              ([bindingKey, binding]) =>
+                binding.source === key && bindingMatches(bindingKey, binding),
+            ),
+        )
+      : sources;
+    const visibleBindings = query
+      ? bindings.filter(([bindingKey, binding]) => {
+          if (bindingMatches(bindingKey, binding)) return true;
+          const home = this.#obi?.sources?.[binding.source];
+          return home ? sourceSelfMatches(binding.source, home) : false;
+        })
+      : bindings;
+
     const selectedSource =
       (this.#selectedSourceKey &&
+        visibleSources.some(([key]) => key === this.#selectedSourceKey) &&
         this.#obi?.sources?.[this.#selectedSourceKey]) ||
       null;
     const selectedKey = selectedSource
       ? this.#selectedSourceKey
-      : sources[0]?.[0] ?? null;
+      : visibleSources[0]?.[0] ?? null;
     const selected = selectedKey ? this.#obi?.sources?.[selectedKey] : null;
     const relatedBindings = selectedKey
-      ? bindings.filter(([, binding]) => binding.source === selectedKey)
+      ? visibleBindings.filter(([, binding]) => binding.source === selectedKey)
       : [];
+
+    const flow = this.#flowContent;
+    const countText = query
+      ? `${visibleSources.length} / ${sources.length} source${sources.length === 1 ? "" : "s"} · ` +
+        `${visibleBindings.length} / ${bindings.length} binding${bindings.length === 1 ? "" : "s"}`
+      : `${sources.length} source${sources.length === 1 ? "" : "s"} · ${bindings.length} binding${bindings.length === 1 ? "" : "s"}`;
 
     renderStatic(
       root,
       `<style>${baseStyles}${styles}</style>
        <section class="container" part="container" aria-label="Interface sources and bindings">
-         <header>
+         <header part="header">
            <div>
-             <p class="eyebrow">Interface artifacts</p>
-             <h2>Sources and bindings</h2>
+             ${flow ? "" : `<p class="eyebrow">Interface artifacts</p>`}
+             <h2>${flow ? "Sources" : "Sources and bindings"}</h2>
            </div>
-           <span class="count">${sources.length} source${sources.length === 1 ? "" : "s"} · ${bindings.length} binding${bindings.length === 1 ? "" : "s"}</span>
+           <span class="count">${countText}</span>
          </header>
          ${
            !this.#obi
              ? `<p class="empty">Assign an OBI document to inspect its artifacts.</p>`
              : sources.length === 0
                ? `<p class="empty">This interface has no declared sources or bindings.</p>`
-               : `<div class="workspace">
+               : visibleSources.length === 0
+                 ? `<p class="empty">No sources or bindings match this filter.</p>`
+                 : `<div class="workspace">
                     <nav class="source-list" part="source-list" aria-label="Sources">
-                      ${sources
+                      ${visibleSources
                         .map(([key, source]) =>
                           sourceTemplate(key, source.bindingSpec, key === selectedKey),
                         )
@@ -546,6 +638,51 @@ const styles = `
 
   .empty.compact {
     padding: 0.4rem 0;
+  }
+
+  /*
+   * Master-pane mode (rev 15.1): the host rail owns the scrolling. The
+   * container flows to content height, internal scrollers open up, and the
+   * compact "Sources" header pins against the outer scroller at the offset
+   * the host supplies (below the explorer's sticky filter).
+   */
+  :host([flow-content]) .container {
+    height: auto;
+    overflow: visible;
+  }
+
+  :host([flow-content]) header {
+    position: sticky;
+    top: var(--ob-rail-sticky-top, 0px);
+    z-index: 4;
+  }
+
+  :host([flow-content]) h2 {
+    color: var(--_ob-color-text-muted);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  :host([flow-content]) .count {
+    font-variant-numeric: tabular-nums;
+  }
+
+  :host([flow-content]) .workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
+  }
+
+  :host([flow-content]) .source-list,
+  :host([flow-content]) .source-detail {
+    overflow: visible;
+    max-height: none;
+    border-right: 0;
+  }
+
+  :host([flow-content]) .source-list {
+    border-bottom: 1px solid var(--_ob-color-border);
   }
 
   @container (max-width: 38rem) {

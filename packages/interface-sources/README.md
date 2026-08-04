@@ -26,6 +26,15 @@ sources.addEventListener("ob-binding-select", event => {
 - `obi: OBInterface | null`
 - `selectedSourceKey: string | null`
 - `selectedBindingKey: string | null`
+- `filter: string` — case-insensitive substring narrowing over sources AND
+  bindings (source key, bindingSpec, location; binding key, operation, ref).
+  A source stays visible when any of its bindings match, and vice versa. The
+  count line reports `N / total` honesty while a filter is active.
+- `flowContent: boolean` (attribute `flow-content`) — master-pane mode: the
+  element does not scroll internally (host height is content height), and
+  the header becomes a compact sticky "Sources" heading pinned at
+  `--ob-rail-sticky-top` (default `0`), which the host sets to sit below a
+  sibling explorer's sticky filter.
 
 ## Events
 

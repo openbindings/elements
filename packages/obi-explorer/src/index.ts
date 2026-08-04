@@ -26,12 +26,13 @@ export interface OBIExplorerEventMap {
 }
 
 export class OBIExplorerElement extends OpenBindingsElement {
-  static readonly observedAttributes = ["hide-identity"];
+  static readonly observedAttributes = ["hide-identity", "flow-content"];
 
   #obi: OBInterface | null = null;
   #selectedOperation: string | null = null;
   #filter = "";
   #hideIdentity = false;
+  #flowContent = false;
   #descriptionExpanded = false;
   #sortedFor: OBInterface | null = null;
   #sorted: [string, Operation][] = [];
@@ -112,12 +113,34 @@ export class OBIExplorerElement extends OpenBindingsElement {
     this.requestRender();
   }
 
+  /**
+   * Master-pane mode (rev 15.1, panjir's pattern): the element does not
+   * scroll internally — its height is its content height, so a host-owned
+   * rail scroller carries the scrolling. The filter row and an "Operations"
+   * section heading become sticky and pin against that outer scroller. The
+   * heading's offset stacks below the filter; both are tunable by the host
+   * via --ob-rail-sticky-top (base offset, default 0) and
+   * --ob-rail-filter-height (the filter row's pinned height).
+   */
+  get flowContent(): boolean {
+    return this.#flowContent;
+  }
+
+  set flowContent(value: boolean) {
+    const next = Boolean(value);
+    if (next === this.#flowContent) return;
+    this.#flowContent = next;
+    this.toggleAttribute("flow-content", next);
+    this.requestRender();
+  }
+
   attributeChangedCallback(
     name: string,
     _oldValue: string | null,
     newValue: string | null,
   ): void {
     if (name === "hide-identity") this.hideIdentity = newValue !== null;
+    if (name === "flow-content") this.flowContent = newValue !== null;
   }
 
   override connectedCallback(): void {
@@ -209,10 +232,14 @@ export class OBIExplorerElement extends OpenBindingsElement {
     const empty = refs.require(".empty");
     const list = refs.require("ul");
 
+    const operationsHeading = refs.require<HTMLElement>(".operations-heading");
+    const operationsCount = refs.require(".operations-count");
+
     if (!this.#obi) {
       setTextIfChanged(title, "No interface");
       setTextIfChanged(version, "");
       setTextIfChanged(count, "0");
+      operationsHeading.hidden = true;
       setTextIfChanged(status, "");
       descriptionBlock.hidden = true;
       input.disabled = true;
@@ -317,12 +344,14 @@ export class OBIExplorerElement extends OpenBindingsElement {
       }
     }
 
-    setTextIfChanged(
-      count,
-      query
-        ? `${visible.length} / ${this.#sorted.length}`
-        : String(this.#sorted.length),
-    );
+    const countText = query
+      ? `${visible.length} / ${this.#sorted.length}`
+      : String(this.#sorted.length);
+    setTextIfChanged(count, countText);
+    // The section heading only exists in master-pane (flowContent) mode; it
+    // carries the same count honesty as the badge.
+    operationsHeading.hidden = !this.#flowContent;
+    setTextIfChanged(operationsCount, countText);
     // Screen readers announce this live region on mutation, so the text is
     // only rewritten when the visible count actually changes — a keystroke
     // that narrows the query without changing the result count stays silent.
@@ -583,6 +612,10 @@ const SHELL = `
       <input part="filter" type="search" placeholder="Filter operations" />
     </label>
     <span class="filter-status sr-only" role="status"></span>
+    <div class="operations-heading" part="operations-heading" hidden>
+      <h3>Operations</h3>
+      <span class="operations-count"></span>
+    </div>
     <div class="empty" part="empty"></div>
     <ul part="operation-list" aria-label="Operations"></ul>
   </section>
@@ -636,6 +669,63 @@ const styles = `
 
   .identity[hidden] {
     display: none;
+  }
+
+  .operations-heading {
+    display: flex;
+    gap: var(--_ob-space);
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 0.4rem 0 0.45rem;
+    border-bottom: 1px solid var(--_ob-color-border);
+  }
+
+  .operations-heading[hidden] {
+    display: none;
+  }
+
+  .operations-heading h3 {
+    margin: 0;
+    color: var(--_ob-color-text-muted);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .operations-count {
+    color: var(--_ob-color-text-muted);
+    font-size: 0.72rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /*
+   * Master-pane mode (rev 15.1): the host rail owns the scrolling, so the
+   * container flows to its content height and the filter row plus the
+   * Operations heading pin against the outer scroller. Offsets stack
+   * panjir-style — base (--ob-rail-sticky-top) → filter → heading — with the
+   * filter's pinned height published as --ob-rail-filter-height so a sibling
+   * section (interface-sources) can pin its own heading just below.
+   */
+  :host([flow-content]) .container {
+    height: auto;
+    overflow: visible;
+  }
+
+  :host([flow-content]) .filter-label {
+    position: sticky;
+    top: var(--ob-rail-sticky-top, 0px);
+    z-index: 5;
+    margin: 0;
+    padding: 0.45rem 0;
+    background: var(--_ob-color-background);
+  }
+
+  :host([flow-content]) .operations-heading {
+    position: sticky;
+    top: calc(var(--ob-rail-sticky-top, 0px) + var(--ob-rail-filter-height, 3.05rem));
+    z-index: 4;
+    background: var(--_ob-color-background);
   }
 
   .version, .description {

@@ -291,6 +291,53 @@ describe("hideIdentity", () => {
   });
 });
 
+describe("flowContent", () => {
+  it("reflects the attribute and reveals the Operations section heading", async () => {
+    const element = await mount(rich);
+    const heading = element.shadowRoot!.querySelector<HTMLElement>(
+      ".operations-heading",
+    )!;
+    expect(element.flowContent).toBe(false);
+    expect(heading.hidden).toBe(true);
+
+    element.flowContent = true;
+    await settled();
+    expect(element.hasAttribute("flow-content")).toBe(true);
+    expect(heading.hidden).toBe(false);
+    expect(heading.textContent).toContain("Operations");
+    expect(
+      element.shadowRoot!.querySelector(".operations-count")!.textContent,
+    ).toBe("4");
+
+    // The heading count carries the same filtered honesty as the badge.
+    type(element, "write");
+    await settled();
+    expect(
+      element.shadowRoot!.querySelector(".operations-count")!.textContent,
+    ).toBe("1 / 4");
+
+    element.flowContent = false;
+    await settled();
+    expect(element.hasAttribute("flow-content")).toBe(false);
+    expect(heading.hidden).toBe(true);
+  });
+
+  it("honours the flow-content attribute", async () => {
+    const element = document.createElement(
+      OBI_EXPLORER_TAG,
+    ) as OBIExplorerElement;
+    element.setAttribute("flow-content", "");
+    element.obi = rich;
+    document.body.append(element);
+    await settled();
+    expect(element.flowContent).toBe(true);
+    expect(
+      element.shadowRoot!.querySelector<HTMLElement>(".operations-heading")!
+        .hidden,
+    ).toBe(false);
+  });
+});
+
 describe("count and filter announcement", () => {
   it("shows N / total while filtering and announces count changes politely", async () => {
     const element = await mount(rich);

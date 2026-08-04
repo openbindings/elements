@@ -702,27 +702,43 @@ textarea {
   display: none;
 }
 
-/* Panjir's master-pane pattern (rev 15): one rail, operations first, the
-   document's source artifacts beneath. The wrapper takes the explorer's grid
-   position; the two elements split it vertically with independent scroll. */
+/* Panjir's master-pane pattern (rev 15.1): ONE rail scroller — operations
+   first, sources beneath, one filter narrowing both. Both elements run in
+   flowContent mode (content height, no internal scrolling); their sticky
+   rows (filter → Operations heading → Sources heading) pin against this
+   scroller with stacked offsets. */
 .rail-column {
-  display: flex;
-  flex-direction: column;
+  /* The explorer publishes its pinned filter height through this token; the
+     sources heading pins just below it. Tuned slightly under the real height
+     so the next sticky layer tucks under the seam (panjir's offsets). */
+  --ob-rail-filter-height: 3.05rem;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow-x: clip;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
+/* Sticky rows inside the elements must reach the rail scroller: no overflow
+   clip and no fixed heights between them and .rail-column. */
 .rail-column > ob-obi-explorer {
-  flex: 1 1 60%;
-  min-height: 0;
+  display: block;
+  overflow: visible;
 }
 
 .rail-column > ob-interface-sources {
-  flex: 1 1 40%;
-  min-height: 0;
-  overflow: hidden;
+  --ob-rail-sticky-top: var(--ob-rail-filter-height);
+  display: block;
+  height: auto;
+  overflow: visible;
   border-top: 1px solid var(--page-border);
+}
+
+/* The app-wide part rules pin containers to 100% height for the paned
+   layout; in the rail both elements flow to content height. */
+.rail-column > ob-obi-explorer::part(container),
+.rail-column > ob-interface-sources::part(container) {
+  height: auto;
 }
 
 .workbench-grid.rail-only {
@@ -1185,23 +1201,10 @@ ob-obi-explorer::part(container) {
     display: none;
   }
 
+  /* The rail keeps its single scroller on mobile, capped so the operation
+     and source panes below stay reachable. */
   .rail-column {
-    height: auto;
-    overflow: visible;
-  }
-
-  ob-obi-explorer {
-    flex: 0 0 auto;
-    height: clamp(20rem, 50dvh, 30rem);
-    min-height: 0;
-    overflow: hidden;
-    border-bottom: 1px solid var(--page-border);
-  }
-
-  .rail-column > ob-interface-sources {
-    flex: 0 0 auto;
-    height: clamp(16rem, 40dvh, 24rem);
-    overflow: hidden;
+    height: clamp(24rem, 60dvh, 34rem);
     border-bottom: 1px solid var(--page-border);
   }
 
