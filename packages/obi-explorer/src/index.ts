@@ -894,6 +894,13 @@ const styles = `
     overflow: visible;
   }
 
+  /* With the identity row hidden AND the section headings carrying the
+     count (master-pane mode), the header would render as a lone floating
+     count badge — hide the whole row rather than paint an orphan. */
+  :host([flow-content][hide-identity]) header {
+    display: none;
+  }
+
   :host([flow-content]) .filter-label {
     position: sticky;
     top: var(--ob-rail-sticky-top, 0px);

@@ -1,12 +1,12 @@
 {
   "openbindings.ob.newInterface": {
-    "status": "affordance",
-    "detail": "New document button in the document bar",
-    "selector": "#doc-new"
+    "status": "deferred",
+    "rev": 18,
+    "detail": "document verbs re-homing (rev 17 loss ledger, review/120); was the New button"
   },
   "openbindings.ob.setMetadata": {
     "status": "affordance",
-    "detail": "document rename in the document bar",
+    "detail": "document rename from the rail's identity section",
     "selector": "#document-name"
   },
   "openbindings.ob.addOperation": {
@@ -50,9 +50,9 @@
     "detail": "ships with the codegen export menu"
   },
   "openbindings.ob.mergeInterfaces": {
-    "status": "composed",
-    "detail": "Add flow: plain merge of the resolved artifact into the living document; also the paste-an-OBI Add path",
-    "selector": "#doc-add"
+    "status": "deferred",
+    "rev": 18,
+    "detail": "document verbs re-homing (review/120); was the Add flow's merge"
   },
   "openbindings.ob.conform": {
     "status": "deferred",
@@ -65,19 +65,19 @@
     "detail": "document tools menu"
   },
   "openbindings.ob.resolveInterface": {
-    "status": "composed",
-    "detail": "URL path of the Open and Add flows",
-    "selector": "#open-url"
+    "status": "deferred",
+    "rev": 18,
+    "detail": "document verbs re-homing (review/120); was the Open flow's URL path"
   },
   "openbindings.ob.synthesizeInterface": {
-    "status": "composed",
-    "detail": "synthesis happens inside resolveInterface on the URL path of Open/Add; the paste path accepts OBI JSON directly",
-    "selector": "#open-paste"
+    "status": "deferred",
+    "rev": 18,
+    "detail": "document verbs re-homing (review/120); rode inside the Open flow's resolveInterface"
   },
   "openbindings.ob.addSource": {
     "status": "deferred",
     "rev": 17,
-    "detail": "explicit source registration UI; the Add flow merges the resolved artifact and its source entries ride along"
+    "detail": "explicit source registration UI; waits on the document-verb re-homing (review/120)"
   },
   "openbindings.ob.listSources": {
     "status": "covered",
@@ -120,7 +120,7 @@
   "openbindings.ob.listBindingSpecs": {
     "status": "deferred",
     "rev": 17,
-    "detail": "Add flow: show which binding specs can be ingested"
+    "detail": "show which binding specs can be ingested; waits on the document-verb re-homing (review/120)"
   },
   "openbindings.ob.prepareBinding": {
     "status": "internal",

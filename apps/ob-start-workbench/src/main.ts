@@ -1,13 +1,6 @@
 import "@openbindings/obi-editor/define";
 import "@openbindings/obi-explorer/define";
 import "@openbindings/operation-detail/define";
-import "@openbindings/operation-graph-editor/define";
-import {
-  applyOperationGraphPatches,
-  isOperationGraph,
-  type OperationGraph,
-} from "@openbindings/operation-graph-model";
-import "@openbindings/operation-graph-viewer/define";
 import "@openbindings/operation-tabs/define";
 import "@openbindings/source-detail/define";
 import {
@@ -30,11 +23,6 @@ import { OperationEnvironment, debounce } from "@openbindings/ui-core";
 import type { OBIEditorElement } from "@openbindings/obi-editor";
 import type { OBIExplorerElement } from "@openbindings/obi-explorer";
 import type { OperationDetailElement } from "@openbindings/operation-detail";
-import type {
-  OperationGraphEditorElement,
-  OperationGraphPatchDetail,
-} from "@openbindings/operation-graph-editor";
-import type { OperationGraphViewerElement } from "@openbindings/operation-graph-viewer";
 import type { OperationTabsElement } from "@openbindings/operation-tabs";
 import type { OperationWorkbenchElement } from "@openbindings/operation-workbench";
 import type {
@@ -47,37 +35,19 @@ import {
 } from "./ob-start-frame-invoker.js";
 import "./styles.css";
 
-interface ResolveInterfaceOutput {
-  interface: OBInterface;
-  synthesizedFrom?: string;
-  resolvedUrl?: string;
-}
-
-interface GraphSelection {
-  graph: OperationGraph;
-  bindingKey: string;
-  sourceKey: string;
-  ref: string;
-  sourceContentWasText: boolean;
-}
-
 const explorer = requiredElement<OBIExplorerElement>("ob-obi-explorer");
 const interfaceEditor =
   requiredElement<OBIEditorElement>("ob-obi-editor");
 const detail = requiredElement<OperationDetailElement>("ob-operation-detail");
 const sourceDetail = requiredElement<SourceDetailElement>("ob-source-detail");
-const graphViewer = requiredElement<OperationGraphViewerElement>(
-  "ob-operation-graph-viewer",
-);
-const graphEditor = requiredElement<OperationGraphEditorElement>(
-  "ob-operation-graph-editor",
-);
 const operationTabs =
   requiredElement<OperationTabsElement>("ob-operation-tabs");
 const invocationSessions = requiredElement<HTMLElement>(
   "#invocation-sessions",
 );
-const connectionStatus = requiredElement<HTMLElement>("#connection-status");
+const connectionStatus = requiredElement<HTMLButtonElement>(
+  "#connection-status",
+);
 const connectionStatusText = requiredElement<HTMLElement>(
   "#connection-status-text",
 );
@@ -88,23 +58,6 @@ const documentName = requiredElement<HTMLButtonElement>("#document-name");
 const documentValidity = requiredElement<HTMLElement>("#document-validity");
 const documentDirtyMarker = requiredElement<HTMLElement>("#document-dirty");
 const documentMeta = requiredElement<HTMLElement>("#document-meta");
-const docNewButton = requiredElement<HTMLButtonElement>("#doc-new");
-const docOpenButton = requiredElement<HTMLButtonElement>("#doc-open");
-const docAddButton = requiredElement<HTMLButtonElement>("#doc-add");
-const docExportButton = requiredElement<HTMLButtonElement>("#doc-export");
-const ingestDialog = requiredElement<HTMLDialogElement>("#ingest-dialog");
-const ingestTitle = requiredElement<HTMLElement>("#ingest-title");
-const openUrlInput = requiredElement<HTMLInputElement>("#open-url");
-const ingestUrlSubmit = requiredElement<HTMLButtonElement>("#ingest-url-submit");
-const openPasteInput = requiredElement<HTMLTextAreaElement>("#open-paste");
-const ingestPasteSubmit = requiredElement<HTMLButtonElement>(
-  "#ingest-paste-submit",
-);
-const openFileInput = requiredElement<HTMLInputElement>("#open-file");
-const ingestOpenExtras = requiredElement<HTMLElement>("#ingest-open-extras");
-const openThisOBButton = requiredElement<HTMLButtonElement>("#open-this-ob");
-const openRecents = requiredElement<HTMLElement>("#open-recents");
-const ingestCancel = requiredElement<HTMLButtonElement>("#ingest-cancel");
 const renameDialog = requiredElement<HTMLDialogElement>("#rename-dialog");
 const renameForm = requiredElement<HTMLFormElement>("#rename-form");
 const renameName = requiredElement<HTMLInputElement>("#rename-name");
@@ -113,8 +66,6 @@ const renameDescription = requiredElement<HTMLTextAreaElement>(
   "#rename-description",
 );
 const renameCancel = requiredElement<HTMLButtonElement>("#rename-cancel");
-const connectionToggle =
-  requiredElement<HTMLButtonElement>("#connection-toggle");
 const connectionPanel =
   requiredElement<HTMLElement>("#connection-panel");
 const connectionClose =
@@ -168,7 +119,14 @@ const requirementBannerAction = requiredElement<HTMLButtonElement>(
   "#requirement-banner-action",
 );
 const themeToggle = requiredElement<HTMLButtonElement>("#theme-toggle");
-const layoutMenu = requiredElement<HTMLDetailsElement>(".layout-menu");
+const leftPanelToggle = requiredElement<HTMLButtonElement>("#toggle-left-panel");
+const rightPanelToggle = requiredElement<HTMLButtonElement>(
+  "#toggle-right-panel",
+);
+const crumbDocument = requiredElement<HTMLElement>("#crumb-document");
+const crumbItem = requiredElement<HTMLElement>("#crumb-item");
+const crumbKind = requiredElement<HTMLElement>("#crumb-kind");
+const railColumn = requiredElement<HTMLElement>(".rail-column");
 const workbenchGrid = requiredElement<HTMLElement>(".workbench-grid");
 const railGutter = requiredElement<HTMLElement>("#rail-gutter");
 const sheetGutter = requiredElement<HTMLElement>("#sheet-gutter");
@@ -177,29 +135,6 @@ const tabContent = requiredElement<HTMLElement>("#tab-content");
 const sheetStatus = requiredElement<HTMLElement>("#sheet-status");
 const sheetRun = requiredElement<HTMLButtonElement>("#sheet-run");
 const sheetToggle = requiredElement<HTMLButtonElement>("#sheet-toggle");
-const showExplorer =
-  requiredElement<HTMLInputElement>("#show-explorer");
-const showOperation = requiredElement<HTMLInputElement>("#show-operation");
-const showSource = requiredElement<HTMLInputElement>("#show-source");
-const resetLayoutButton =
-  requiredElement<HTMLButtonElement>("#reset-layout");
-const documentPaneButton = requiredElement<HTMLButtonElement>(
-  "#show-document-pane",
-);
-const graphPaneButton =
-  requiredElement<HTMLButtonElement>("#show-graph-pane");
-const documentPane = requiredElement<HTMLElement>("#document-pane");
-const graphPane = requiredElement<HTMLElement>("#graph-pane");
-const graphStatus = requiredElement<HTMLElement>("#graph-status");
-const toggleGraphEdit = requiredElement<HTMLButtonElement>(
-  "#toggle-graph-edit",
-);
-const discardGraphDraft = requiredElement<HTMLButtonElement>(
-  "#discard-graph-draft",
-);
-const applyGraphDraft = requiredElement<HTMLButtonElement>(
-  "#apply-graph-draft",
-);
 const confirmationDialog = requiredElement<HTMLDialogElement>(
   "#confirmation-dialog",
 );
@@ -328,12 +263,8 @@ function activeOperationKey(): string | null {
   const session = activeSession();
   return session?.kind === "operation" ? session.operationKey : null;
 }
-const graphDraftByBinding = new Map<string, OperationGraph>();
-let activeGraphSelection: GraphSelection | null = null;
-let editingGraph = false;
 let contextChallenge: ContextRequiredDetails | null = null;
 let retryAfterContext = false;
-let resolveAttempt = 0;
 let preflightAttempt = 0;
 /**
  * Preflight is advisory: it asks `ob` whether an operation would need
@@ -406,12 +337,11 @@ invocationSessions.addEventListener("ob-layout-change", event => {
 });
 
 // The invocation element's own compact selector emits the same intent event;
-// keep the contract view and graph surface in sync with it.
+// keep the contract view in sync with it.
 invocationSessions.addEventListener("ob-binding-select", event => {
   const detailEvent = event as CustomEvent<{ bindingKey: string }>;
   detail.selectedBindingKey = detailEvent.detail.bindingKey;
   bootstrapMessage.textContent = `Using binding ${detailEvent.detail.bindingKey}.`;
-  refreshGraphSurface();
   schedulePreflight();
 });
 
@@ -604,13 +534,6 @@ interfaceEditor.addEventListener("ob-interface-edit", event => {
   }
 });
 
-for (const [button, pane] of [
-  [documentPaneButton, "document"],
-  [graphPaneButton, "graph"],
-] as const) {
-  button.addEventListener("click", () => setArtifactPane(pane));
-}
-
 // The source tab's verbs (rev 16): each is an intent the app commits through
 // the contract — pullSource, inspectSource, removeSource, unbindOperation.
 sourceDetail.addEventListener("ob-source-pull", event => {
@@ -640,49 +563,6 @@ sourceDetail.addEventListener("ob-binding-remove", event => {
   );
 });
 
-graphViewer.addEventListener("ob-graph-node-select", event => {
-  graphViewer.selectedNodeKey = event.detail.nodeKey;
-  graphEditor.selectedNodeKey = event.detail.nodeKey;
-});
-
-graphEditor.addEventListener("ob-graph-node-select", event => {
-  const nodeKey = (event as CustomEvent<{ nodeKey: string }>).detail.nodeKey;
-  graphViewer.selectedNodeKey = nodeKey;
-  graphEditor.selectedNodeKey = nodeKey;
-});
-
-graphEditor.addEventListener("ob-graph-patch", event => {
-  void applyGraphPatchIntent(event.detail);
-});
-
-toggleGraphEdit.addEventListener("click", () => {
-  if (!activeGraphSelection) return;
-  editingGraph = !editingGraph;
-  renderGraphMode();
-});
-
-discardGraphDraft.addEventListener("click", async () => {
-  const selection = activeGraphSelection;
-  if (!selection) return;
-  const key = graphDraftKey(selection);
-  if (
-    graphDraftByBinding.has(key) &&
-    !(await confirmChange(
-      "Discard graph draft?",
-      "The unapplied graph changes for this operation will be lost.",
-      "Discard draft",
-    ))
-  ) {
-    return;
-  }
-  graphDraftByBinding.delete(key);
-  refreshGraphSurface();
-});
-
-applyGraphDraft.addEventListener("click", () => {
-  applyActiveGraphDraft();
-});
-
 // --- The document model (review/100) ---------------------------------------
 //
 // The workbench holds one living OBI document; every verb below is a contract
@@ -692,8 +572,6 @@ applyGraphDraft.addEventListener("click", () => {
 
 let documentIsDirty = false;
 let validationAttempt = 0;
-type IngestMode = "open" | "add";
-let ingestMode: IngestMode = "open";
 
 function markDocument(dirty: boolean): void {
   documentIsDirty = dirty;
@@ -719,6 +597,25 @@ function renderDocumentBar(obi: OBInterface): void {
     .filter(Boolean)
     .join(" · ");
   void refreshDocumentValidity(obi);
+  renderBreadcrumb();
+}
+
+/**
+ * Wayfinding under the tab strip (rev 17): the document identity lives in
+ * the hideable rail, so the core column names where you are —
+ * "<document> › <tab label>" with the workspace item's kind as a muted
+ * suffix. With no open item, the document name stands alone.
+ */
+function renderBreadcrumb(): void {
+  const documentTitle =
+    targetInterface?.name?.trim() || (targetInterface ? "Untitled interface" : "");
+  const session = activeSession();
+  crumbDocument.textContent = documentTitle;
+  crumbItem.textContent = session?.label ?? "";
+  crumbKind.textContent = session ? session.kind : "";
+  crumbItem.parentElement
+    ?.querySelector(".crumb-separator")
+    ?.toggleAttribute("hidden", !session);
 }
 
 /**
@@ -763,295 +660,6 @@ async function refreshDocumentValidity(obi: OBInterface): Promise<void> {
   }
 }
 
-// Recents are Open-flow UI, not document management (P4): a small index of
-// documents this browser opened or exported, restorable when small enough to
-// store whole.
-const recentsStorageKey = "openbindings.ob-start.recent-documents.v1";
-const recentDocumentByteCap = 262_144;
-interface RecentDocument {
-  name: string;
-  version: string;
-  operations: number;
-  sources: number;
-  savedAt: number;
-  doc?: OBInterface;
-}
-
-function recentsLoad(): RecentDocument[] {
-  try {
-    const raw = globalThis.localStorage.getItem(recentsStorageKey);
-    const parsed = raw ? (JSON.parse(raw) as RecentDocument[]) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function recentsRemember(obi: OBInterface): void {
-  try {
-    const entry: RecentDocument = {
-      name: obi.name?.trim() || "Untitled interface",
-      version: obi.version?.trim() || "",
-      operations: Object.keys(obi.operations).length,
-      sources: Object.keys(obi.sources ?? {}).length,
-      savedAt: Date.now(),
-    };
-    if (JSON.stringify(obi).length <= recentDocumentByteCap) entry.doc = obi;
-    const rest = recentsLoad().filter(
-      recent => recent.name !== entry.name || recent.version !== entry.version,
-    );
-    globalThis.localStorage.setItem(
-      recentsStorageKey,
-      JSON.stringify([entry, ...rest].slice(0, 8)),
-    );
-  } catch {
-    // Quota or serialization trouble — recents are best-effort by design.
-  }
-}
-
-function renderRecents(): void {
-  const entries = recentsLoad().filter(recent => recent.doc);
-  openRecents.replaceChildren();
-  if (entries.length === 0) return;
-  const heading = document.createElement("p");
-  heading.className = "eyebrow";
-  heading.textContent = "Recent documents";
-  openRecents.append(heading);
-  for (const entry of entries) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent =
-      `${entry.name}${entry.version ? ` @ ${entry.version}` : ""}` +
-      ` · ${entry.operations} operation${entry.operations === 1 ? "" : "s"}`;
-    button.addEventListener("click", () => {
-      closeIngestDialog();
-      openDocument(entry.doc!, "recent document");
-    });
-    openRecents.append(button);
-  }
-}
-
-/** Commit path for every Open: navigation semantics, clean document. */
-function openDocument(obi: OBInterface, provenance: string): void {
-  resolveAttempt += 1;
-  setTarget(obi, obi.name?.trim() || provenance, documentKey(obi));
-  const first = Object.keys(obi.operations)[0];
-  if (!activeSession() && first) activateOperation(first);
-  markDocument(false);
-  recentsRemember(obi);
-}
-
-function openIngestDialog(mode: IngestMode): void {
-  ingestMode = mode;
-  ingestTitle.textContent =
-    mode === "open" ? "Open a document" : "Add to this document";
-  ingestOpenExtras.hidden = mode !== "open";
-  openUrlInput.value = "";
-  openPasteInput.value = "";
-  if (mode === "open") renderRecents();
-  ingestDialog.showModal();
-  openUrlInput.focus();
-}
-
-function closeIngestDialog(): void {
-  ingestDialog.close();
-}
-
-docOpenButton.addEventListener("click", () => openIngestDialog("open"));
-docAddButton.addEventListener("click", () => openIngestDialog("add"));
-ingestCancel.addEventListener("click", closeIngestDialog);
-
-ingestUrlSubmit.addEventListener("click", () => {
-  const address = openUrlInput.value.trim();
-  if (!address) return;
-  const mode = ingestMode;
-  closeIngestDialog();
-  if (mode === "open") void resolveTarget(address);
-  else void addSourceToDocument(address);
-});
-
-ingestPasteSubmit.addEventListener("click", () => {
-  void ingestPastedInterface(openPasteInput.value);
-});
-
-openFileInput.addEventListener("change", async () => {
-  const file = openFileInput.files?.[0];
-  if (!file) return;
-  const text = await file.text();
-  openFileInput.value = "";
-  void ingestPastedInterface(text);
-});
-
-async function ingestPastedInterface(text: string): Promise<void> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    bootstrapMessage.textContent =
-      "That is not JSON. Paste an OpenBindings interface document — for raw " +
-      "artifacts (OpenAPI, AsyncAPI, …) use the URL path and the server " +
-      "synthesizes an interface from them.";
-    return;
-  }
-  const candidate = parsed as OBInterface;
-  if (
-    !candidate ||
-    typeof candidate !== "object" ||
-    typeof (candidate as { operations?: unknown }).operations !== "object"
-  ) {
-    bootstrapMessage.textContent =
-      "That JSON is not an OpenBindings interface (no operations map). For " +
-      "raw artifacts use the URL path.";
-    return;
-  }
-  const mode = ingestMode;
-  closeIngestDialog();
-  if (mode === "open") {
-    openDocument(candidate, "pasted interface");
-    bootstrapMessage.textContent = `Opened ${
-      candidate.name?.trim() || "interface"
-    } from pasted JSON.`;
-  } else {
-    await mergeIntoDocument(candidate);
-  }
-}
-
-/**
- * The Add flow is resolveInterface + mergeInterfaces: the server detects the
- * artifact's format and synthesizes an interface (source entries included),
- * then a plain merge folds its operations, bindings, and sources into the
- * living document — one fetch chain, both contract operations. Explicit
- * source registration without a merge (addSource, which requires a known
- * bindingSpec up front) is deferred to the sources panel work (14.1).
- */
-async function addSourceToDocument(address: string): Promise<void> {
-  if (!obInterface || !targetInterface) return;
-  const before = targetInterface;
-  bootstrapMessage.textContent = `Adding ${address} to the document…`;
-  try {
-    const resolved = await invokeThroughOB<
-      { address: string },
-      ResolveInterfaceOutput
-    >(obInterface, "openbindings.ob.resolveInterface", { address });
-    const merged = await invokeThroughOB<
-      { target: OBInterface; source: OBInterface },
-      { interface?: OBInterface; applied?: number }
-    >(obInterface, "openbindings.ob.mergeInterfaces", {
-      target: before,
-      source: resolved.interface,
-    });
-    if (!merged.interface) {
-      bootstrapMessage.textContent = "The merge returned no interface.";
-      return;
-    }
-    updateCurrentTarget(merged.interface, targetLabel);
-    markDocument(true);
-    const sourceCountDelta =
-      Object.keys(merged.interface.sources ?? {}).length -
-      Object.keys(before.sources ?? {}).length;
-    bootstrapMessage.textContent =
-      `Added ${resolved.interface.name?.trim() || address} — ` +
-      `${merged.applied ?? 0} change${(merged.applied ?? 0) === 1 ? "" : "s"} merged, ` +
-      `${sourceCountDelta} source${sourceCountDelta === 1 ? "" : "s"} registered.`;
-  } catch (error) {
-    bootstrapMessage.textContent = callFailureText(error);
-  }
-}
-
-async function mergeIntoDocument(source: OBInterface): Promise<void> {
-  if (!obInterface || !targetInterface) return;
-  try {
-    const merged = await invokeThroughOB<
-      { target: OBInterface; source: OBInterface },
-      { interface?: OBInterface; applied?: number }
-    >(obInterface, "openbindings.ob.mergeInterfaces", {
-      target: targetInterface,
-      source,
-    });
-    if (!merged.interface) {
-      bootstrapMessage.textContent = "The merge returned no interface.";
-      return;
-    }
-    updateCurrentTarget(merged.interface, targetLabel);
-    markDocument(true);
-    bootstrapMessage.textContent = `Merged ${
-      source.name?.trim() || "interface"
-    } — ${merged.applied ?? 0} change${
-      (merged.applied ?? 0) === 1 ? "" : "s"
-    } applied.`;
-  } catch (error) {
-    bootstrapMessage.textContent = callFailureText(error);
-  }
-}
-
-docNewButton.addEventListener("click", async () => {
-  if (
-    documentIsDirty &&
-    !(await confirmChange(
-      "Start a new document?",
-      "Unsaved changes in the current document will be lost. Export first to keep them.",
-      "New document",
-    ))
-  ) {
-    return;
-  }
-  if (!obInterface) return;
-  try {
-    const fresh = await invokeThroughOB<
-      { name: string; version: string },
-      OBInterface
-    >(obInterface, "openbindings.ob.newInterface", {
-      name: "untitled-interface",
-      version: "0.1.0",
-    });
-    resolveAttempt += 1;
-    setTarget(fresh, "new document", documentKey(fresh));
-    markDocument(false);
-    bootstrapMessage.textContent =
-      "New empty document. Add a source, or author operations in the Document pane.";
-  } catch (error) {
-    bootstrapMessage.textContent = callFailureText(error);
-  }
-});
-
-docExportButton.addEventListener("click", () => {
-  if (!targetInterface) return;
-  const json = JSON.stringify(targetInterface, null, 2);
-  const blob = new Blob([json], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  const stem = (targetInterface.name?.trim() || "interface").replace(
-    /[^\w.-]+/g,
-    "-",
-  );
-  anchor.download = `${stem}.obi.json`;
-  anchor.click();
-  URL.revokeObjectURL(url);
-  markDocument(false);
-  recentsRemember(targetInterface);
-  bootstrapMessage.textContent = `Exported ${anchor.download}.`;
-});
-
-openThisOBButton.addEventListener("click", () => {
-  if (!obInterface) return;
-  closeIngestDialog();
-  resolveAttempt += 1;
-  setTarget(
-    obInterface,
-    "This ob start instance",
-    `local:${globalThis.location.origin}`,
-  );
-  const preferred =
-    obInterface.operations["openbindings.ob.describe"]
-      ? "openbindings.ob.describe"
-      : Object.keys(obInterface.operations)[0];
-  if (!activeSession() && preferred) activateOperation(preferred);
-  markDocument(false);
-  bootstrapMessage.textContent =
-    "Using this ob start instance through its published OpenBindings interface.";
-});
-
 documentName.addEventListener("click", () => {
   if (!targetInterface) return;
   renameName.value = targetInterface.name ?? "";
@@ -1092,13 +700,15 @@ async function commitRename(): Promise<void> {
   }
 }
 
-connectionToggle.addEventListener("click", () => {
+// The pill is the interim standing entry to connection settings (rev 17):
+// the Connection button died with the verb row (review/120 loss ledger).
+connectionStatus.addEventListener("click", () => {
   setConnectionPanel(connectionPanel.hidden);
 });
 
 connectionClose.addEventListener("click", () => {
   setConnectionPanel(false);
-  connectionToggle.focus();
+  connectionStatus.focus();
 });
 
 requirementBannerAction.addEventListener("click", () => {
@@ -1215,45 +825,17 @@ themeToggle.addEventListener("click", () => {
   }
 });
 
-document.addEventListener("pointerdown", event => {
-  if (
-    layoutMenu.open &&
-    event.target instanceof Node &&
-    !layoutMenu.contains(event.target)
-  ) {
-    layoutMenu.open = false;
-  }
+// VS Code-style panel toggles (rev 17): the center tab column is the core
+// space and never hides; left (rail) and right (document editor) each get
+// one standing toggle with a pressed state.
+leftPanelToggle.addEventListener("click", () => {
+  workspaceLayout = { ...workspaceLayout, explorer: !workspaceLayout.explorer };
+  applyWorkspaceLayout();
+  persistWorkspaceLayout();
 });
 
-document.addEventListener("keydown", event => {
-  if (event.key !== "Escape" || !layoutMenu.open) return;
-  layoutMenu.open = false;
-  layoutMenu.querySelector<HTMLElement>("summary")?.focus();
-});
-
-for (const control of [showExplorer, showOperation, showSource]) {
-  control.addEventListener("change", () => {
-    if (!showExplorer.checked && !showOperation.checked && !showSource.checked) {
-      control.checked = true;
-    }
-    workspaceLayout = {
-      ...workspaceLayout,
-      explorer: showExplorer.checked,
-      operation: showOperation.checked,
-      source: showSource.checked,
-    };
-    applyWorkspaceLayout();
-    persistWorkspaceLayout();
-  });
-}
-
-resetLayoutButton.addEventListener("click", () => {
-  workspaceLayout = { ...defaultWorkspaceLayout };
-  for (const session of sessionsById.values()) {
-    if (session.kind === "operation") {
-      session.element.splitRatio = workspaceLayout.execSplit;
-    }
-  }
+rightPanelToggle.addEventListener("click", () => {
+  workspaceLayout = { ...workspaceLayout, source: !workspaceLayout.source };
   applyWorkspaceLayout();
   persistWorkspaceLayout();
 });
@@ -1528,31 +1110,6 @@ function publishOBImplementation(): void {
   );
 }
 
-async function resolveTarget(address: string): Promise<void> {
-  if (!obInterface || !obInvoker) {
-    bootstrapMessage.textContent = "The ob start interface is not ready.";
-    return;
-  }
-  const attempt = ++resolveAttempt;
-  bootstrapMessage.textContent = `Resolving ${address} through OpenBindings…`;
-
-  try {
-    const result = await invokeThroughOB<{ address: string }, ResolveInterfaceOutput>(
-      obInterface,
-      "openbindings.ob.resolveInterface",
-      { address },
-    );
-    if (attempt !== resolveAttempt) return;
-    openDocument(result.interface, result.resolvedUrl ?? address);
-    bootstrapMessage.textContent = result.synthesizedFrom
-      ? `Synthesized ${result.interface.name ?? "interface"} from ${result.synthesizedFrom}.`
-      : `Loaded ${result.interface.name ?? "interface"}.`;
-  } catch (error) {
-    if (attempt !== resolveAttempt) return;
-    bootstrapMessage.textContent = callFailureText(error);
-  }
-}
-
 async function invokeThroughOB<I, O>(
   target: OBInterface,
   operation: string,
@@ -1616,9 +1173,6 @@ function setTarget(obi: OBInterface, label: string, sessionID: string): void {
   activeSessionId = null;
   targetSessionID = sessionID;
   targetLabel = label;
-  graphDraftByBinding.clear();
-  activeGraphSelection = null;
-  editingGraph = false;
   // Context belongs to one selected target. Carrying it across a target
   // switch could disclose one service's credentials to another service.
   targetContext = null;
@@ -1638,7 +1192,6 @@ function setTarget(obi: OBInterface, label: string, sessionID: string): void {
   renderTargetContextState();
   renderDocumentBar(obi);
   restoreSessions();
-  refreshGraphSurface();
 }
 
 /**
@@ -1678,26 +1231,6 @@ function updateCurrentTarget(obi: OBInterface, label: string): void {
     }
   }
 
-  for (const key of [...graphDraftByBinding.keys()]) {
-    const bindingKey = key.split("\u0000", 1)[0]!;
-    const beforeBinding = previous?.bindings?.[bindingKey];
-    const afterBinding = obi.bindings?.[bindingKey];
-    const beforeSource = beforeBinding
-      ? previous?.sources?.[beforeBinding.source]
-      : null;
-    const afterSource = afterBinding ? obi.sources?.[afterBinding.source] : null;
-    if (
-      !beforeBinding ||
-      !afterBinding ||
-      beforeBinding.operation !== afterBinding.operation ||
-      beforeBinding.source !== afterBinding.source ||
-      beforeBinding.ref !== afterBinding.ref ||
-      JSON.stringify(beforeSource?.content) !== JSON.stringify(afterSource?.content)
-    ) {
-      graphDraftByBinding.delete(key);
-    }
-  }
-
   targetInterface = obi;
   targetLabel = label;
   explorer.obi = obi;
@@ -1717,7 +1250,6 @@ function updateCurrentTarget(obi: OBInterface, label: string): void {
     renderOperationTabs();
     persistSessions();
   }
-  refreshGraphSurface();
 }
 
 /**
@@ -1811,7 +1343,6 @@ function focusSession(id: string): void {
   renderOperationTabs();
   persistSessions();
   applySheetLayout();
-  refreshGraphSurface();
   if (operation) schedulePreflight();
 }
 
@@ -1995,7 +1526,6 @@ function showNoActiveOperation(): void {
   hideContextChallenge();
   updateOperationDeepLink(null);
   applySheetLayout();
-  refreshGraphSurface();
 }
 
 function activeInvocation(): OperationWorkbenchElement | null {
@@ -2025,6 +1555,7 @@ function renderOperationTabs(): void {
     ];
   });
   operationTabs.activeKey = activeSessionId;
+  renderBreadcrumb();
 }
 
 // --- Session persistence: schema v2 ----------------------------------------
@@ -2202,6 +1733,17 @@ function restoreSessions(): void {
     showNoActiveOperation();
     renderOperationTabs();
   }
+  if (!deepLinked) {
+    // Restoring focus scrolls the rail to the selected row (the explorer's
+    // deep-link contract). On a plain boot that buries the document identity
+    // at the rail's top — and the breadcrumb already names where you are —
+    // so the rail opens at its head. A real deep link keeps the reveal.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        railColumn.scrollTop = 0;
+      });
+    });
+  }
 }
 
 function persistSessions(): void {
@@ -2375,222 +1917,6 @@ function withPreferenceSelection(
       selection,
     },
   };
-}
-
-function setArtifactPane(pane: "document" | "graph"): void {
-  const entries = [
-    [documentPaneButton, documentPane, "document"],
-    [graphPaneButton, graphPane, "graph"],
-  ] as const;
-  for (const [button, panel, name] of entries) {
-    const active = pane === name;
-    button.setAttribute("aria-selected", String(active));
-    button.tabIndex = active ? 0 : -1;
-    panel.hidden = !active;
-  }
-  if (pane === "graph") refreshGraphSurface();
-}
-
-function refreshGraphSurface(): void {
-  const resolved = resolveActiveGraph();
-  activeGraphSelection = resolved.selection;
-  const selection = resolved.selection;
-  const draft = selection
-    ? graphDraftByBinding.get(graphDraftKey(selection)) ?? null
-    : null;
-  const graph = draft ?? selection?.graph ?? null;
-  graphViewer.graph = graph;
-  graphEditor.graph = graph;
-  graphEditor.operationKeys = Object.keys(targetInterface?.operations ?? {});
-  graphViewer.selectedNodeKey = null;
-  graphEditor.selectedNodeKey = null;
-  graphStatus.textContent = draft
-    ? `${selection?.bindingKey ?? "Graph"} · unapplied local changes`
-    : resolved.message;
-  toggleGraphEdit.disabled = !selection;
-  if (!selection) editingGraph = false;
-  renderGraphMode();
-}
-
-function renderGraphMode(): void {
-  const selection = activeGraphSelection;
-  const dirty = Boolean(
-    selection && graphDraftByBinding.has(graphDraftKey(selection)),
-  );
-  graphViewer.hidden = editingGraph;
-  graphEditor.hidden = !editingGraph;
-  toggleGraphEdit.textContent = editingGraph ? "View graph" : "Edit graph";
-  discardGraphDraft.hidden = !dirty;
-  applyGraphDraft.hidden = !dirty;
-}
-
-function resolveActiveGraph(): {
-  selection: GraphSelection | null;
-  message: string;
-} {
-  const obi = targetInterface;
-  const operationKey = activeOperationKey();
-  if (!obi || !operationKey) {
-    return {
-      selection: null,
-      message: "Select an operation with an embedded operation-graph binding.",
-    };
-  }
-  const activeBindingKey = activeInvocation()?.bindingKey ?? null;
-  if (activeBindingKey) {
-    const activeBinding = obi.bindings?.[activeBindingKey];
-    const activeSource = activeBinding
-      ? obi.sources?.[activeBinding.source]
-      : null;
-    if (
-      !activeBinding ||
-      !activeSource ||
-      activeSource.bindingSpec !== "openbindings.operation-graph@1"
-    ) {
-      return {
-        selection: null,
-        message: `Selected binding ${activeBindingKey} is not an operation graph.`,
-      };
-    }
-    return resolveGraphBinding(activeBindingKey, activeBinding);
-  }
-  const candidates = Object.entries(obi.bindings ?? {}).filter(
-    ([, binding]) =>
-      binding.operation === operationKey &&
-      obi.sources?.[binding.source]?.bindingSpec ===
-        "openbindings.operation-graph@1",
-  );
-  if (candidates.length === 0) {
-    return {
-      selection: null,
-      message: "This operation has no operation-graph binding.",
-    };
-  }
-  if (candidates.length > 1) {
-    return {
-      selection: null,
-      message:
-        "Several operation-graph bindings are available. Choose one in the operation detail.",
-    };
-  }
-  return resolveGraphBinding(candidates[0]![0], candidates[0]![1]);
-}
-
-function resolveGraphBinding(
-  bindingKey: string,
-  binding: NonNullable<OBInterface["bindings"]>[string],
-): { selection: GraphSelection | null; message: string } {
-  const source = targetInterface?.sources?.[binding.source];
-  if (!source) {
-    return {
-      selection: null,
-      message: `Binding ${bindingKey} references a missing source.`,
-    };
-  }
-  if (!binding.ref) {
-    return {
-      selection: null,
-      message: `Binding ${bindingKey} has no graph JSON Pointer.`,
-    };
-  }
-  if (source.content === undefined) {
-    return {
-      selection: null,
-      message:
-        "The graph source is location-only. Refresh it through the Sources pane to embed an inspectable artifact.",
-    };
-  }
-  try {
-    const sourceContentWasText = typeof source.content === "string";
-    const document = sourceContentWasText
-      ? (JSON.parse(source.content as string) as unknown)
-      : source.content;
-    const value = resolveJSONPointer(document, binding.ref);
-    if (!isOperationGraph(value)) {
-      return {
-        selection: null,
-        message: `Binding ${bindingKey} does not resolve to a structurally readable graph.`,
-      };
-    }
-    return {
-      selection: {
-        graph: value,
-        bindingKey,
-        sourceKey: binding.source,
-        ref: binding.ref,
-        sourceContentWasText,
-      },
-      message: `${bindingKey} · ${binding.ref}`,
-    };
-  } catch (error) {
-    return {
-      selection: null,
-      message: `Graph unavailable: ${errorText(error)}`,
-    };
-  }
-}
-
-function graphDraftKey(selection: GraphSelection): string {
-  return `${selection.bindingKey}\u0000${selection.ref}`;
-}
-
-async function applyGraphPatchIntent(
-  detail: OperationGraphPatchDetail,
-): Promise<void> {
-  const selection = activeGraphSelection;
-  if (!selection) return;
-  if (
-    detail.requiresConfirmation &&
-    !(await confirmChange(
-      "Confirm graph change?",
-      detail.reason,
-      "Apply change",
-    ))
-  ) {
-    return;
-  }
-  const key = graphDraftKey(selection);
-  const current = graphDraftByBinding.get(key) ?? selection.graph;
-  try {
-    const next = applyOperationGraphPatches(current, detail.patches);
-    graphDraftByBinding.set(key, next);
-    graphViewer.graph = next;
-    graphEditor.graph = next;
-    graphStatus.textContent = `${selection.bindingKey} · unapplied local changes`;
-    renderGraphMode();
-  } catch (error) {
-    graphStatus.textContent = `Graph change refused: ${errorText(error)}`;
-  }
-}
-
-function applyActiveGraphDraft(): void {
-  const selection = activeGraphSelection;
-  const obi = targetInterface;
-  if (!selection || !obi) return;
-  const draft = graphDraftByBinding.get(graphDraftKey(selection));
-  if (!draft) return;
-  try {
-    const next = structuredClone(obi);
-    const source = next.sources?.[selection.sourceKey];
-    if (!source || source.content === undefined) {
-      throw new Error("the selected graph source is no longer embedded");
-    }
-    const document =
-      typeof source.content === "string"
-        ? (JSON.parse(source.content) as unknown)
-        : source.content;
-    const replaced = replaceJSONPointer(document, selection.ref, draft);
-    source.content = selection.sourceContentWasText
-      ? `${JSON.stringify(replaced, null, 2)}\n`
-      : replaced;
-    const label = `${targetLabel.replace(/ · local draft$/, "")} · local draft`;
-    updateCurrentTarget(next, label);
-    setArtifactPane("graph");
-    bootstrapMessage.textContent =
-      "Graph draft applied to the local interface document. No source file was saved.";
-  } catch (error) {
-    graphStatus.textContent = `Could not apply graph draft: ${errorText(error)}`;
-  }
 }
 
 async function refreshSource(sourceKey: string): Promise<void> {
@@ -3214,7 +2540,7 @@ function renderConnectionPill(): void {
 
 function setConnectionPanel(open: boolean): void {
   connectionPanel.hidden = !open;
-  connectionToggle.setAttribute("aria-expanded", String(open));
+  connectionStatus.setAttribute("aria-expanded", String(open));
 }
 
 function setConnectionStatus(
@@ -3253,22 +2579,24 @@ interface WorkspaceLayout {
 }
 
 function applyWorkspaceLayout(): void {
-  showExplorer.checked = workspaceLayout.explorer;
-  showOperation.checked = workspaceLayout.operation;
-  showSource.checked = workspaceLayout.source;
-
-  const railOnly =
-    workspaceLayout.explorer &&
-    !workspaceLayout.operation &&
-    !workspaceLayout.source;
-  const operationVisible = workspaceLayout.operation;
+  // The tab column is the core space (rev 17): it never hides, so the two
+  // panel toggles carry the whole layout state.
+  workspaceLayout.operation = true;
+  applyPanelToggle(
+    leftPanelToggle,
+    workspaceLayout.explorer,
+    "interface rail",
+  );
+  applyPanelToggle(
+    rightPanelToggle,
+    workspaceLayout.source,
+    "interface document",
+  );
   workbenchGrid.classList.toggle(
     "hide-explorer",
     !workspaceLayout.explorer,
   );
-  workbenchGrid.classList.toggle("rail-only", railOnly);
   workbenchGrid.classList.toggle("hide-source", !workspaceLayout.source);
-  workbenchGrid.classList.toggle("hide-operation", !operationVisible);
   workbenchGrid.style.setProperty(
     "--rail-width",
     `${workspaceLayout.railWidth}px`,
@@ -3285,6 +2613,17 @@ function applyWorkspaceLayout(): void {
     "aria-valuenow",
     String(Math.round(workspaceLayout.sourceWidth)),
   );
+}
+
+function applyPanelToggle(
+  button: HTMLButtonElement,
+  visible: boolean,
+  name: string,
+): void {
+  button.setAttribute("aria-pressed", String(visible));
+  const label = `${visible ? "Hide" : "Show"} the ${name}`;
+  button.setAttribute("aria-label", label);
+  button.title = label;
 }
 
 function restoreWorkspaceLayout(): WorkspaceLayout {

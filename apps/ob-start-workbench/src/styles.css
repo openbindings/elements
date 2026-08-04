@@ -68,7 +68,7 @@ main {
 
 .app-header,
 .target-bar,
-.document-bar,
+.app-messages,
 .connection-panel,
 .workbench-grid {
   --ob-color-background: var(--page-surface);
@@ -282,61 +282,66 @@ button.primary {
   display: block;
 }
 
-.layout-menu {
-  position: relative;
-}
-
-.layout-menu > summary {
-  display: flex;
-  min-height: 2.1rem;
+/* VS Code-style panel toggles (rev 17): pressed = the panel is visible. */
+#toggle-left-panel,
+#toggle-right-panel {
+  display: inline-flex;
   align-items: center;
-  padding: 0.35rem 0.65rem;
-  list-style: none;
-  background: var(--page-surface);
-  border: 1px solid var(--page-border-strong);
-  border-radius: 0.3rem;
-  cursor: pointer;
-  font-size: 0.8rem;
+  justify-content: center;
+  min-width: 2.1rem;
+  min-height: 2.1rem;
+  padding: 0.35rem;
 }
 
-.layout-menu > summary::-webkit-details-marker {
+#toggle-left-panel[aria-pressed="false"],
+#toggle-right-panel[aria-pressed="false"] {
+  color: var(--page-faint);
+}
+
+.panel-icon {
+  display: block;
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+/* Wayfinding under the tab strip (rev 17): document › item · kind. */
+.tab-breadcrumb {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  min-width: 0;
+  min-height: 1.7rem;
+  padding: 0 0.65rem;
+  overflow: hidden;
+  color: var(--page-muted);
+  font-size: 0.72rem;
+  white-space: nowrap;
+  background: var(--page-surface);
+  border-bottom: 1px solid var(--page-border);
+}
+
+.tab-breadcrumb #crumb-item {
+  overflow: hidden;
+  color: var(--page-text);
+  text-overflow: ellipsis;
+}
+
+.tab-breadcrumb .crumb-separator[hidden] {
   display: none;
 }
 
-.layout-menu[open] > summary {
-  background: var(--page-surface-raised);
+.tab-breadcrumb .crumb-kind {
+  color: var(--page-faint);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
-.layout-popover {
-  position: absolute;
-  top: calc(100% + 0.4rem);
-  right: 0;
-  z-index: 20;
-  display: grid;
-  width: 13rem;
-  gap: 0.6rem;
-  padding: 0.8rem;
-  background: var(--page-surface);
-  border: 1px solid var(--page-border-strong);
-  border-radius: 0.4rem;
-  box-shadow: var(--shadow);
+.tab-breadcrumb .crumb-kind:empty {
+  display: none;
 }
 
-.layout-popover label {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  color: var(--page-muted);
-  font-size: 0.78rem;
-}
 
-.layout-popover input {
-  width: 0.9rem;
-  min-height: auto;
-  height: 0.9rem;
-  padding: 0;
-  margin: 0;
-}
 
 button.primary:hover:not(:disabled) {
   background: var(--accent-hover);
@@ -353,21 +358,15 @@ button.primary:hover:not(:disabled) {
   border-bottom: 1px solid var(--page-border);
 }
 
-/* The document bar (review/100): identity on the left, verbs on the right. */
-.document-bar {
-  display: grid;
-  grid-template-columns: minmax(16rem, 1fr) auto;
-  gap: 0.35rem 1.25rem;
-  align-items: center;
-  padding: 0.6rem 1.5rem;
-  background: var(--page-surface);
-  border-bottom: 1px solid var(--page-border);
-}
-
+/* The document's identity (rev 17): first thing in the rail, above the
+   explorer — it hides with the left panel; the breadcrumb carries
+   wayfinding. */
 .document-identity {
   display: grid;
   gap: 0.18rem;
   min-width: 0;
+  padding: 0.85rem 1.1rem 0.75rem;
+  border-bottom: 1px solid var(--page-border);
 }
 
 .document-title-row {
@@ -414,46 +413,21 @@ button.primary:hover:not(:disabled) {
   font-size: 0.78rem;
 }
 
-.document-verbs {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
+/* App messages (rev 17): a slim full-width strip under the header; zero
+   height while empty so the chrome spends nothing when there is nothing to
+   say. */
+.app-messages {
+  background: var(--page-surface);
 }
 
-.document-bar #bootstrap-message,
-.document-bar .liveness-notice {
-  grid-column: 1 / -1;
+.app-messages > p {
+  padding: 0.4rem 1.5rem;
+  border-bottom: 1px solid var(--page-border);
 }
 
-.ingest-body {
-  display: grid;
-  gap: 0.75rem;
-  padding: 1.1rem;
-}
-
-.ingest-body label {
-  font-size: 0.78rem;
-  color: var(--page-muted);
-}
-
-#ingest-open-extras {
-  display: grid;
-  gap: 0.5rem;
-}
-
-#open-this-ob {
-  justify-self: start;
-}
-
-.open-recents {
-  display: grid;
-  gap: 0.35rem;
-}
-
-.open-recents button {
-  justify-self: start;
-  text-align: left;
-  font-size: 0.8rem;
+.app-messages > #bootstrap-message:empty,
+.app-messages > .liveness-notice[hidden] {
+  display: none;
 }
 
 .target-heading {
@@ -484,7 +458,6 @@ textarea {
 }
 
 #bootstrap-message {
-  grid-column: 2;
   min-height: 0;
   color: var(--page-muted);
   font-size: 0.78rem;
@@ -495,7 +468,6 @@ textarea {
 }
 
 .liveness-notice {
-  grid-column: 2;
   min-width: 0;
   margin: 0;
   color: var(--danger);
@@ -714,6 +686,29 @@ textarea {
   background: var(--page-surface);
 }
 
+/* Hidden panels leave the grid (display: none), which would shift the
+   remaining children under auto-placement (the rev-16 collapsed-sheet bug
+   class) — every child is pinned to its column explicitly. */
+.workbench-grid > .rail-column {
+  grid-column: 1;
+}
+
+.workbench-grid > #rail-gutter {
+  grid-column: 2;
+}
+
+.workbench-grid > .operation-column {
+  grid-column: 3;
+}
+
+.workbench-grid > #source-gutter {
+  grid-column: 4;
+}
+
+.workbench-grid > .source-column {
+  grid-column: 5;
+}
+
 .workbench-grid.hide-explorer {
   grid-template-columns:
     0
@@ -758,17 +753,6 @@ textarea {
   height: auto;
 }
 
-.workbench-grid.rail-only {
-  grid-template-columns: minmax(0, 1fr) 0 0 0 0;
-}
-
-.workbench-grid.rail-only > #rail-gutter,
-.workbench-grid.rail-only > .operation-column,
-.workbench-grid.rail-only > #source-gutter,
-.workbench-grid.rail-only > .source-column {
-  display: none;
-}
-
 .workbench-grid.hide-source {
   grid-template-columns:
     minmax(15rem, var(--rail-width))
@@ -787,27 +771,9 @@ textarea {
   display: none;
 }
 
-.workbench-grid.hide-operation {
-  grid-template-columns:
-    minmax(15rem, var(--rail-width))
-    1px
-    0
-    0
-    minmax(0, 1fr);
-}
-
-.workbench-grid.hide-explorer.hide-operation {
-  grid-template-columns: 0 0 0 0 minmax(0, 1fr);
-}
-
-.workbench-grid.hide-operation > .operation-column,
-.workbench-grid.hide-operation > #source-gutter {
-  display: none;
-}
-
 .operation-column {
   display: grid;
-  grid-template-rows: 2.35rem minmax(0, 1fr);
+  grid-template-rows: 2.35rem auto minmax(0, 1fr);
   gap: 0;
   min-width: 0;
   min-height: 0;
@@ -1058,93 +1024,10 @@ ob-source-detail::part(container),
 
 .source-column {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-}
-
-.artifact-toolbar {
-  display: flex;
-  min-width: 0;
-  min-height: 2.35rem;
-  align-items: stretch;
-  background: var(--page-surface-raised);
-  border-bottom: 1px solid var(--page-border);
-}
-
-.artifact-tabs {
-  display: flex;
-  min-width: 0;
-}
-
-.artifact-tabs button {
-  min-height: 2.35rem;
-  padding: 0 0.7rem;
-  color: var(--page-muted);
-  background: transparent;
-  border: 0;
-  border-right: 1px solid var(--page-border);
-  border-radius: 0;
-  font-size: 0.72rem;
-}
-
-.artifact-tabs button[aria-selected="true"] {
-  color: var(--page-text);
-  background: var(--page-surface);
-  box-shadow: inset 0 2px var(--accent);
-}
-
-.artifact-panels,
-.artifact-pane {
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
-/* The [hidden] attribute must always win — a display set on the class beat
-   the UA rule and left the Document pane painted over Sources/Graph (the
-   rev-1 :host([hidden]) bug class, in the app's own light DOM). */
-.artifact-pane[hidden] {
-  display: none !important;
-}
-
-.artifact-panels {
-  position: relative;
-}
-
-.artifact-pane {
-  width: 100%;
-  height: 100%;
-}
-
-.artifact-pane[hidden],
-.graph-pane > [hidden] {
-  display: none;
-}
-
-#document-pane {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
-.draft-actions {
-  display: flex;
-  gap: 0.7rem;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 2.35rem;
-  padding: 0.3rem 0.65rem;
-  color: var(--page-muted);
-  background: var(--page-surface-raised);
-  border-bottom: 1px solid var(--page-border);
-  font-size: 0.72rem;
-}
-
-.draft-actions button {
-  min-height: 1.8rem;
-  flex: 0 0 auto;
-  font-size: 0.72rem;
 }
 
 ob-obi-editor {
@@ -1158,57 +1041,6 @@ ob-obi-editor::part(container) {
   height: 100%;
   border: 0;
   border-radius: 0;
-}
-
-ob-operation-graph-viewer,
-ob-operation-graph-editor {
-  display: block;
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-}
-
-ob-operation-graph-viewer::part(container),
-ob-operation-graph-editor::part(container) {
-  height: 100%;
-  border: 0;
-  border-radius: 0;
-}
-
-.graph-pane {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
-.graph-actions {
-  display: flex;
-  gap: 0.65rem;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 2.6rem;
-  padding: 0.3rem 0.65rem;
-  color: var(--page-muted);
-  background: var(--page-surface-raised);
-  border-bottom: 1px solid var(--page-border);
-  font-size: 0.7rem;
-}
-
-.graph-actions > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.graph-actions > div {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 0.35rem;
-}
-
-.graph-actions button {
-  min-height: 1.85rem;
-  font-size: 0.7rem;
 }
 
 dialog {
@@ -1280,14 +1112,6 @@ ob-obi-explorer::part(container) {
     overflow: auto;
   }
 
-  .document-bar {
-    grid-template-columns: 1fr;
-  }
-
-  .document-verbs {
-    flex-wrap: wrap;
-  }
-
   main {
     height: auto;
     min-height: 100dvh;
@@ -1314,14 +1138,21 @@ ob-obi-explorer::part(container) {
     overflow: visible;
   }
 
+  /* Stacked flow: release the desktop column pins. */
+  .workbench-grid > .rail-column,
+  .workbench-grid > #rail-gutter,
+  .workbench-grid > .operation-column,
+  .workbench-grid > #source-gutter,
+  .workbench-grid > .source-column {
+    grid-column: auto;
+  }
+
   .workbench-grid.hide-explorer {
     grid-template-columns: 1fr;
   }
 
   .workbench-grid.hide-source,
-  .workbench-grid.hide-explorer.hide-source,
-  .workbench-grid.hide-operation,
-  .workbench-grid.hide-explorer.hide-operation {
+  .workbench-grid.hide-explorer.hide-source {
     grid-template-columns: 1fr;
   }
 
@@ -1338,7 +1169,7 @@ ob-obi-explorer::part(container) {
 
   .operation-column {
     display: grid;
-    grid-template-rows: 2.35rem minmax(0, auto);
+    grid-template-rows: 2.35rem auto minmax(0, auto);
     overflow: visible;
   }
 
@@ -1353,17 +1184,11 @@ ob-obi-explorer::part(container) {
     border-top: 1px solid var(--page-border);
   }
 
-  .artifact-panels {
-    min-height: 26rem;
-  }
-
   ob-operation-detail,
   ob-source-detail,
   .invocation-sessions,
   .invocation-sessions > ob-operation-workbench,
-  ob-obi-editor,
-  ob-operation-graph-viewer,
-  ob-operation-graph-editor {
+  ob-obi-editor {
     overflow: visible;
   }
 }
@@ -1383,41 +1208,20 @@ ob-obi-explorer::part(container) {
     grid-template-columns: 1fr 1fr;
   }
 
-  #target-form .primary,
-  #target-form #connection-toggle {
+  #target-form .primary {
     width: 100%;
   }
 
   .target-bar,
-  .document-bar,
   .connection-panel,
   .requirement-banner {
     padding-right: 0.8rem;
     padding-left: 0.8rem;
   }
 
-  .document-verbs button {
-    flex: 1 1 auto;
-  }
-
   .field-actions {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .layout-popover {
-    position: fixed;
-    top: 3.4rem;
-    right: 0.8rem;
-  }
-
-  .graph-actions {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .graph-actions > span {
-    white-space: normal;
   }
 }
 

@@ -35,7 +35,7 @@ const PLAN: Record<string, string[]> = {
   ],
   "document-editor": ["focused"],
   "connection-panel": ["open"],
-  "workbench-full": ["default", "panels-menu-open"],
+  "workbench-full": ["default", "left-panel-hidden"],
 };
 
 interface ManifestEntry {
@@ -283,42 +283,30 @@ async function sweep(page: Page, theme: Theme, width: Width): Promise<void> {
     return documentEditor;
   });
 
-  // -- connection panel -----------------------------------------------------
+  // -- connection panel (rev 17: the status pill is the standing entry) -----
   await shoot("connection-panel", "open", async () => {
-    await page.locator("#connection-toggle").click();
+    await page.locator("#connection-status").click();
     await expect(page.locator("#connection-panel")).toBeVisible();
     return page.locator("#connection-panel");
   });
   await page.locator("#connection-close").click();
   await expect(page.locator("#connection-panel")).toBeHidden();
 
-  // -- panels menu over the full workbench ----------------------------------
-  await shoot("workbench-full", "panels-menu-open", async () => {
-    await page.locator(".layout-menu summary").click();
-    await expect(page.locator(".layout-popover")).toBeVisible();
+  // -- rev 17 chrome: the left panel hides; the breadcrumb keeps wayfinding -
+  await shoot("workbench-full", "left-panel-hidden", async () => {
+    await page.locator("#toggle-left-panel").click();
+    await expect(page.locator(".rail-column")).toBeHidden();
+    await expect(page.locator("#tab-breadcrumb")).toBeVisible();
     return "page";
   });
-  await page.locator(".layout-menu summary").click();
+  await page.locator("#toggle-left-panel").click();
+  await expect(page.locator(".rail-column")).toBeVisible();
 
   // -- demo target: a real multi-value (graph) run with offsets -------------
   await shoot("cockpit-output", "streaming-or-multi-value-with-offsets", async () => {
-    await page.locator("#doc-open").click();
-    await page.locator("#open-url").fill(DEMO_ORIGIN);
-    await page.locator("#ingest-url-submit").click();
-    await expect(page.locator("#document-name")).toHaveText("OpenBlendings", {
-      timeout: 20_000,
-    });
-    await selectOperation(page, "placeAndTrack");
-    await setEditorValue(
-      active,
-      '{"customer":"Gallery","drink":"Schema Latte","size":"v2"}',
-    );
-    await active.locator("button.run").click();
-    await expect(active.locator(".output-item")).toHaveCount(2, {
-      timeout: 45_000,
-    });
-    await expect(active.locator(".output-item-offset").first()).toContainText("+");
-    return active.locator(".output-column");
+    // The demo target needs the Open flow, killed by rev 17 pending the
+    // document-verb re-homing (review/120 loss ledger).
+    throw new SkipShot("open flow suspended by rev 17 (review/120)");
   });
 }
 

@@ -2,16 +2,12 @@ import { expect, test } from "@playwright/test";
 
 const browserErrors = new WeakMap<object, string[]>();
 
-// Rev 14 (review/100): acquisition is an action inside the Open flow, not a
-// header identity. Every URL ingest in this suite goes through the dialog.
-async function openTargetUrl(
-  page: import("@playwright/test").Page,
-  address: string,
-): Promise<void> {
-  await page.locator("#doc-open").click();
-  await page.locator("#open-url").fill(address);
-  await page.locator("#ingest-url-submit").click();
-}
+// Rev 17 (review/120): the Open flow is killed pending the document-verb
+// re-homing. Tests that needed an external target are suspended below with
+// this marker; their specs stay intact for revival when Open returns.
+const OPEN_FLOW_SUSPENDED =
+  "Suspended by rev 17: the Open flow died with the document verb row " +
+  "(review/120 loss ledger). Revive with the verb re-homing (rev 18).";
 
 test.beforeEach(async ({ page }) => {
   const errors: string[] = [];
@@ -107,7 +103,8 @@ test("the operation dependency becomes available when session context changes", 
   await expect(workbench.locator("button.run")).toBeDisabled();
 
   await expect(page.locator("#connection-panel")).toBeHidden();
-  await page.locator("#connection-toggle").click();
+  // The status pill is the standing entry to connection settings (rev 17).
+  await page.locator("#connection-status").click();
   await expect(page.locator("#connection-panel")).toBeVisible();
   await page.locator("#session-token").fill("test-token");
   await page.locator('#token-form button[type="submit"]').click();
@@ -174,22 +171,22 @@ test("the workbench layout is adjustable, accessible, and persistent", async ({
   await sourceGutter.press("ArrowLeft");
   await expect(sourceGutter).toHaveAttribute("aria-valuenow", "444");
 
-  // Rev 16: the Panels menu shrinks to rail / tab column / document editor —
-  // the invocation sheet replaced the detail/invocation checkboxes.
-  await page.locator(".layout-menu summary").click();
-  await expect(page.locator("#show-detail")).toHaveCount(0);
-  await expect(page.locator("#show-invocation")).toHaveCount(0);
-  await page.locator("#show-operation").uncheck();
-  await expect(page.locator(".operation-column")).toBeHidden();
-  await expect(page.locator("ob-obi-explorer")).toBeVisible();
-
-  await page.locator("#reset-layout").click();
-  await expect(page.locator("ob-operation-detail")).toBeVisible();
-  await expect(
-    page.locator("ob-operation-workbench:not([hidden])"),
-  ).toBeVisible();
-  await expect(railGutter).toHaveAttribute("aria-valuenow", "352");
-  await expect(sourceGutter).toHaveAttribute("aria-valuenow", "420");
+  // Rev 17: two VS Code-style panel toggles; the center tab column is the
+  // core space and never hides. The Panels menu is gone.
+  await expect(page.locator(".layout-menu")).toHaveCount(0);
+  const leftToggle = page.locator("#toggle-left-panel");
+  const rightToggle = page.locator("#toggle-right-panel");
+  await leftToggle.click();
+  await expect(page.locator(".rail-column")).toBeHidden();
+  await expect(page.locator(".operation-column")).toBeVisible();
+  await leftToggle.click();
+  await expect(page.locator(".rail-column")).toBeVisible();
+  await rightToggle.click();
+  await expect(page.locator(".source-column")).toBeHidden();
+  // The breadcrumb keeps wayfinding while panels hide.
+  await expect(page.locator("#tab-breadcrumb")).toContainText("ob");
+  await rightToggle.click();
+  await expect(page.locator(".source-column")).toBeVisible();
 
   // The invocation sheet's gutter resizes per-session (5–95 range).
   const sheetGutter = page.locator("#sheet-gutter");
@@ -198,11 +195,13 @@ test("the workbench layout is adjustable, accessible, and persistent", async ({
   await sheetGutter.press("ArrowUp");
   await expect(sheetGutter).toHaveAttribute("aria-valuenow", "49");
 
+  // Reset layout died with the Panels menu (rev 17): widths accumulate —
+  // 352 + two ArrowRight steps — and persist across the reload.
   await railGutter.press("ArrowRight");
   await page.locator("#theme-toggle").click();
   await expect(page.locator("html")).toHaveAttribute("data-dark", "");
   await page.reload();
-  await expect(railGutter).toHaveAttribute("aria-valuenow", "376");
+  await expect(railGutter).toHaveAttribute("aria-valuenow", "400");
   await expect(page.locator("#theme-toggle")).toHaveAttribute(
     "aria-pressed",
     "true",
@@ -257,7 +256,7 @@ test("the exec split is adjustable from the session gutter and persists", async 
   await expect(restored).toHaveAttribute("aria-valuenow", String(after));
 });
 
-test("document, source, and graph elements compose through explicit local drafts", async ({
+test("document and source elements compose through direct edits to the living document", async ({
   page,
 }) => {
   await page.goto("/#token=test-token");
@@ -323,9 +322,9 @@ test("document, source, and graph elements compose through explicit local drafts
   );
   // Direct editing (rev 14.3): a valid document commits on idle — no Apply.
   // Rail (rev 15.1, panjir master pane): ONE scroller — operations first,
-  // sources beneath, one sticky filter narrowing both — and the Document
-  // pane stays visible throughout; no tab click reaches the sources.
-  await expect(page.locator("#document-pane")).toBeVisible();
+  // sources beneath, one sticky filter narrowing both — and the editor
+  // stays visible throughout; no tab click reaches the sources.
+  await expect(page.locator("ob-obi-editor")).toBeVisible();
   await expect(page.locator("#document-dirty")).toBeVisible({ timeout: 10_000 });
 
   const rail = page.locator(".rail-column");
@@ -351,36 +350,10 @@ test("document, source, and graph elements compose through explicit local drafts
   await expect(explorer.locator(".sources-count")).toContainText("/");
   await railFilter.fill("");
 
-  await explorer.locator('input[type="search"]').fill("graphDemo");
-  await explorer.locator('[part~="operation"]').click();
-  await page.locator("#show-graph-pane").click();
-
-  const graphViewer = page.locator(
-    "#graph-pane > ob-operation-graph-viewer",
-  );
-  await expect(graphViewer.locator("[data-node-key]")).toHaveCount(3);
-  await expect(page.locator("#graph-status")).toContainText(
-    "graphDemo.graph",
-  );
-
-  await page.locator("#toggle-graph-edit").click();
-  const graphEditor = page.locator("ob-operation-graph-editor");
-  await graphEditor.locator('#add-node-form input[name="nodeKey"]').fill(
-    "audit",
-  );
-  await graphEditor
-    .locator('#add-node-form select[name="type"]')
-    .selectOption("combine");
-  await graphEditor.locator('#add-node-form button[type="submit"]').click();
-  await expect(page.locator("#graph-status")).toContainText(
-    "unapplied local changes",
-  );
-  await expect(page.locator("#apply-graph-draft")).toBeVisible();
-  await page.locator("#apply-graph-draft").click();
-  await expect(graphViewer.locator("[data-node-key]")).toHaveCount(4);
-  await expect(page.locator("#bootstrap-message")).toContainText(
-    "No source file was saved",
-  );
+  // The graph pane died with rev 17 (review/120): the operation-graph
+  // authoring surface returns per-operation with the parked graph
+  // revolution. The graph BINDING data authored above still exercises the
+  // document path: it merges, appears on the source tab, and unbinds.
 
   // A source is a workspace item (rev 16): its rail row opens a source tab —
   // kind subtitle, ob-source-detail content, no invocation sheet — where the
@@ -537,6 +510,7 @@ test("tabs are workspace items: duplicate forks a session, rename sticks, the co
 test("a raw API artifact is synthesized and invoked without a browser binding-family client", async ({
   page,
 }) => {
+  test.skip(true, OPEN_FLOW_SUSPENDED);
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
 
@@ -566,6 +540,7 @@ test("a raw API artifact is synthesized and invoked without a browser binding-fa
 test("target authentication is preflighted into focused fields", async ({
   page,
 }) => {
+  test.skip(true, OPEN_FLOW_SUSPENDED);
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
 
@@ -606,10 +581,11 @@ test("target authentication is preflighted into focused fields", async ({
 test("local and target credentials remain visibly separate", async ({
   page,
 }) => {
+  test.skip(true, OPEN_FLOW_SUSPENDED);
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
 
-  await page.locator("#connection-toggle").click();
+  await page.locator("#connection-status").click();
   await expect(page.locator("#session-status")).toHaveText(
     "Authenticated for this browser tab.",
   );
@@ -640,6 +616,7 @@ test("local and target credentials remain visibly separate", async ({
 test("a malformed target fails recoverably without replacing the current interface", async ({
   page,
 }) => {
+  test.skip(true, OPEN_FLOW_SUSPENDED);
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
   await expect(page.locator("#document-name")).toHaveText("ob");
@@ -663,8 +640,9 @@ test("the complete primary flow remains usable without horizontal overflow on mo
   await page.goto("/#token=test-token");
 
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
-  await expect(page.locator("#doc-open")).toBeVisible();
-  await expect(page.locator("#doc-new")).toBeVisible();
+  await expect(page.locator("#toggle-left-panel")).toBeVisible();
+  await expect(page.locator("#toggle-right-panel")).toBeVisible();
+  await expect(page.locator("#tab-breadcrumb")).toContainText("ob");
   await expect(
     page
       .locator("ob-operation-workbench:not([hidden])")
@@ -676,7 +654,7 @@ test("the complete primary flow remains usable without horizontal overflow on mo
     ),
   ).toBe(true);
 
-  await page.locator("#connection-toggle").click();
+  await page.locator("#connection-status").click();
   await expect(page.locator("#connection-panel")).toBeVisible();
   await expect(page.locator("#connection-close")).toBeVisible();
   expect(
@@ -689,6 +667,7 @@ test("the complete primary flow remains usable without horizontal overflow on mo
 test("multi-binding operations default to the author's preferred binding and run one-click — including through an operation graph", async ({
   page,
 }) => {
+  test.skip(true, OPEN_FLOW_SUSPENDED);
   test.setTimeout(120_000);
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
@@ -755,6 +734,7 @@ test("multi-binding operations default to the author's preferred binding and run
 test("form input mode drives placeOrder through schema fields", async ({
   page,
 }) => {
+  test.skip(true, OPEN_FLOW_SUSPENDED);
   test.setTimeout(120_000);
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
@@ -806,6 +786,7 @@ test("form input mode drives placeOrder through schema fields", async ({
 test("a failed resolve reports the server's diagnostic, not a bare status line", async ({
   page,
 }) => {
+  test.skip(true, OPEN_FLOW_SUSPENDED);
   // Dogfood report (rev 13.2): resolving a URL that serves no interface
   // surfaced as "ERR_UNAVAILABLE: HTTP 502 Bad Gateway" — the transport's
   // view of the resolve endpoint's failure status, while the endpoint's own
