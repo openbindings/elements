@@ -3228,7 +3228,11 @@ function setConnectionStatus(
 function setTheme(dark: boolean): void {
   document.documentElement.toggleAttribute("data-dark", dark);
   themeToggle.setAttribute("aria-pressed", String(dark));
-  themeToggle.textContent = dark ? "Light theme" : "Dark theme";
+  // The button is icon-only (lucide moon/sun, index.html; CSS swaps them on
+  // [data-dark]) — the accessible name carries the action.
+  const label = dark ? "Switch to light theme" : "Switch to dark theme";
+  themeToggle.setAttribute("aria-label", label);
+  themeToggle.title = label;
 }
 
 function restoreTheme(): boolean {

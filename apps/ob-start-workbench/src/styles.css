@@ -256,6 +256,32 @@ button.primary {
   border-color: var(--accent);
 }
 
+/* The theme toggle is icon-only: lucide moon in light mode (the action is
+   dark), lucide sun in dark mode. The accessible name carries the action. */
+#theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.1rem;
+  min-height: 2.1rem;
+  padding: 0.35rem;
+}
+
+.theme-icon {
+  display: block;
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+#theme-toggle .icon-sun,
+:root[data-dark] #theme-toggle .icon-moon {
+  display: none;
+}
+
+:root[data-dark] #theme-toggle .icon-sun {
+  display: block;
+}
+
 .layout-menu {
   position: relative;
 }
