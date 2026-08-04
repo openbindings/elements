@@ -73,7 +73,6 @@ export class OBIEditorElement extends OpenBindingsElement {
         <header class="toolbar" part="toolbar">
           <div>
             <p class="eyebrow">Interface document</p>
-            <strong>Source</strong>
           </div>
           <div class="actions">
             <label>
@@ -269,7 +268,7 @@ function parseInterface(
   format: OBIDocumentFormat,
 ): ParseResult {
   if (!text.trim()) {
-    return { valid: false, error: "Interface source is empty." };
+    return { valid: false, error: "The interface document is empty." };
   }
   try {
     if (format === "json") {

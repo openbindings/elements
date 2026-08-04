@@ -482,7 +482,7 @@ const SHELL = `
   <div class="frame" part="frame">
     <div class="toolbar" part="toolbar">
       <div class="views" role="group" aria-label="Editor view">
-        <button class="view-source" type="button" aria-pressed="true">Source</button>
+        <button class="view-source" type="button" aria-pressed="true">Text</button>
         <button class="view-tree" type="button" aria-pressed="false">Tree</button>
       </div>
       <div class="tree-actions" hidden>
