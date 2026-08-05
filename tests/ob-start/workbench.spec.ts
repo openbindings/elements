@@ -554,6 +554,14 @@ test("target authentication is preflighted into focused fields", async ({
     .filter({ hasText: "describe" })
     .click();
 
+  // Rev 17.10: the preflight is a quiet strip advisory — authoring never
+  // raises the banner. The banner appears only when a RUN actually emits
+  // CONTEXT_REQUIRED.
+  await expect(page.locator("#sheet-status")).toHaveText(
+    "needs target credentials",
+  );
+  await expect(page.locator("#requirement-banner")).toBeHidden();
+  await page.locator("#sheet-run").click();
   await expect(page.locator("#requirement-banner")).toBeVisible();
   await expect(page.locator("#requirement-banner-copy")).toContainText(
     "needs context",

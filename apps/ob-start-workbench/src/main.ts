@@ -331,6 +331,14 @@ let preflightAttempt = 0;
 let preflightKey: string | null = null;
 let preflightTimer: ReturnType<typeof setTimeout> | null = null;
 const preflightCache = new Map<string, ContextRequiredDetails | null>();
+/**
+ * The preflight's answer, demoted to an advisory (rev 17.10, dogfood: "I'm
+ * just updating the description… I'm not running an operation at all. Why
+ * does it think I am?"). Authoring never raises the credentials banner —
+ * the strip reports "needs target credentials" quietly, and the banner
+ * appears only when a RUN actually emits CONTEXT_REQUIRED.
+ */
+let contextAdvisory: ContextRequiredDetails | null = null;
 let workspaceLayout = restoreWorkspaceLayout();
 if (
   !workspaceLayout.explorer &&
@@ -562,6 +570,12 @@ function updateSheetStatus(): void {
     text = `failed · ${status.code ?? "ERROR"}`;
     label = `Invocation ${text}`;
     danger = true;
+  } else if (capable && contextAdvisory) {
+    // Preflight advisory (rev 17.10): a quiet amber heads-up that Run will
+    // ask for target credentials — never a banner while authoring.
+    dot = "attention";
+    text = "needs target credentials";
+    label = "Run will ask for target credentials";
   }
   sheetDot.dataset.state = dot;
   sheetDot.setAttribute("aria-label", label);
@@ -588,7 +602,7 @@ const commitInterfaceEdit = debounce(() => {
   pendingInterfaceDraft = null;
   updateCurrentTarget(draft, targetLabel);
   bootstrapMessage.textContent = "";
-}, 700);
+}, 80);
 
 interfaceEditor.addEventListener("ob-interface-edit", event => {
   if (event.detail.valid && event.detail.dirty) {
@@ -667,9 +681,16 @@ function renderDocumentBar(obi: OBInterface): void {
   ]
     .filter(Boolean)
     .join(" · ");
-  void refreshDocumentValidity(obi);
+  // Server-side validation rides its own slower debounce: the local mirror
+  // must be instant (rev 17.10), but a validateInterface round trip per
+  // commit would spam the server during a typing burst.
+  scheduleValidityRefresh();
   renderBreadcrumb();
 }
+
+const scheduleValidityRefresh = debounce(() => {
+  if (targetInterface) void refreshDocumentValidity(targetInterface);
+}, 600);
 
 /**
  * Wayfinding under the tab strip (rev 17): the document identity lives in
@@ -1238,6 +1259,7 @@ function setTarget(obi: OBInterface, label: string, sessionID: string): void {
   preflightAttempt += 1;
   preflightKey = null;
   preflightCache.clear();
+  contextAdvisory = null;
   hideContextChallenge();
   for (const id of [...openSessionIds]) removeSession(id);
   openSessionIds = [];
@@ -1409,6 +1431,7 @@ function focusSession(id: string): void {
     detail.selectedBindingKey = null;
     sourceDetail.sourceKey = session.sourceKey;
     updateOperationDeepLink(null);
+    contextAdvisory = null;
     hideContextChallenge();
   }
   renderOperationTabs();
@@ -2311,6 +2334,8 @@ async function preflightTarget(): Promise<void> {
     !sessionToken ||
     sessionAuth !== "verified"
   ) {
+    contextAdvisory = null;
+    updateSheetStatus();
     hideContextChallenge();
     return;
   }
@@ -2319,9 +2344,8 @@ async function preflightTarget(): Promise<void> {
   if (key !== null && key === preflightKey) return;
   if (key !== null && preflightCache.has(key)) {
     preflightKey = key;
-    const cached = preflightCache.get(key) ?? null;
-    if (cached) showContextChallenge(cached);
-    else hideContextChallenge();
+    contextAdvisory = preflightCache.get(key) ?? null;
+    updateSheetStatus();
     return;
   }
 
@@ -2354,16 +2378,17 @@ async function preflightTarget(): Promise<void> {
       preflightKey = key;
       preflightCache.set(key, parsed);
     }
-    if (parsed) {
-      retryAfterContext = false;
-      showContextChallenge(parsed);
-    } else {
-      hideContextChallenge();
-    }
+    // Advisory only: the strip carries the quiet warning; the banner is
+    // reserved for a real run's CONTEXT_REQUIRED.
+    contextAdvisory = parsed;
+    updateSheetStatus();
   } catch {
     // Preflight is advisory. Invocation remains authoritative and will emit
     // a structured CONTEXT_REQUIRED challenge when context is truly needed.
-    if (attempt === preflightAttempt) hideContextChallenge();
+    if (attempt === preflightAttempt) {
+      contextAdvisory = null;
+      updateSheetStatus();
+    }
   }
 }
 

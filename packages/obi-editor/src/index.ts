@@ -1,7 +1,7 @@
 import {
   formatValidationErrors,
   type OBInterface,
-  validateDocument,
+  parseDocument,
 } from "@openbindings/sdk";
 import type { JSONEditorElement } from "@openbindings/json-editor";
 import {
@@ -58,7 +58,10 @@ export class OBIEditorElement extends OpenBindingsElement {
     error: "No interface document loaded.",
   };
   #editor: JSONEditorElement | null = null;
-  readonly #scheduleValidation = debounce(() => this.#validateNow(), 180);
+  // Short trailing debounce: long enough to coalesce a keystroke burst,
+  // short enough that the mirror feels instant (rev 17.10 — "It should be
+  // instant. Absolutely instant.").
+  readonly #scheduleValidation = debounce(() => this.#validateNow(), 50);
   #formatSelect: HTMLSelectElement | null = null;
   #status: HTMLElement | null = null;
 
@@ -116,7 +119,16 @@ export class OBIEditorElement extends OpenBindingsElement {
   }
 
   set value(value: OBInterface | null) {
-    this.#text = value ? formatInterface(value, this.#format) : "";
+    const formatted = value ? formatInterface(value, this.#format) : "";
+    // Echo guard: hosts commit the editor's own edits back as `value` (the
+    // living-document reconcile). When the round-trip is byte-identical the
+    // only real change is the baseline — skipping the reset keeps the
+    // editor's caret, selection, and undo history untouched mid-typing.
+    if (formatted === this.#text) {
+      this.#baseline = formatted;
+      return;
+    }
+    this.#text = formatted;
     this.#baseline = this.#text;
     this.#scheduleValidation.cancel();
     this.#revalidate();
@@ -266,8 +278,15 @@ function parseInterface(
     return { valid: false, error: "The interface document is empty." };
   }
   try {
+    // parseDocument = JSON parse + duplicate-key scan + meta-schema check:
+    // tens of milliseconds on a large document, so it can ride the keystroke
+    // loop. The deep OBI-D rule walk (validateInterface) is SECONDS on the
+    // same document and re-compiles per call — it must never sit between a
+    // keystroke and the mirror (rev 17.10). Depth is the host's affair: the
+    // workbench validates through the contract server-side and reports
+    // problems in its document badge.
     if (format === "json") {
-      return { valid: true, value: validateDocument(text) };
+      return { valid: true, value: parseDocument(text) };
     }
     const parsed: unknown = parseYAML(text, {
       prettyErrors: true,
@@ -275,7 +294,7 @@ function parseInterface(
     });
     return {
       valid: true,
-      value: validateDocument(JSON.stringify(parsed)),
+      value: parseDocument(JSON.stringify(parsed)),
     };
   } catch (error) {
     return { valid: false, error: formatValidationErrors(error) };
