@@ -137,6 +137,7 @@ const sheetDot = requiredElement<HTMLElement>("#sheet-dot");
 const sheetRun = requiredElement<HTMLButtonElement>("#sheet-run");
 const sheetToggle = requiredElement<HTMLButtonElement>("#sheet-toggle");
 const schemasStrip = requiredElement<HTMLElement>("#schemas-strip");
+const schemasGutter = requiredElement<HTMLElement>("#schemas-gutter");
 const schemasToggle = requiredElement<HTMLButtonElement>("#schemas-toggle");
 const schemaSplit = requiredElement<SchemaSplitElement>("#schema-split");
 const confirmationDialog = requiredElement<HTMLDialogElement>(
@@ -214,7 +215,10 @@ const defaultWorkspaceLayout: WorkspaceLayout = {
   sourceWidth: 420,
   execSplit: 0.5,
   schemas: true,
+  schemasSize: 0.22,
 };
+const SCHEMAS_SIZE_MIN = 0.08;
+const SCHEMAS_SIZE_MAX = 0.6;
 const DEFAULT_SHEET_RATIO = 0.45;
 const SHEET_RATIO_MIN = 0.05;
 const SHEET_RATIO_MAX = 0.95;
@@ -441,6 +445,15 @@ schemasToggle.addEventListener("click", () => {
 function applySchemasStrip(): void {
   const expanded = workspaceLayout.schemas;
   schemasStrip.classList.toggle("collapsed", !expanded);
+  tabContent.classList.toggle("schemas-collapsed", !expanded);
+  tabContent.style.setProperty(
+    "--schemas-size",
+    `${Math.round(workspaceLayout.schemasSize * 1000) / 10}%`,
+  );
+  schemasGutter.setAttribute(
+    "aria-valuenow",
+    String(Math.round(workspaceLayout.schemasSize * 100)),
+  );
   schemasToggle.setAttribute("aria-expanded", String(expanded));
   const label = expanded
     ? "Collapse the schemas strip"
@@ -448,6 +461,49 @@ function applySchemasStrip(): void {
   schemasToggle.title = label;
   schemasToggle.setAttribute("aria-label", label);
 }
+
+// The schemas gutter mirrors the sheet gutter's grammar (17.12.2): drag,
+// arrow keys, double-click to collapse. The height is workspace layout —
+// one strip, one size — unlike the per-session sheet ratio.
+schemasGutter.addEventListener("pointerdown", event => {
+  if (event.button !== 0) return;
+  if (!workspaceLayout.schemas) return;
+  const bounds = tabContent.getBoundingClientRect();
+  startPointerResize(schemasGutter, event, move => {
+    // Same math as the sheet: the row includes the header, the strip's
+    // bottom edge stays put, its top edge follows the pointer.
+    const stripBottom = schemasStrip.getBoundingClientRect().bottom;
+    workspaceLayout.schemasSize = clamp(
+      (stripBottom - move.clientY) / bounds.height,
+      SCHEMAS_SIZE_MIN,
+      SCHEMAS_SIZE_MAX,
+    );
+    applySchemasStrip();
+  });
+  globalThis.addEventListener("pointerup", () => persistWorkspaceLayout(), {
+    once: true,
+  });
+});
+
+schemasGutter.addEventListener("keydown", event => {
+  if (!workspaceLayout.schemas) return;
+  let size = workspaceLayout.schemasSize;
+  if (event.key === "ArrowUp") size += 0.04;
+  else if (event.key === "ArrowDown") size -= 0.04;
+  else if (event.key === "Home") size = SCHEMAS_SIZE_MIN;
+  else if (event.key === "End") size = SCHEMAS_SIZE_MAX;
+  else return;
+  event.preventDefault();
+  workspaceLayout.schemasSize = clamp(size, SCHEMAS_SIZE_MIN, SCHEMAS_SIZE_MAX);
+  applySchemasStrip();
+  persistWorkspaceLayout();
+});
+
+schemasGutter.addEventListener("dblclick", () => {
+  workspaceLayout = { ...workspaceLayout, schemas: !workspaceLayout.schemas };
+  applySchemasStrip();
+  persistWorkspaceLayout();
+});
 
 // The invocation element's own compact selector emits the same intent event;
 // keep the contract view in sync with it.
@@ -2736,6 +2792,8 @@ interface WorkspaceLayout {
   execSplit: number;
   /** The SCHEMAS strip's expanded state (rev 17.12). */
   schemas: boolean;
+  /** Strip height as a fraction of the tab content (17.12.2). */
+  schemasSize: number;
 }
 
 function applyWorkspaceLayout(): void {
@@ -2826,6 +2884,10 @@ function restoreWorkspaceLayout(): WorkspaceLayout {
         typeof parsed.schemas === "boolean"
           ? parsed.schemas
           : defaultWorkspaceLayout.schemas,
+      schemasSize:
+        typeof parsed.schemasSize === "number"
+          ? clamp(parsed.schemasSize, 0.08, 0.6)
+          : defaultWorkspaceLayout.schemasSize,
     };
   } catch {
     return { ...defaultWorkspaceLayout };

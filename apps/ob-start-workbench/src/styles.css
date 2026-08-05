@@ -823,18 +823,39 @@ textarea {
    applied by the app; collapse reduces the sheet to its one-line strip. */
 .tab-content {
   --sheet-size: 45%;
+  --schemas-size: 22%;
   display: grid;
-  /* detail | SCHEMAS strip | gutter | INVOCATION sheet (rev 17.12) */
-  grid-template-rows: minmax(0, 1fr) auto 1px minmax(0, var(--sheet-size));
+  /* detail | gutter | SCHEMAS strip | gutter | INVOCATION sheet (17.12.2:
+     both strips resize the same way). Every collapse combination needs its
+     own explicit template — a display: none gutter shifts auto-placement
+     (the rev 16/17 bug class). */
+  grid-template-rows:
+    minmax(0, 1fr)
+    1px
+    minmax(0, var(--schemas-size))
+    1px
+    minmax(0, var(--sheet-size));
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+.tab-content.schemas-collapsed {
+  grid-template-rows: minmax(0, 1fr) auto 1px minmax(0, var(--sheet-size));
+}
+
+.tab-content.schemas-collapsed > #schemas-gutter {
+  display: none;
 }
 
 /* Collapsed, the gutter leaves the grid (display: none) — so the template
    must shrink to TWO rows, or the sheet auto-places into a 0-height track
    and its strip renders off-viewport. */
 .tab-content.sheet-collapsed {
+  grid-template-rows: minmax(0, 1fr) 1px minmax(0, var(--schemas-size)) auto;
+}
+
+.tab-content.sheet-collapsed.schemas-collapsed {
   grid-template-rows: minmax(0, 1fr) auto auto;
 }
 
@@ -852,6 +873,7 @@ textarea {
 }
 
 .tab-content.no-session > #sheet-gutter,
+.tab-content.no-session > #schemas-gutter,
 .tab-content.no-session > .invocation-sheet,
 .tab-content.no-session > .schemas-strip {
   display: none;
@@ -950,9 +972,16 @@ textarea {
 }
 
 .schemas-content {
-  height: clamp(6rem, 18vh, 14rem);
+  height: 100%;
   min-height: 0;
   overflow: hidden;
+}
+
+/* The strip fills its grid row (the row carries the resizable height —
+   a percentage on the strip itself would resolve against an auto row and
+   collapse, 17.12.2). */
+.schemas-strip {
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .schemas-strip.collapsed .schemas-content {
