@@ -256,13 +256,14 @@ test("split layout fills the height the host gives the element", async ({
   expect(Math.abs(formHeight.height - large.editor)).toBeLessThanOrEqual(8);
 });
 
-test("tab overflow hint fades the tabs themselves — no scrim painted over them", async ({
+test("tab overflow is a clean cut — no mask, no scrim, no gradient anywhere", async ({
   page,
 }) => {
-  // Dogfood report (rev 13.2): the overflow fade was a text-color gradient
-  // painted OVER the first tab, which reads as a smudgy fake shadow on light
-  // surfaces. The hint must dissolve the strip's own content at the scrolled
-  // edge (a mask on the scroller) — nothing may paint on top of tab labels.
+  // Rev 13.2 replaced a painted scrim with an edge mask; rev 17.11 removed
+  // the fade entirely (dogfood: "Just have it get cut off. Clean lines.").
+  // A scrolled-out tab is simply clipped by the strip's edge — the overflow
+  // menu is the affordance. Nothing may paint over the tabs, and nothing may
+  // dissolve them either.
   const probe = await page.evaluate(async () => {
     const strip = document.createElement("ob-operation-tabs") as HTMLElement & {
       tabs: { key: string; label: string }[];
@@ -311,13 +312,11 @@ test("tab overflow hint fades the tabs themselves — no scrim painted over them
     return { overflowing, settled };
   });
 
+  // The state is still tracked honestly — it just paints nothing.
   expect(probe.overflowing.state).toBe("both");
-  // The hint is a mask on the scroller…
-  expect(probe.overflowing.listMask).toContain("linear-gradient");
-  // …and nothing paints over the tabs.
+  expect(probe.overflowing.listMask).toBe("none");
   expect(probe.overflowing.before).toBe("none");
   expect(probe.overflowing.after).toBe("none");
-  // No overflow, no mask: nothing dissolves when everything is visible.
   expect(probe.settled.state).toBe("none");
   expect(probe.settled.listMask).toBe("none");
 });
