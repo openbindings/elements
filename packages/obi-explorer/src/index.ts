@@ -60,6 +60,8 @@ export class OBIExplorerElement extends OpenBindingsElement {
   #announcedCount: number | null = null;
   #visibleSignature: string | null = null;
   #userFiltered = false;
+  #visibleSources = 0;
+  #totalSources = 0;
   #pendingSelectionScroll = false;
 
   get obi(): OBInterface | null {
@@ -402,21 +404,6 @@ export class OBIExplorerElement extends OpenBindingsElement {
     // carries the same count honesty as the badge.
     operationsHeading.hidden = !this.#flowContent;
     setTextIfChanged(operationsCount, countText);
-    // Screen readers announce this live region on mutation, so the text is
-    // only rewritten when the visible count actually changes — a keystroke
-    // that narrows the query without changing the result count stays silent.
-    if (query) {
-      if (this.#announcedCount !== visible.length) {
-        this.#announcedCount = visible.length;
-        setTextIfChanged(
-          status,
-          `${visible.length} of ${this.#sorted.length} operations shown`,
-        );
-      }
-    } else {
-      this.#announcedCount = null;
-      setTextIfChanged(status, "");
-    }
     if (input.value !== this.#filter) input.value = this.#filter;
 
     empty.hidden = visible.length > 0;
@@ -469,6 +456,28 @@ export class OBIExplorerElement extends OpenBindingsElement {
     }
 
     this.#renderSources(refs);
+    // Announced AFTER the sources render so both counts come from THIS pass
+    // (rev 17.15): one filter narrows two lists, and the live region reports
+    // the whole result, not half of it. Rewritten only when the visible
+    // operation count actually changes, so a keystroke that narrows the
+    // query without changing results stays silent.
+    if (query) {
+      if (this.#announcedCount !== visible.length) {
+        this.#announcedCount = visible.length;
+        const parts = [
+          `${visible.length} of ${this.#sorted.length} operations shown`,
+        ];
+        if (this.#totalSources > 0) {
+          parts.push(
+            `${this.#visibleSources} of ${this.#totalSources} sources shown`,
+          );
+        }
+        setTextIfChanged(status, parts.join(", "));
+      }
+    } else {
+      this.#announcedCount = null;
+      setTextIfChanged(status, "");
+    }
   }
 
   /**
@@ -509,6 +518,11 @@ export class OBIExplorerElement extends OpenBindingsElement {
       countNode,
       query ? `${visible.length} / ${sources.length}` : String(sources.length),
     );
+    // The live region announces BOTH lists (rev 17.15): one filter narrows
+    // operations and sources, so an announcement naming only operations
+    // under-reports what just changed.
+    this.#visibleSources = visible.length;
+    this.#totalSources = sources.length;
     list.hidden = visible.length === 0;
 
     reconcile(list, visible, {
@@ -757,8 +771,12 @@ const SHELL = `
       <button class="description-toggle" type="button" hidden></button>
     </div>
     <label class="filter-label">
-      <span class="sr-only">Filter operations</span>
-      <input part="filter" type="search" placeholder="Filter operations" />
+      <!-- The rail is ONE scroller over everything the interface declares
+           (rev 15.1), so the filter narrows operations AND sources - and
+           whatever a later rev adds. The label stays generic rather than
+           enumerating a list that goes stale (rev 17.15). -->
+      <span class="sr-only">Filter this interface</span>
+      <input part="filter" type="search" placeholder="Filter" />
     </label>
     <span class="filter-status sr-only" role="status"></span>
     <div class="operations-heading" part="operations-heading" hidden>
