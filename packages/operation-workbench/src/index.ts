@@ -2653,7 +2653,8 @@ const styles = `
     border-radius: 0;
   }
 
-  :host([flush]) .input-editor::part(container) {
+  /* json-editor's frame part is "frame", not "container" (rev 17.11.1). */
+  :host([flush]) .input-editor::part(frame) {
     height: 100%;
     border: 0;
     border-radius: 0;
@@ -3174,7 +3175,7 @@ const styles = `
     min-height: 0;
   }
 
-  .output-editor::part(container) {
+  .output-editor::part(frame) {
     height: 100%;
     border: 0;
     border-radius: 0;
