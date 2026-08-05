@@ -24,6 +24,33 @@ export class OperationDetailElement extends OpenBindingsElement {
   #obi: OBInterface | null = null;
   #operationKey: string | null = null;
   #selectedBindingKey: string | null = null;
+
+  static get observedAttributes(): string[] {
+    return ["hide-schemas"];
+  }
+
+  attributeChangedCallback(
+    name: string,
+    _oldValue: string | null,
+    value: string | null,
+  ): void {
+    if (name === "hide-schemas") this.hideSchemas = value !== null;
+  }
+
+  /**
+   * Hides the declared input/output schema sections for hosts that present
+   * the contract elsewhere — the workbench's SCHEMAS strip (rev 17.12),
+   * which shows both schemas in the invocation's own column geometry. Same
+   * host-chrome grammar as hideIdentity/hideRun/flush: standalone consumers
+   * keep the full card by default.
+   */
+  get hideSchemas(): boolean {
+    return this.hasAttribute("hide-schemas");
+  }
+
+  set hideSchemas(value: boolean) {
+    this.toggleAttribute("hide-schemas", Boolean(value));
+  }
   // True until the next successful render of the bindings disclosure applies
   // the default open state. Raised only when the operation identity changes,
   // so a user's manual toggle survives every other re-render (selection
@@ -451,6 +478,10 @@ const styles = `
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
     gap: var(--_ob-space);
+  }
+
+  :host([hide-schemas]) .schemas {
+    display: none;
   }
 
   pre {

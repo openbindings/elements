@@ -17,6 +17,7 @@ const packages = [
   "operation-graph-editor",
   "operation-tabs",
   "operation-workbench",
+  "schema-split",
 ];
 const packagesWithoutDefine = new Set(["ui-core", "operation-graph-model"]);
 const temporary = await mkdtemp(resolve(tmpdir(), "openbindings-elements-pack-"));

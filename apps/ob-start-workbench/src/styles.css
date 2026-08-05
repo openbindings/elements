@@ -824,7 +824,8 @@ textarea {
 .tab-content {
   --sheet-size: 45%;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) 1px minmax(0, var(--sheet-size));
+  /* detail | SCHEMAS strip | gutter | INVOCATION sheet (rev 17.12) */
+  grid-template-rows: minmax(0, 1fr) auto 1px minmax(0, var(--sheet-size));
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -834,7 +835,7 @@ textarea {
    must shrink to TWO rows, or the sheet auto-places into a 0-height track
    and its strip renders off-viewport. */
 .tab-content.sheet-collapsed {
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto auto;
 }
 
 .tab-content.sheet-collapsed > #sheet-gutter {
@@ -851,7 +852,8 @@ textarea {
 }
 
 .tab-content.no-session > #sheet-gutter,
-.tab-content.no-session > .invocation-sheet {
+.tab-content.no-session > .invocation-sheet,
+.tab-content.no-session > .schemas-strip {
   display: none;
 }
 
@@ -934,6 +936,70 @@ textarea {
 
 #sheet-run[hidden] {
   display: none;
+}
+
+/* The SCHEMAS strip (rev 17.12): the contract over the cockpit, same
+   split axis. The strip owns its height; panes scroll within. */
+.schemas-strip {
+  display: grid;
+  grid-template-rows: auto minmax(0, auto);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--page-border);
+}
+
+.schemas-content {
+  height: clamp(6rem, 18vh, 14rem);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.schemas-strip.collapsed .schemas-content {
+  display: none;
+}
+
+.schemas-strip.collapsed .sheet-header {
+  border-bottom: 0;
+}
+
+.sheet-spacer {
+  flex: 1 1 auto;
+}
+
+#schema-split {
+  display: block;
+  height: 100%;
+  min-height: 0;
+}
+
+#schemas-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.7rem;
+  min-height: 1.6rem;
+  padding: 0.2rem;
+  color: var(--page-muted);
+  background: transparent;
+  border: 1px solid transparent;
+}
+
+#schemas-toggle:hover {
+  color: var(--page-text);
+  background: var(--page-surface);
+  border-color: var(--page-border);
+}
+
+/* System disclosure semantics: open points down, closed points right. */
+#schemas-toggle .disclosure-chevron {
+  margin-top: -0.15rem;
+  transform: rotate(45deg);
+}
+
+.schemas-strip.collapsed #schemas-toggle .disclosure-chevron {
+  margin-top: 0;
+  transform: rotate(-45deg);
 }
 
 #sheet-toggle {

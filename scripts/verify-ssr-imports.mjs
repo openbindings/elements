@@ -9,6 +9,7 @@ const packages = [
   { name: "obi-explorer", expected: "OBIExplorerElement", define: true },
   { name: "operation-detail", expected: "OperationDetailElement", define: true },
   { name: "source-detail", expected: "SourceDetailElement", define: true },
+  { name: "schema-split", expected: "SchemaSplitElement", define: true },
   {
     name: "operation-graph-model",
     expected: "layoutOperationGraph",

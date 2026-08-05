@@ -10,6 +10,8 @@ import {
   type OperationInvokerOutputFrame,
 } from "@openbindings/operation-workbench";
 import "@openbindings/operation-workbench/define";
+import "@openbindings/schema-split/define";
+import type { SchemaSplitElement } from "@openbindings/schema-split";
 import {
   fetchInterface,
   OperationInvoker,
@@ -134,6 +136,9 @@ const sheetStatus = requiredElement<HTMLElement>("#sheet-status");
 const sheetDot = requiredElement<HTMLElement>("#sheet-dot");
 const sheetRun = requiredElement<HTMLButtonElement>("#sheet-run");
 const sheetToggle = requiredElement<HTMLButtonElement>("#sheet-toggle");
+const schemasStrip = requiredElement<HTMLElement>("#schemas-strip");
+const schemasToggle = requiredElement<HTMLButtonElement>("#schemas-toggle");
+const schemaSplit = requiredElement<SchemaSplitElement>("#schema-split");
 const confirmationDialog = requiredElement<HTMLDialogElement>(
   "#confirmation-dialog",
 );
@@ -208,6 +213,7 @@ const defaultWorkspaceLayout: WorkspaceLayout = {
   railWidth: 352,
   sourceWidth: 420,
   execSplit: 0.5,
+  schemas: true,
 };
 const DEFAULT_SHEET_RATIO = 0.45;
 const SHEET_RATIO_MIN = 0.05;
@@ -384,14 +390,45 @@ explorer.addEventListener("ob-source-select", event => {
 // layout (the element never persists; that policy lives here).
 invocationSessions.addEventListener("ob-layout-change", event => {
   const layoutEvent = event as CustomEvent<{ splitRatio: number }>;
-  workspaceLayout.execSplit = layoutEvent.detail.splitRatio;
+  applyExecSplit(layoutEvent.detail.splitRatio);
+});
+
+// ONE split axis (rev 17.12): resizing either strip moves both — the schema
+// columns sit directly over the cockpit columns by construction.
+schemaSplit.addEventListener("ob-layout-change", event => {
+  const layoutEvent = event as CustomEvent<{ splitRatio: number }>;
+  applyExecSplit(layoutEvent.detail.splitRatio);
+});
+
+function applyExecSplit(ratio: number): void {
+  workspaceLayout.execSplit = ratio;
   for (const session of sessionsById.values()) {
     if (session.kind === "operation") {
-      session.element.splitRatio = workspaceLayout.execSplit;
+      session.element.splitRatio = ratio;
     }
   }
+  schemaSplit.splitRatio = ratio;
+  persistWorkspaceLayout();
+}
+
+// The SCHEMAS strip collapse (rev 17.12): same law as the sheet — the
+// header row never moves, the chevron is pinned far right.
+schemasToggle.addEventListener("click", () => {
+  workspaceLayout = { ...workspaceLayout, schemas: !workspaceLayout.schemas };
+  applySchemasStrip();
   persistWorkspaceLayout();
 });
+
+function applySchemasStrip(): void {
+  const expanded = workspaceLayout.schemas;
+  schemasStrip.classList.toggle("collapsed", !expanded);
+  schemasToggle.setAttribute("aria-expanded", String(expanded));
+  const label = expanded
+    ? "Collapse the schemas strip"
+    : "Expand the schemas strip";
+  schemasToggle.title = label;
+  schemasToggle.setAttribute("aria-label", label);
+}
 
 // The invocation element's own compact selector emits the same intent event;
 // keep the contract view in sync with it.
@@ -516,6 +553,11 @@ function applySheetLayout(): void {
     updateSheetStatus();
     return;
   }
+  // The SCHEMAS strip mirrors the active operation on the shared axis.
+  schemaSplit.obi = targetInterface;
+  schemaSplit.operationKey = session.operationKey;
+  schemaSplit.splitRatio = workspaceLayout.execSplit;
+  applySchemasStrip();
   tabContent.classList.toggle("sheet-collapsed", session.collapsed);
   tabContent.style.setProperty(
     "--sheet-size",
@@ -1325,6 +1367,7 @@ function updateCurrentTarget(
   explorer.obi = obi;
   sourceDetail.obi = obi;
   detail.obi = obi;
+  schemaSplit.obi = obi;
   // The editor is the source of truth (rev 17.10.1): a commit that came FROM
   // the editor is only acknowledged (baseline), never written back — the
   // write-back reformatted the buffer and reset the caret to the top while
@@ -2672,6 +2715,8 @@ interface WorkspaceLayout {
   railWidth: number;
   sourceWidth: number;
   execSplit: number;
+  /** The SCHEMAS strip's expanded state (rev 17.12). */
+  schemas: boolean;
 }
 
 function applyWorkspaceLayout(): void {
@@ -2758,6 +2803,10 @@ function restoreWorkspaceLayout(): WorkspaceLayout {
         typeof parsed.execSplit === "number"
           ? clamp(parsed.execSplit, 0.2, 0.8)
           : defaultWorkspaceLayout.execSplit,
+      schemas:
+        typeof parsed.schemas === "boolean"
+          ? parsed.schemas
+          : defaultWorkspaceLayout.schemas,
     };
   } catch {
     return { ...defaultWorkspaceLayout };

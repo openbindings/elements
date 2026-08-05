@@ -87,6 +87,49 @@ test("the embedded workbench invokes ob start through its published interface", 
   await expect(page.locator("#sheet-run")).toBeEnabled();
 });
 
+test("the schemas strip shows the contract over the cockpit on one shared axis", async ({
+  page,
+}) => {
+  // Wide enough that the invocation area clears the element's 36rem
+  // narrow-fallback threshold and actually renders the split cockpit.
+  await page.setViewportSize({ width: 1760, height: 900 });
+  await page.goto("/#token=test-token");
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+
+  // describe declares no input and a $ref output: one quiet empty pane, one
+  // highlighted code block (rev 17.12).
+  const split = page.locator("#schema-split");
+  await expect(page.locator("#schemas-strip")).toBeVisible();
+  await expect(split.locator(".input-empty")).toBeVisible();
+  await expect(split.locator(".input-empty")).toHaveText("No input schema.");
+  await expect(split.locator('[part~="output-schema"]')).toBeVisible();
+  await expect(split.locator('[part~="output-schema"]')).toContainText("{");
+
+  // The detail tab no longer duplicates the contract (hideSchemas).
+  await expect(
+    page.locator("ob-operation-detail").locator(".schemas"),
+  ).toBeHidden();
+
+  // ONE split axis: a keyboard step on the COCKPIT gutter moves the schema
+  // strip's gutter too — the columns align by construction.
+  const cockpitGutter = page
+    .locator("ob-operation-workbench:not([hidden])")
+    .locator('[part~="layout-gutter"]');
+  await cockpitGutter.focus();
+  await cockpitGutter.press("ArrowRight");
+  await expect(split.locator(".layout-gutter")).toHaveAttribute(
+    "aria-valuenow",
+    "52",
+  );
+
+  // Collapse to the one-line strip and back; the header never moves.
+  await page.locator("#schemas-toggle").click();
+  await expect(page.locator("#schemas-content")).toBeHidden();
+  await expect(page.locator("#schemas-strip .sheet-title")).toBeVisible();
+  await page.locator("#schemas-toggle").click();
+  await expect(page.locator("#schemas-content")).toBeVisible();
+});
+
 test("the operation dependency becomes available when session context changes", async ({
   page,
 }) => {

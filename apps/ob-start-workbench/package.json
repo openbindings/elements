@@ -16,6 +16,7 @@
     "@openbindings/operation-graph-viewer": "workspace:^",
     "@openbindings/operation-tabs": "workspace:^",
     "@openbindings/operation-workbench": "workspace:^",
+    "@openbindings/schema-split": "workspace:^",
     "@openbindings/sdk": "link:../../../openbindings-ts/packages/sdk",
     "@openbindings/source-detail": "workspace:^",
     "@openbindings/ui-core": "workspace:^"

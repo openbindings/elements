@@ -14,10 +14,17 @@ import {
 import {
   OpenBindingsElement,
   Refs,
+  SPLIT_RATIO_MAX,
+  SPLIT_RATIO_MIN,
   adoptStyles,
   baseStyles,
+  bindSplitGutter,
+  clampSplitRatio,
   formatJSON,
+  railStyles,
   reconcile,
+  roundSplitRatio,
+  splitGutterStyles,
   type OperationSource,
 } from "@openbindings/ui-core";
 import type {
@@ -86,9 +93,6 @@ export type OperationWorkbenchLayout = "stacked" | "split";
 const SEQUENCE_FORM_REASON =
   'Form view edits one JSON value. Switch the cardinality to "One value" to use it.';
 
-const SPLIT_RATIO_MIN = 0.2;
-const SPLIT_RATIO_MAX = 0.8;
-const SPLIT_RATIO_STEP = 0.02;
 /** Below this container width, split presentation falls back to stacked. */
 const NARROW_FALLBACK_REM = 36;
 
@@ -247,8 +251,6 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
   #splitRatio = 0.5;
   #narrow = false;
   #layoutObserver: ResizeObserver | null = null;
-  #dragBounds: { left: number; width: number } | null = null;
-  #dragChanged = false;
 
   static get observedAttributes(): string[] {
     return ["layout", "hide-identity", "hide-run", "flush"];
@@ -320,7 +322,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     // the accessibility tree *before* their content changes, or assistive
     // technology announces nothing — rebuilding them on every render is why
     // status and output updates used to be silent.
-    adoptStyles(root, baseStyles, styles, CODE_BLOCK_STYLES);
+    adoptStyles(root, baseStyles, railStyles, splitGutterStyles, styles, CODE_BLOCK_STYLES);
     root.innerHTML = CONTENT_SHELL;
     this.#refs = new Refs(root);
     this.#contentRoot = this.#refs.find(".render-root");
@@ -931,81 +933,29 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
   }
 
   /**
-   * Pointer and keyboard resize for the split gutter. The pointer path uses
-   * pointer capture so a fast drag that leaves the 8px hit zone keeps
-   * resizing; movement mutates state silently and ob-layout-change fires
-   * once, at drag end. Keyboard steps emit per effective change.
+   * Split resize through the ui-core gutter binding (rev 17.12): movement
+   * mutates silently, ob-layout-change fires once at drag end and per
+   * effective keyboard step. One implementation for every strip on the
+   * split axis.
    */
   #bindLayoutGutter(gutter: HTMLElement): void {
-    const endDrag = (event: Event) => {
-      if (this.#dragBounds === null) return;
-      this.#dragBounds = null;
-      gutter.classList.remove("dragging");
-      const pointerID = (event as PointerEvent).pointerId;
-      try {
-        gutter.releasePointerCapture?.(pointerID);
-      } catch {
-        // The capture may already be gone (pointercancel, jsdom).
-      }
-      if (this.#dragChanged) {
-        this.#dragChanged = false;
+    bindSplitGutter(gutter, {
+      ratio: () => this.#splitRatio,
+      bounds: () => {
+        const workspace = this.#refs?.find(".workspace");
+        if (!workspace) return null;
+        const rect = workspace.getBoundingClientRect();
+        return { left: rect.left, width: rect.width };
+      },
+      resize: next => {
+        this.#splitRatio = next;
+        this.requestRender();
+      },
+      commit: next => {
         this.emit<LayoutChangeDetail>("ob-layout-change", {
-          splitRatio: this.#splitRatio,
+          splitRatio: next,
         });
-      }
-    };
-
-    gutter.addEventListener("pointerdown", event => {
-      const pointer = event as PointerEvent;
-      if (pointer.button !== 0) return;
-      const workspace = this.#refs?.find(".workspace");
-      if (!workspace) return;
-      const bounds = workspace.getBoundingClientRect();
-      if (bounds.width <= 0) return;
-      this.#dragBounds = { left: bounds.left, width: bounds.width };
-      this.#dragChanged = false;
-      gutter.classList.add("dragging");
-      try {
-        gutter.setPointerCapture?.(pointer.pointerId);
-      } catch {
-        // jsdom tracks no pointers; capture is progressive enhancement there.
-      }
-      pointer.preventDefault();
-    });
-
-    gutter.addEventListener("pointermove", event => {
-      const bounds = this.#dragBounds;
-      if (bounds === null) return;
-      const pointer = event as PointerEvent;
-      const next = clampSplitRatio(
-        (pointer.clientX - bounds.left) / bounds.width,
-      );
-      if (next === this.#splitRatio) return;
-      this.#splitRatio = next;
-      this.#dragChanged = true;
-      this.requestRender();
-    });
-
-    gutter.addEventListener("pointerup", endDrag);
-    gutter.addEventListener("pointercancel", endDrag);
-
-    gutter.addEventListener("keydown", event => {
-      const key = (event as KeyboardEvent).key;
-      let target: number | null = null;
-      if (key === "ArrowLeft") target = this.#splitRatio - SPLIT_RATIO_STEP;
-      else if (key === "ArrowRight") {
-        target = this.#splitRatio + SPLIT_RATIO_STEP;
-      } else if (key === "Home") target = SPLIT_RATIO_MIN;
-      else if (key === "End") target = SPLIT_RATIO_MAX;
-      if (target === null) return;
-      event.preventDefault();
-      const next = clampSplitRatio(target);
-      if (next === this.#splitRatio) return;
-      this.#splitRatio = next;
-      this.requestRender();
-      this.emit<LayoutChangeDetail>("ob-layout-change", {
-        splitRatio: next,
-      });
+      },
     });
   }
 
@@ -1098,7 +1048,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       );
       workspace.style.setProperty(
         "--_ob-split-output",
-        `${roundRatio(1 - this.#splitRatio)}fr`,
+        `${roundSplitRatio(1 - this.#splitRatio)}fr`,
       );
     }
     const layoutGutter = refs.find(".layout-gutter");
@@ -1997,17 +1947,6 @@ function buildFieldHelp(text: string): HTMLElement {
   return help;
 }
 
-/** Rounds a ratio to 0.1% so keyboard steps stay exact decimals. */
-function roundRatio(value: number): number {
-  return Math.round(value * 1000) / 1000;
-}
-
-function clampSplitRatio(value: number): number {
-  return roundRatio(
-    Math.min(SPLIT_RATIO_MAX, Math.max(SPLIT_RATIO_MIN, value)),
-  );
-}
-
 /** The document's root font size in px, for the rem-based narrow threshold. */
 function rootFontSizePx(): number {
   if (typeof document === "undefined" || typeof getComputedStyle !== "function") {
@@ -2630,10 +2569,6 @@ const styles = `
     gap: 0;
   }
 
-  :host([flush]) .tool-rail {
-    padding: 0.35rem 0.3rem;
-  }
-
   :host([flush]) .workspace.split {
     min-height: 0;
   }
@@ -2662,27 +2597,6 @@ const styles = `
 
   :host([flush]) .error {
     margin: 0.5rem;
-  }
-
-  /* The one divider: the gutter always draws its hairline in flush, and
-     widens to the grab affordance on interaction. It carries the panes'
-     surface so the two sides read as one field split by a line — never a
-     channel of host background. */
-  :host([flush]) .layout-gutter {
-    width: 0.5rem;
-    background: var(--_ob-code-surface);
-    border-radius: 0;
-  }
-
-  :host([flush]) .layout-gutter-handle {
-    width: 1px;
-    background: var(--_ob-color-border);
-  }
-
-  :host([flush]) .layout-gutter:hover .layout-gutter-handle,
-  :host([flush]) .layout-gutter:focus-visible .layout-gutter-handle,
-  :host([flush]) .layout-gutter.dragging .layout-gutter-handle {
-    width: 3px;
   }
 
   :host([hide-identity]) header > .identity,
@@ -2802,32 +2716,9 @@ const styles = `
     min-height: 13rem;
   }
 
-  .tool-rail {
-    display: flex;
-    flex: none;
-    flex-direction: column;
-    gap: 0.3rem;
-    align-items: center;
-  }
-
-  .tool-rail > button,
-  .input-view-toggle button {
-    display: grid;
-    width: 2.1rem;
-    min-height: 2.1rem;
-    padding: 0;
-    place-items: center;
-    color: var(--_ob-color-text-muted);
-    background: var(--_ob-color-background);
-  }
-
-  .tool-rail svg {
-    width: 1rem;
-    height: 1rem;
-  }
-
-  .tool-rail > button:not(:disabled, [aria-pressed="true"], .run, .cancel):hover,
-  .input-view-toggle button:not(:disabled, [aria-pressed="true"]):hover {
+  /* Rail geometry comes from ui-core railStyles (the alignment contract);
+     only the workbench's own hover treatment lives here. */
+  .tool-rail button:not(:disabled, [aria-pressed="true"], .run, .cancel):hover {
     color: var(--_ob-color-text);
   }
 
@@ -2844,33 +2735,6 @@ const styles = `
 
   .workspace.narrow .tool-rail {
     flex-direction: row;
-  }
-
-  .layout-gutter {
-    display: flex;
-    align-items: stretch;
-    justify-content: center;
-    width: 0.65rem;
-    cursor: col-resize;
-    touch-action: none;
-    border-radius: 999px;
-  }
-
-  .layout-gutter-handle {
-    width: 3px;
-    background: transparent;
-    border-radius: 999px;
-  }
-
-  .layout-gutter:hover .layout-gutter-handle,
-  .layout-gutter:focus-visible .layout-gutter-handle,
-  .layout-gutter.dragging .layout-gutter-handle {
-    background: var(--_ob-color-border);
-  }
-
-  .layout-gutter:focus-visible {
-    outline: none;
-    box-shadow: var(--_ob-focus-ring);
   }
 
   .header-tools {

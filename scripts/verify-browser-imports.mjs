@@ -16,6 +16,7 @@ const packages = [
   "operation-graph-editor",
   "operation-tabs",
   "operation-workbench",
+  "schema-split",
 ];
 const forbiddenSpecifiers = [
   /^node:/,
