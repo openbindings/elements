@@ -14,6 +14,20 @@ import {
 export const OPERATION_DETAIL_TAG = "ob-operation-detail";
 
 /**
+ * A request to show a binding in the source document (rev 17.14). This is
+ * NAVIGATION, not selection: the rev-15 doctrine still holds — the cockpit's
+ * binding-select remains the only surface that CHOOSES a binding. Revealing
+ * where a binding is written changes nothing about what will run.
+ */
+export interface BindingRevealDetail {
+  bindingKey: string;
+}
+
+export interface OperationDetailEventMap {
+  "ob-binding-reveal": CustomEvent<BindingRevealDetail>;
+}
+
+/**
  * The operation contract, read-only. Rev 15 (binding roles): the bindings
  * disclosure is informational — it lists the operation's bindings and can
  * highlight the invocation's current choice via `selectedBindingKey`, but it
@@ -170,7 +184,19 @@ export class OperationDetailElement extends OpenBindingsElement {
       refs.require(".bindings-via"),
       selectedHere ? ` · via ${this.#selectedBindingKey}` : "",
     );
-    reconcile(refs.require(".binding-list"), bindingEntries, {
+    const bindingList = refs.require(".binding-list");
+    if (!bindingList.dataset.revealBound) {
+      bindingList.dataset.revealBound = "1";
+      bindingList.addEventListener("click", event => {
+        const row = (event.target as HTMLElement | null)?.closest<HTMLElement>(
+          "[data-binding-key]",
+        );
+        const bindingKey = row?.dataset.bindingKey;
+        if (!bindingKey) return;
+        this.emit<BindingRevealDetail>("ob-binding-reveal", { bindingKey });
+      });
+    }
+    reconcile(bindingList, bindingEntries, {
       key: ([bindingKey]) => bindingKey,
       create: () => createBindingRow(),
       update: (node, [bindingKey, binding]) => {
@@ -286,6 +312,22 @@ const SHELL = `
   </article>
 `;
 
+export interface OperationDetailElement {
+  addEventListener<K extends keyof OperationDetailEventMap>(
+    type: K,
+    listener: (
+      this: OperationDetailElement,
+      event: OperationDetailEventMap[K],
+    ) => void,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject | null,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+}
+
 declare global {
   interface HTMLElementTagNameMap {
     "ob-operation-detail": OperationDetailElement;
@@ -378,6 +420,13 @@ const styles = `
     font-family: var(--_ob-font-mono);
     letter-spacing: normal;
     text-transform: none;
+  }
+
+  /* Rows reveal their binding in the source document (rev 17.14) — the
+     cursor says so. Still no SELECTION: revealing where a binding is
+     written changes nothing about what runs (rev 15 doctrine). */
+  [part~="binding"] {
+    cursor: pointer;
   }
 
   .binding-list {

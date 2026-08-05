@@ -158,6 +158,16 @@ export class OBIEditorElement extends OpenBindingsElement {
     this.requestRender();
   }
 
+  /**
+   * Reveals a document path in the embedded source editor (rev 17.14):
+   * scrolls it into view only when off screen and flashes it, never
+   * touching focus or caret. Returns whether the path was found in the
+   * current buffer.
+   */
+  revealPath(path: ReadonlyArray<string | number>): boolean {
+    return this.#editor?.revealPath(path) ?? false;
+  }
+
   get format(): OBIDocumentFormat {
     return this.#format;
   }

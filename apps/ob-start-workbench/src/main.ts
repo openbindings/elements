@@ -380,14 +380,39 @@ explorer.hideIdentity = true;
 // inside the explorer, so its one filter narrows both sections natively.
 explorer.flowContent = true;
 
+/**
+ * Reveal-on-navigation (rev 17.14): the rail, tabs, detail and schemas are
+ * views onto ONE document, so navigating in any of them shows you where you
+ * are in the source. Deliberately gentle — the editor scrolls only when the
+ * target is off screen, and never takes focus or moves the caret (17.10.1).
+ * Called from EXPLICIT navigation only, never from a document re-render, so
+ * typing never yanks the viewport.
+ */
+function revealInDocument(path: ReadonlyArray<string | number>): void {
+  // Nothing to reveal into while the document panel is hidden.
+  if (!workspaceLayout.source) return;
+  interfaceEditor.revealPath(path);
+}
+
+function revealSession(session: WorkspaceSession | null | undefined): void {
+  if (!session) return;
+  revealInDocument(
+    session.kind === "operation"
+      ? ["operations", session.operationKey]
+      : ["sources", session.sourceKey],
+  );
+}
+
 explorer.addEventListener("ob-operation-select", event => {
   activateOperation(event.detail.operationKey);
+  revealInDocument(["operations", event.detail.operationKey]);
 });
 
 // Source overview rows (rev 16): the rail opens/focuses the source's
 // workspace tab; the detail lives there, not in the rail.
 explorer.addEventListener("ob-source-select", event => {
   activateSource(event.detail.sourceKey);
+  revealInDocument(["sources", event.detail.sourceKey]);
 });
 
 // Binding roles (rev 15): the operation detail's bindings disclosure is
@@ -541,6 +566,7 @@ invocationSessions.addEventListener("ob-binding-select", event => {
 
 operationTabs.addEventListener("ob-tab-activate", event => {
   focusSession(event.detail.key);
+  revealSession(sessionsById.get(event.detail.key));
 });
 
 operationTabs.addEventListener("ob-tab-close", event => {
@@ -802,6 +828,12 @@ interfaceEditor.addEventListener("ob-interface-edit", event => {
       bootstrapMessage.textContent = "";
     }
   }
+});
+
+// Binding rows reveal where the binding is WRITTEN (rev 17.14) — navigation,
+// not selection: the cockpit's binding-select still owns what actually runs.
+detail.addEventListener("ob-binding-reveal", event => {
+  revealInDocument(["bindings", event.detail.bindingKey]);
 });
 
 // The source tab's verbs (rev 16): each is an intent the app commits through

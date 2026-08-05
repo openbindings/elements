@@ -3,6 +3,7 @@ import {
   type Refs,
   baseStyles,
 } from "@openbindings/ui-core";
+import { locatePath, type LocateLanguage } from "./locate.js";
 import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import {
   defaultKeymap,
@@ -89,6 +90,7 @@ export class JSONEditorElement extends OpenBindingsElement {
   #placeholder = "";
   #label = "Document source";
   #errorLine: number | null = null;
+  #flashTimer: ReturnType<typeof setTimeout> | null = null;
   #suppressInput = false;
   #editor: EditorView | null = null;
   readonly #languageConfig = new Compartment();
@@ -162,6 +164,54 @@ export class JSONEditorElement extends OpenBindingsElement {
     this.requestRender();
   }
 
+  /**
+   * Scrolls the located document path into view and flashes it (rev 17.14).
+   * Returns whether the path was found in the CURRENT buffer — a draft that
+   * does not parse simply reports false; the invalid chip already explains
+   * why, so there is nothing to announce here.
+   *
+   * Deliberately gentle: focus and caret are never touched (17.10.1), and
+   * a target already on screen does not scroll at all — clicking through
+   * neighbouring operations moves nothing.
+   */
+  revealPath(path: ReadonlyArray<string | number>): boolean {
+    const view = this.#editor;
+    if (!view) return false;
+    const range = locatePath(
+      view.state,
+      path,
+      this.#language as LocateLanguage,
+    );
+    if (!range) return false;
+
+    const effects: StateEffect<unknown>[] = [setFlashRange.of(range)];
+    if (!this.#isVisible(range.from, range.to)) {
+      effects.push(EditorView.scrollIntoView(range.from, { y: "center" }));
+    }
+    view.dispatch({ effects });
+
+    if (this.#flashTimer !== null) clearTimeout(this.#flashTimer);
+    this.#flashTimer = setTimeout(() => {
+      this.#flashTimer = null;
+      this.#editor?.dispatch({ effects: setFlashRange.of(null) });
+    }, FLASH_MS);
+    return true;
+  }
+
+  /** Whether the range's start line is already inside the visible viewport. */
+  #isVisible(from: number, to: number): boolean {
+    const view = this.#editor;
+    if (!view) return false;
+    const scroller = view.scrollDOM;
+    const top = view.lineBlockAt(Math.min(from, view.state.doc.length)).top;
+    const bottom = view.lineBlockAt(Math.min(to, view.state.doc.length)).bottom;
+    const viewTop = scroller.scrollTop;
+    const viewBottom = viewTop + scroller.clientHeight;
+    // The START must be visible; a node taller than the viewport still
+    // counts as revealed once its head is on screen.
+    return top >= viewTop && Math.min(bottom, top + 1) <= viewBottom;
+  }
+
   /** Reformats the document with two-space indentation. */
   format(): boolean {
     if (this.#readOnly || this.#language !== "json") return false;
@@ -217,6 +267,7 @@ export class JSONEditorElement extends OpenBindingsElement {
           syntaxHighlighting(tokenColors),
           editorTheme,
           errorLineField,
+          flashField,
           this.#languageConfig.of(this.#language === "yaml" ? yaml() : json()),
           this.#readOnlyConfig.of(EditorState.readOnly.of(this.#readOnly)),
           this.#placeholderConfig.of(
@@ -284,6 +335,38 @@ export class JSONEditorElement extends OpenBindingsElement {
 
 }
 
+/** How long a reveal flash lingers before it decays away. */
+const FLASH_MS = 1200;
+
+/**
+ * A reveal flash (rev 17.14): a decaying highlight over a located range.
+ * Deliberately NOT a selection — selection would move the caret, and the
+ * caret belongs to whoever is typing (17.10.1).
+ */
+const setFlashRange = StateEffect.define<{ from: number; to: number } | null>();
+const flashDecoration = Decoration.mark({ class: "ob-reveal-flash" });
+const flashField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, transaction) {
+    value = value.map(transaction.changes);
+    for (const effect of transaction.effects) {
+      if (effect.is(setFlashRange)) {
+        value =
+          effect.value === null || effect.value.from >= effect.value.to
+            ? Decoration.none
+            : Decoration.set([
+                flashDecoration.range(
+                  Math.max(0, effect.value.from),
+                  Math.min(transaction.state.doc.length, effect.value.to),
+                ),
+              ]);
+      }
+    }
+    return value;
+  },
+  provide: field => EditorView.decorations.from(field),
+});
+
 /** Marks one 1-based line as the parse-error line, cleared with null. */
 const setErrorLine = StateEffect.define<number | null>();
 const errorLineDecoration = Decoration.line({ class: "ob-error-line" });
@@ -327,6 +410,14 @@ const editorTheme = EditorView.theme({
     fontFamily: "var(--_ob-font-mono)",
     lineHeight: "var(--_ob-editor-line-height)",
     overflow: "auto",
+  },
+  /* The reveal flash (rev 17.14): a soft accent wash that decays away.
+     Never a selection — the caret stays wherever the user left it. */
+  ".ob-reveal-flash": {
+    backgroundColor:
+      "color-mix(in srgb, var(--_ob-color-accent) 22%, transparent)",
+    borderRadius: "2px",
+    transition: "background-color var(--_ob-duration, 160ms) ease",
   },
   ".cm-content": {
     padding: "var(--_ob-editor-padding) 0",

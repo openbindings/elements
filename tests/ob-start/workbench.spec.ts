@@ -134,6 +134,55 @@ test("the schemas strip shows the contract over the cockpit on one shared axis",
   await expect(page.locator("#schemas-content")).toBeVisible();
 });
 
+test("navigating in the ui reveals the node in the source document", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1760, height: 900 });
+  await page.goto("/#token=test-token");
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+
+  const editor = page.locator("ob-obi-editor .editor");
+  const scrollTop = () =>
+    editor.evaluate(element => {
+      const scroller = (element as HTMLElement & {
+        shadowRoot: ShadowRoot;
+      }).shadowRoot.querySelector(".cm-scroller");
+      return Math.round(scroller?.scrollTop ?? -1);
+    });
+  // CodeMirror splits a mark decoration per line, so a multi-line node
+  // yields one flash span per line; the first carries the key.
+  const flash = editor.locator(".ob-reveal-flash");
+  const flashHead = flash.first();
+
+  // An operation far down the document: the editor scrolls to it and
+  // flashes the node — a reveal, not a selection (rev 17.14).
+  const explorer = page.locator("ob-obi-explorer");
+  await explorer.locator('input[type="search"]').fill("validateInterface");
+  await explorer.locator('[part~="operation"]').first().click();
+  await expect(flashHead).toContainText("openbindings.ob.validateInterface");
+  expect(await scrollTop()).toBeGreaterThan(0);
+
+  // Focus never leaves the rail: the caret belongs to whoever is typing.
+  expect(
+    await editor.evaluate(element =>
+      Boolean(
+        (element as HTMLElement & { shadowRoot: ShadowRoot }).shadowRoot
+          .activeElement,
+      ),
+    ),
+  ).toBe(false);
+
+  // A binding row reveals where the binding is WRITTEN — navigation, not
+  // selection: the cockpit's binding choice is untouched.
+  await page.locator('ob-operation-detail [part~="binding"]').first().click();
+  await expect(flashHead).toContainText(
+    "openbindings.ob.validateInterface.openapi",
+  );
+
+  // The flash decays on its own.
+  await expect(flash).toHaveCount(0, { timeout: 4000 });
+});
+
 test("the operation dependency becomes available when session context changes", async ({
   page,
 }) => {
