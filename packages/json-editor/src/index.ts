@@ -190,7 +190,17 @@ export class JSONEditorElement extends OpenBindingsElement {
           highlightActiveLine(),
           drawSelection(),
           history(),
-          foldGutter(),
+          // The system disclosure chevron (ui-core construction): CM's fold
+          // markers draw the same border-chevron every other collapse
+          // affordance uses — closed points right, open points down.
+          foldGutter({
+            markerDOM: open => {
+              const marker = document.createElement("span");
+              marker.className = `ob-fold-marker${open ? " open" : ""}`;
+              marker.setAttribute("aria-hidden", "true");
+              return marker;
+            },
+          }),
           indentOnInput(),
           bracketMatching(),
           closeBrackets(),
@@ -331,6 +341,20 @@ const editorTheme = EditorView.theme({
     border: "0",
     borderRight: "1px solid var(--_ob-color-border)",
     fontVariantNumeric: "tabular-nums",
+  },
+  // The system disclosure chevron (ui-core construction) for fold markers.
+  ".cm-foldGutter .ob-fold-marker": {
+    display: "inline-block",
+    width: "0.34em",
+    height: "0.34em",
+    margin: "0 0.2em",
+    borderRight: "1.5px solid currentColor",
+    borderBottom: "1.5px solid currentColor",
+    transform: "rotate(-45deg)",
+    transition: "transform var(--_ob-duration) ease",
+  },
+  ".cm-foldGutter .ob-fold-marker.open": {
+    transform: "rotate(45deg)",
   },
   ".cm-activeLine": {
     backgroundColor:

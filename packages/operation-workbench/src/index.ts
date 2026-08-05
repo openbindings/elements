@@ -2494,14 +2494,21 @@ const styles = `
     overflow: hidden;
   }
 
-  :host([hide-identity]) header > .identity {
+  :host([hide-identity]) header > .identity,
+  :host([hide-identity]) header .status {
     display: none;
   }
 
   /* With the identity hidden the header row is just the tools; right-align
-     them without the vanished block's flex partner. */
+     them without the vanished block's flex partner — and when the binding
+     bar is hidden too (single-binding operations) the row vanishes rather
+     than reserving an empty band. The host strip carries the status. */
   :host([hide-identity]) header {
     justify-content: flex-end;
+  }
+
+  :host([hide-identity]) header:not(:has(.binding-bar:not([hidden]))) {
+    display: none;
   }
 
   header, .section-heading, .actions, .input-options, .output-options {

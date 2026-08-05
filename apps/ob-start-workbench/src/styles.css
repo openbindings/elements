@@ -181,8 +181,28 @@ h3 {
 .target-indicator {
   width: 0.5rem;
   height: 0.5rem;
+  flex: none;
   background: var(--page-faint);
   border-radius: 50%;
+}
+
+/* The status-dot vocabulary, carried on the dot itself so any surface can
+   use it (the header pill, the invocation strip): green ready, amber
+   attention/running, red failed. */
+.status-dot[data-state="ready"] {
+  background: var(--success);
+  box-shadow: 0 0 0 0.2rem var(--success-soft);
+}
+
+.status-dot[data-state="attention"] {
+  background: var(--warning);
+  box-shadow: 0 0 0 0.2rem var(--warning-soft);
+}
+
+.status-dot[data-state="failed"] {
+  background: var(--danger);
+  box-shadow: 0 0 0 0.2rem
+    color-mix(in srgb, var(--danger) 18%, transparent);
 }
 
 .status-pill[data-state="ready"] .status-dot,
@@ -853,6 +873,7 @@ textarea {
 }
 
 .sheet-title {
+  flex: none;
   color: var(--page-muted);
   font-size: 0.68rem;
   font-weight: 700;
@@ -860,9 +881,13 @@ textarea {
   text-transform: uppercase;
 }
 
+#sheet-dot {
+  margin-left: 0.1rem;
+}
+
 .sheet-status {
   min-width: 0;
-  margin-right: auto;
+  flex: 1 1 auto;
   overflow: hidden;
   color: var(--page-muted);
   font-size: 0.72rem;
@@ -896,23 +921,27 @@ textarea {
   border: 1px solid transparent;
 }
 
-.sheet-chevron {
-  display: block;
-  width: 0.95rem;
-  height: 0.95rem;
+/* The system disclosure chevron (mirrors ui-core baseStyles for the app's
+   light DOM): borders in currentColor, no glyphs. */
+.disclosure-chevron {
+  display: inline-block;
+  width: 0.34rem;
+  height: 0.34rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transition: transform 120ms ease;
 }
 
-#sheet-toggle .chevron-up,
-.tab-content.sheet-collapsed #sheet-toggle .chevron-down {
-  display: none;
+/* Sheet edge semantics: expanded points down (collapse travels down),
+   collapsed points up. Same construction, contextual rotation. */
+#sheet-toggle .disclosure-chevron {
+  margin-top: -0.15rem;
+  transform: rotate(45deg);
 }
 
-.tab-content.sheet-collapsed #sheet-toggle .chevron-up {
-  display: block;
-}
-
-#sheet-status[hidden] {
-  display: none;
+.tab-content.sheet-collapsed #sheet-toggle .disclosure-chevron {
+  margin-top: 0.15rem;
+  transform: rotate(-135deg);
 }
 
 #sheet-toggle:hover {
@@ -1064,6 +1093,33 @@ ob-obi-editor::part(container) {
   height: 100%;
   border: 0;
   border-radius: 0;
+}
+
+/* Light-DOM disclosures share the system marker (ui-core construction). */
+summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+summary::before {
+  display: inline-block;
+  width: 0.34em;
+  height: 0.34em;
+  margin-right: 0.55em;
+  vertical-align: 0.1em;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  content: "";
+  transform: rotate(-45deg);
+  transition: transform 120ms ease;
+}
+
+details[open] > summary::before {
+  transform: rotate(45deg);
 }
 
 dialog {

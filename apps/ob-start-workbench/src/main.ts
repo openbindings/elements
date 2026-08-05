@@ -132,6 +132,7 @@ const sheetGutter = requiredElement<HTMLElement>("#sheet-gutter");
 const sourceGutter = requiredElement<HTMLElement>("#source-gutter");
 const tabContent = requiredElement<HTMLElement>("#tab-content");
 const sheetStatus = requiredElement<HTMLElement>("#sheet-status");
+const sheetDot = requiredElement<HTMLElement>("#sheet-dot");
 const sheetRun = requiredElement<HTMLButtonElement>("#sheet-run");
 const sheetToggle = requiredElement<HTMLButtonElement>("#sheet-toggle");
 const confirmationDialog = requiredElement<HTMLDialogElement>(
@@ -474,11 +475,10 @@ function applySheetLayout(): void {
   sheetToggle.title = toggleLabel;
   sheetToggle.setAttribute("aria-label", toggleLabel);
   // The Run button is the collapsed strip's standing invitation; expanded,
-  // the workbench has its own Run. Same rule for the strip's status: it
-  // reports only for a hidden invocation — expanded, the workbench's own
-  // status is visible below (rev 17.1).
+  // the workbench has its own Run. The status keeps ONE home — this strip,
+  // same slot in both states (rev 17.2): controls that jump between rows
+  // cost more than they save.
   sheetRun.hidden = !session.collapsed;
-  sheetStatus.hidden = !session.collapsed;
   updateSheetStatus();
 }
 
@@ -490,16 +490,33 @@ function applySheetLayout(): void {
 function updateSheetStatus(): void {
   const session = activeSession();
   const status = session?.status ?? { state: "idle" as const };
-  let text = "Ready";
+  const capable = Boolean(obInvoker) && sessionAuth === "verified";
+  // The dot is the status (fixed anchor beside the title): green ready,
+  // amber running, red not. Run reports print in the flexible middle —
+  // appearing text never moves the dot (left-anchored) or the chevron
+  // (right-anchored).
+  let dot: "ready" | "attention" | "failed" = capable ? "ready" : "failed";
+  let label = capable ? "Ready" : "No invoker available";
+  let text = "";
   let danger = false;
-  if (status.state === "running") text = "running…";
-  else if (status.state === "done") {
+  if (status.state === "running") {
+    dot = "attention";
+    label = "Invocation running";
+    text = "running…";
+  } else if (status.state === "done") {
     const count = status.outputCount ?? 0;
+    dot = capable ? "ready" : "failed";
     text = `${count} value${count === 1 ? "" : "s"} · ${formatDuration(status.durationMs ?? 0)}`;
+    label = `Completed: ${text}`;
   } else if (status.state === "failed") {
+    dot = "failed";
     text = `failed · ${status.code ?? "ERROR"}`;
+    label = `Invocation ${text}`;
     danger = true;
   }
+  sheetDot.dataset.state = dot;
+  sheetDot.setAttribute("aria-label", label);
+  sheetDot.title = label;
   sheetStatus.textContent = text;
   sheetStatus.classList.toggle("danger", danger);
 }
@@ -1010,6 +1027,9 @@ function applySessionProbe(result: SessionProbeResult): void {
   if (!wasVerified && sessionAuth === "verified" && targetInterface) {
     void refreshDocumentValidity(targetInterface);
   }
+  // The sheet strip's idle text depends on invoker capability — repaint it
+  // whenever verification lands or lapses, or it reports a stale state.
+  updateSheetStatus();
   if (result === "rejected") {
     setConnectionPanel(true);
     tokenInput.focus();

@@ -47,6 +47,36 @@ export const baseStyles = `
     box-sizing: inherit;
   }
 
+  /* The system disclosure marker: one chevron construction everywhere a
+     <summary> (or a host-drawn toggle) folds content. Drawn with borders in
+     currentColor — no glyphs, no image assets — closed points right, open
+     points down, turning over --_ob-duration. */
+  summary {
+    cursor: pointer;
+    list-style: none;
+  }
+
+  summary::-webkit-details-marker {
+    display: none;
+  }
+
+  summary::before {
+    display: inline-block;
+    width: 0.34em;
+    height: 0.34em;
+    margin-right: 0.55em;
+    vertical-align: 0.1em;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    content: "";
+    transform: rotate(-45deg);
+    transition: transform var(--_ob-duration) ease;
+  }
+
+  details[open] > summary::before {
+    transform: rotate(45deg);
+  }
+
   button, input, textarea, select {
     color: inherit;
     font: inherit;
