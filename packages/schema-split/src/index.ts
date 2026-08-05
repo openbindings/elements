@@ -7,6 +7,7 @@ import {
   baseStyles,
   bindSplitGutter,
   clampSplitRatio,
+  observeSplitWidth,
   railStyles,
   roundSplitRatio,
   splitGutterStyles,
@@ -48,6 +49,8 @@ export class SchemaSplitElement extends OpenBindingsElement {
   #refs: Refs | null = null;
   #copiedSide: "input" | "output" | null = null;
   #copyTimer: ReturnType<typeof setTimeout> | null = null;
+  #narrow = false;
+  #layoutObserver: ResizeObserver | null = null;
 
   static get observedAttributes(): string[] {
     return ["flush"];
@@ -83,6 +86,28 @@ export class SchemaSplitElement extends OpenBindingsElement {
     root.innerHTML = SHELL;
     this.#refs = new Refs(root);
     this.#bind();
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    // The invocation cockpit falls back to stacked below the shared narrow
+    // threshold; the schemas strip is its MIRROR, so it flips with it —
+    // one stacked and one split would be worse than no mirror at all
+    // (rev 17.14.1).
+    if (!this.#layoutObserver) {
+      const workspace = this.#refs?.find(".workspace");
+      if (workspace) {
+        this.#layoutObserver = observeSplitWidth(workspace, narrow => {
+          this.#narrow = narrow;
+          this.requestRender();
+        });
+      }
+    }
+  }
+
+  disconnectedCallback(): void {
+    this.#layoutObserver?.disconnect();
+    this.#layoutObserver = null;
   }
 
   get obi(): OBInterface | null {
@@ -229,6 +254,7 @@ export class SchemaSplitElement extends OpenBindingsElement {
     if (empty) empty.hidden = true;
     if (workspace) {
       workspace.hidden = false;
+      workspace.classList.toggle("narrow", this.#narrow);
       workspace.style.setProperty("--_ob-split-input", `${this.#splitRatio}fr`);
       workspace.style.setProperty(
         "--_ob-split-output",
@@ -236,6 +262,8 @@ export class SchemaSplitElement extends OpenBindingsElement {
       );
     }
     const gutter = refs.find(".layout-gutter");
+    // Stacked: there is no left/right to resize.
+    if (gutter) gutter.hidden = this.#narrow;
     gutter?.setAttribute(
       "aria-valuenow",
       String(Math.round(this.#splitRatio * 100)),
@@ -413,6 +441,29 @@ const styles = `
 
   .workspace[hidden] {
     display: none;
+  }
+
+  /* Stacked fallback (rev 17.14.1), mirroring the cockpit exactly: one
+     column, two rows, no gutter, rails turned horizontal. */
+  .workspace.narrow {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .workspace.narrow .layout-gutter {
+    display: none;
+  }
+
+  .workspace.narrow .input-column {
+    flex-direction: column;
+  }
+
+  .workspace.narrow .output-column {
+    flex-direction: column-reverse;
+  }
+
+  .workspace.narrow .tool-rail {
+    flex-direction: row;
   }
 
   .input-column,

@@ -184,11 +184,8 @@ export class JSONEditorElement extends OpenBindingsElement {
     );
     if (!range) return false;
 
-    const effects: StateEffect<unknown>[] = [setFlashRange.of(range)];
-    if (!this.#isVisible(range.from, range.to)) {
-      effects.push(EditorView.scrollIntoView(range.from, { y: "center" }));
-    }
-    view.dispatch({ effects });
+    view.dispatch({ effects: [setFlashRange.of(range)] });
+    if (!this.#isVisible(range.from, range.to)) this.#scrollTo(range.from);
 
     if (this.#flashTimer !== null) clearTimeout(this.#flashTimer);
     this.#flashTimer = setTimeout(() => {
@@ -196,6 +193,26 @@ export class JSONEditorElement extends OpenBindingsElement {
       this.#editor?.dispatch({ effects: setFlashRange.of(null) });
     }, FLASH_MS);
     return true;
+  }
+
+  /**
+   * Centres a position by scrolling THIS editor's scroller and nothing else.
+   *
+   * CodeMirror's own scrollIntoView effect walks up the DOM and scrolls every
+   * ancestor scroll container it finds. `overflow: hidden` suppresses a
+   * scrollbar but NOT programmatic scrolling, so in an app whose frame is a
+   * full-viewport hidden-overflow layout that walk shoves the entire
+   * application off-screen with no scrollbar to bring it back (dogfood, rev
+   * 17.14.1). Reveal is a local act: it moves one scroller.
+   */
+  #scrollTo(position: number): void {
+    const view = this.#editor;
+    if (!view) return;
+    const scroller = view.scrollDOM;
+    const block = view.lineBlockAt(Math.min(position, view.state.doc.length));
+    const centred = block.top - (scroller.clientHeight - block.height) / 2;
+    const maximum = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    scroller.scrollTop = Math.max(0, Math.min(centred, maximum));
   }
 
   /** Whether the range's start line is already inside the visible viewport. */

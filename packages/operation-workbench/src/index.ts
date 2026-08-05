@@ -21,6 +21,7 @@ import {
   bindSplitGutter,
   clampSplitRatio,
   formatJSON,
+  observeSplitWidth,
   railStyles,
   reconcile,
   roundSplitRatio,
@@ -93,8 +94,7 @@ export type OperationWorkbenchLayout = "stacked" | "split";
 const SEQUENCE_FORM_REASON =
   'Form view edits one JSON value. Switch the cardinality to "One value" to use it.';
 
-/** Below this container width, split presentation falls back to stacked. */
-const NARROW_FALLBACK_REM = 36;
+
 
 type DependencyResolution = OperationRequirementResolution<
   OperationInvokerInputFrame,
@@ -571,20 +571,15 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     }
     // Reconnect-safe narrow-width watcher: created and observing while
     // connected, disconnected on removal, recreated on reinsertion.
-    if (typeof ResizeObserver === "function" && !this.#layoutObserver) {
+    if (!this.#layoutObserver) {
       const workspace = this.#refs?.find(".workspace");
+      // ONE threshold, ONE watcher (rev 17.14.1): the schemas strip measures
+      // the same column, so the two strips cannot disagree about stacking.
       if (workspace) {
-        this.#layoutObserver = new ResizeObserver(entries => {
-          const width = entries[entries.length - 1]?.contentRect.width;
-          if (typeof width !== "number") return;
-          const narrow =
-            width > 0 && width < NARROW_FALLBACK_REM * rootFontSizePx();
-          if (narrow !== this.#narrow) {
-            this.#narrow = narrow;
-            this.requestRender();
-          }
+        this.#layoutObserver = observeSplitWidth(workspace, narrow => {
+          this.#narrow = narrow;
+          this.requestRender();
         });
-        this.#layoutObserver.observe(workspace);
       }
     }
     this.#resolveDependency();
@@ -1952,17 +1947,6 @@ function buildFieldHelp(text: string): HTMLElement {
   help.className = "form-help";
   help.textContent = text;
   return help;
-}
-
-/** The document's root font size in px, for the rem-based narrow threshold. */
-function rootFontSizePx(): number {
-  if (typeof document === "undefined" || typeof getComputedStyle !== "function") {
-    return 16;
-  }
-  const size = Number.parseFloat(
-    getComputedStyle(document.documentElement).fontSize,
-  );
-  return Number.isFinite(size) && size > 0 ? size : 16;
 }
 
 /**

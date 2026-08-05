@@ -6,6 +6,14 @@
  * the ratio math, the gutter interaction, and the rail / gutter geometry.
  */
 
+/**
+ * Below this container width a split falls back to STACKED. Shared so every
+ * strip on the axis flips together: the schemas strip and the invocation
+ * cockpit are mirror images, and a mirror that stacks on one side only is
+ * worse than no mirror (rev 17.14.1).
+ */
+export const SPLIT_NARROW_REM = 36;
+
 export const SPLIT_RATIO_MIN = 0.2;
 export const SPLIT_RATIO_MAX = 0.8;
 export const SPLIT_RATIO_STEP = 0.02;
@@ -19,6 +27,43 @@ export function clampSplitRatio(value: number): number {
   return roundSplitRatio(
     Math.min(SPLIT_RATIO_MAX, Math.max(SPLIT_RATIO_MIN, value)),
   );
+}
+
+/** The document's root font size in px, for the rem-based threshold. */
+export function rootFontSizePx(): number {
+  if (
+    typeof document === "undefined" ||
+    typeof getComputedStyle !== "function"
+  ) {
+    return 16;
+  }
+  const size = Number.parseFloat(
+    getComputedStyle(document.documentElement).fontSize,
+  );
+  return Number.isFinite(size) && size > 0 ? size : 16;
+}
+
+/**
+ * Watches a split container and reports when it crosses the narrow
+ * threshold. One implementation, one constant, so two strips measuring the
+ * same column cannot disagree about whether they are stacked.
+ */
+export function observeSplitWidth(
+  target: Element,
+  onNarrowChange: (narrow: boolean) => void,
+): ResizeObserver | null {
+  if (typeof ResizeObserver !== "function") return null;
+  let narrow: boolean | null = null;
+  const observer = new ResizeObserver(entries => {
+    const width = entries[entries.length - 1]?.contentRect.width;
+    if (typeof width !== "number") return;
+    const next = width > 0 && width < SPLIT_NARROW_REM * rootFontSizePx();
+    if (next === narrow) return;
+    narrow = next;
+    onNarrowChange(next);
+  });
+  observer.observe(target);
+  return observer;
 }
 
 /**

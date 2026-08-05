@@ -7,12 +7,15 @@ export { OpenBindingsElement, defineElement } from "./element.js";
 export { formatJSON, isRecord, renderStatic, setText } from "./dom.js";
 export { baseStyles } from "./styles.js";
 export {
+  SPLIT_NARROW_REM,
   SPLIT_RATIO_MAX,
   SPLIT_RATIO_MIN,
   SPLIT_RATIO_STEP,
   bindSplitGutter,
   clampSplitRatio,
+  observeSplitWidth,
   railStyles,
+  rootFontSizePx,
   roundSplitRatio,
   splitGutterStyles,
   type SplitGutterHost,
