@@ -135,6 +135,17 @@ export class OBIEditorElement extends OpenBindingsElement {
     this.requestRender();
   }
 
+  /**
+   * Accepts the CURRENT text as the committed baseline without touching the
+   * buffer. This is the host's acknowledgement for an editor-originated
+   * commit (rev 17.10.1): the editor is the source of truth, so committing
+   * its own edit must never write a reformatted document back into it —
+   * that reset is what yanked the caret to the top of the file mid-typing.
+   */
+  commitBaseline(): void {
+    this.#baseline = this.#text;
+  }
+
   get text(): string {
     return this.#text;
   }

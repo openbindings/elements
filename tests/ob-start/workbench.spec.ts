@@ -325,7 +325,14 @@ test("document and source elements compose through direct edits to the living do
   // sources beneath, one sticky filter narrowing both — and the editor
   // stays visible throughout; no tab click reaches the sources.
   await expect(page.locator("ob-obi-editor")).toBeVisible();
-  await expect(page.locator("#document-dirty")).toBeVisible({ timeout: 10_000 });
+  // The committed draft is visible in the workspace mirror (rev 17.10.1
+  // killed the "unsaved" marker: there is no save — Export is the only
+  // durability act, so a dirty flag was noise).
+  await expect(
+    page.locator("ob-obi-explorer").locator('[part~="operation"]', {
+      hasText: "graphDemo",
+    }),
+  ).toBeVisible({ timeout: 10_000 });
 
   const rail = page.locator(".rail-column");
   const explorer = page.locator("ob-obi-explorer");

@@ -445,12 +445,6 @@ button.primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--page-text) 7%, transparent);
 }
 
-.document-dirty {
-  color: var(--page-muted);
-  font-size: 0.72rem;
-  font-style: italic;
-}
-
 .document-meta {
   margin: 0;
   color: var(--page-muted);

@@ -45,6 +45,33 @@ describe("OBIEditorElement", () => {
     ).toBe(true);
   });
 
+  it("acknowledges editor-originated commits without rewriting the buffer", async () => {
+    const element = document.createElement(OBI_EDITOR_TAG) as OBIEditorElement;
+    element.value = obi;
+    document.body.append(element);
+    await settled();
+
+    // A valid but NON-canonical buffer (trailing spaces survive the parse).
+    const typed = `${element.text.trimEnd()}  \n`;
+    const edits: Array<{ dirty: boolean }> = [];
+    element.addEventListener("ob-interface-edit", event => {
+      edits.push({ dirty: (event as CustomEvent<{ dirty: boolean }>).detail.dirty });
+    });
+    typeInto(element, typed);
+    await validated();
+    expect(edits[0]?.dirty).toBe(true);
+
+    // The host's living-document commit: acknowledge, never write back —
+    // a write-back would reformat the buffer and reset the caret (17.10.1).
+    element.commitBaseline();
+    expect(element.text).toBe(typed);
+
+    typeInto(element, typed.replace('"openbindings": "0.2.0"', '"openbindings": "0.2.1"'));
+    await validated();
+    // Dirty is measured against the committed baseline, not the original.
+    expect(edits[1]?.dirty).toBe(true);
+  });
+
   it("reports invalid edits and preserves the source text", async () => {
     const element = document.createElement(OBI_EDITOR_TAG) as OBIEditorElement;
     element.value = obi;

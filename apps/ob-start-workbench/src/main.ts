@@ -56,7 +56,6 @@ const livenessNotice = requiredElement<HTMLElement>("#liveness-notice");
 // Document bar (review/100 P1/P3): identity + verbs, no URL in the header.
 const documentName = requiredElement<HTMLButtonElement>("#document-name");
 const documentValidity = requiredElement<HTMLElement>("#document-validity");
-const documentDirtyMarker = requiredElement<HTMLElement>("#document-dirty");
 const documentMeta = requiredElement<HTMLElement>("#document-meta");
 const renameDialog = requiredElement<HTMLDialogElement>("#rename-dialog");
 const renameForm = requiredElement<HTMLFormElement>("#rename-form");
@@ -600,7 +599,7 @@ const commitInterfaceEdit = debounce(() => {
   const draft = pendingInterfaceDraft;
   if (!draft) return;
   pendingInterfaceDraft = null;
-  updateCurrentTarget(draft, targetLabel);
+  updateCurrentTarget(draft, targetLabel, { editorOriginated: true });
   bootstrapMessage.textContent = "";
 }, 80);
 
@@ -655,13 +654,7 @@ sourceDetail.addEventListener("ob-binding-remove", event => {
 // action inside the Open/Add flows, never a header identity (P3). The parity
 // gate (scripts/parity-gates.mjs) holds this file to that claim.
 
-let documentIsDirty = false;
 let validationAttempt = 0;
-
-function markDocument(dirty: boolean): void {
-  documentIsDirty = dirty;
-  documentDirtyMarker.hidden = !dirty;
-}
 
 function documentKey(obi: OBInterface): string {
   return `doc:${obi.name?.trim() || "unnamed"}@${obi.version?.trim() || "0"}`;
@@ -782,7 +775,6 @@ async function commitRename(): Promise<void> {
     });
     renameDialog.close();
     updateCurrentTarget(next, next.name?.trim() || targetLabel);
-    markDocument(true);
   } catch (error) {
     renameDialog.close();
     bootstrapMessage.textContent = callFailureText(error);
@@ -1295,7 +1287,11 @@ function setTarget(obi: OBInterface, label: string, sessionID: string): void {
  * input/output history, while sessions and selections whose keys disappeared
  * are removed.
  */
-function updateCurrentTarget(obi: OBInterface, label: string): void {
+function updateCurrentTarget(
+  obi: OBInterface,
+  label: string,
+  options: { editorOriginated?: boolean } = {},
+): void {
   const previous = targetInterface;
   const previousActiveId = activeSessionId;
 
@@ -1329,12 +1325,15 @@ function updateCurrentTarget(obi: OBInterface, label: string): void {
   explorer.obi = obi;
   sourceDetail.obi = obi;
   detail.obi = obi;
-  interfaceEditor.value = obi;
+  // The editor is the source of truth (rev 17.10.1): a commit that came FROM
+  // the editor is only acknowledged (baseline), never written back — the
+  // write-back reformatted the buffer and reset the caret to the top while
+  // typing. Every other mutation (source pull, rename, merges) still renders
+  // into the editor.
+  if (options.editorOriginated) interfaceEditor.commitBaseline();
+  else interfaceEditor.value = obi;
   pendingInterfaceDraft = null;
   renderDocumentBar(obi);
-  // Every reconcile is an edit to the living document (source pull/remove,
-  // binding removal, metadata, merges) — the dirty marker reflects it.
-  markDocument(true);
 
   if (previousActiveId && sessionsById.has(previousActiveId)) {
     focusSession(previousActiveId);
