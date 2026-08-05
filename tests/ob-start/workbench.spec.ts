@@ -62,18 +62,21 @@ test("the embedded workbench invokes ob start through its published interface", 
   );
   expect(
     await workbench
-      .locator(".sr-only")
+      .locator(".live-announcers")
       .evaluate(element => getComputedStyle(element).position),
   ).toBe("absolute");
 
-  const run = workbench.locator("button.run");
+  // The strip owns the Run verb (rev 17.6): the element's rail play button
+  // is hidden inside the app, so every run goes through #sheet-run.
+  const run = page.locator("#sheet-run");
   await expect(run).toBeEnabled();
   await run.click();
 
   await expect(workbench.locator('[part~="output"] .cm-content')).toContainText(
     '"name": "OpenBindings CLI"',
   );
-  await expect(workbench.locator(".output-count")).toHaveText("1 value");
+  // Count and duration report in the strip, not the element (rev 17.6).
+  await expect(page.locator("#sheet-status")).toContainText("1 value");
   await expect(workbench.locator(".error")).toBeHidden();
 
   // The fragment credential is retained only for this browser tab, so a
@@ -81,11 +84,7 @@ test("the embedded workbench invokes ob start through its published interface", 
   await page.reload();
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
   await expect.poll(() => page.evaluate(() => location.hash)).toBe("");
-  await expect(
-    page
-      .locator("ob-operation-workbench:not([hidden])")
-      .locator("button.run"),
-  ).toBeEnabled();
+  await expect(page.locator("#sheet-run")).toBeEnabled();
 });
 
 test("the operation dependency becomes available when session context changes", async ({
@@ -100,7 +99,7 @@ test("the operation dependency becomes available when session context changes", 
   await expect(workbench.locator(".status")).toHaveText(
     "No compatible Operation Invoker is available",
   );
-  await expect(workbench.locator("button.run")).toBeDisabled();
+  await expect(page.locator("#sheet-run")).toBeDisabled();
 
   await expect(page.locator("#connection-panel")).toBeHidden();
   // The status pill is the standing entry to connection settings (rev 17).
@@ -112,7 +111,7 @@ test("the operation dependency becomes available when session context changes", 
   await expect(page.locator("#session-badge")).toHaveText("Connected");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
   await expect(workbench.locator(".status")).toHaveText("Ready");
-  await expect(workbench.locator("button.run")).toBeEnabled();
+  await expect(page.locator("#sheet-run")).toBeEnabled();
 });
 
 test("a rejected session token is reported honestly instead of claiming Ready", async ({
@@ -401,7 +400,7 @@ test("operation tabs retain independent invocation sessions, reorder, close, and
   await expect(activeWorkbench.locator("h2")).toHaveText(
     "openbindings.ob.listBindingSpecs",
   );
-  await activeWorkbench.locator("button.run").click();
+  await page.locator("#sheet-run").click();
   await expect(activeWorkbench.locator('[part~="output"] .cm-content')).toContainText(
     "openbindings.openapi@1",
   );
@@ -530,7 +529,7 @@ test("a raw API artifact is synthesized and invoked without a browser binding-fa
     .filter({ hasText: "getOBI" })
     .click();
   await expect(workbench.locator("h2")).toHaveText("getOBI");
-  await workbench.locator("button.run").click();
+  await page.locator("#sheet-run").click();
 
   await expect(workbench.locator('[part~="output"] .cm-content')).toContainText(
     '"openbindings": "0.2.0"',
@@ -572,7 +571,7 @@ test("target authentication is preflighted into focused fields", async ({
 
   await expect(page.locator("#requirement-banner")).toBeHidden();
   const workbench = page.locator("ob-operation-workbench:not([hidden])");
-  await workbench.locator("button.run").click();
+  await page.locator("#sheet-run").click();
   await expect(workbench.locator('[part~="output"] .cm-content')).toContainText(
     '"name": "OpenBindings CLI"',
   );
@@ -627,11 +626,7 @@ test("a malformed target fails recoverably without replacing the current interfa
   await expect(page.locator("#bootstrap-message")).not.toBeEmpty();
   await expect(page.locator("#doc-open")).toBeEnabled();
   await expect(page.locator("#document-name")).toHaveText("ob");
-  await expect(
-    page
-      .locator("ob-operation-workbench:not([hidden])")
-      .locator("button.run"),
-  ).toBeEnabled();
+  await expect(page.locator("#sheet-run")).toBeEnabled();
 });
 
 test("the complete primary flow remains usable without horizontal overflow on mobile", async ({
@@ -644,11 +639,7 @@ test("the complete primary flow remains usable without horizontal overflow on mo
   await expect(page.locator("#toggle-left-panel")).toBeVisible();
   await expect(page.locator("#toggle-right-panel")).toBeVisible();
   await expect(page.locator("#tab-breadcrumb")).toContainText("ob");
-  await expect(
-    page
-      .locator("ob-operation-workbench:not([hidden])")
-      .locator("button.run"),
-  ).toBeEnabled();
+  await expect(page.locator("#sheet-run")).toBeEnabled();
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -692,7 +683,7 @@ test("multi-binding operations default to the author's preferred binding and run
   await expect(page.locator("#bootstrap-message")).toContainText(
     "author's preferred binding",
   );
-  await workbench.locator("button.run").click();
+  await page.locator("#sheet-run").click();
   await expect(workbench.locator('[part~="output"] .cm-content')).toContainText(
     "Schema Latte",
     { timeout: 15_000 },
@@ -719,7 +710,7 @@ test("multi-binding operations default to the author's preferred binding and run
       }),
     );
   }, '{"customer":"E2E","drink":"Schema Latte","size":"v2"}');
-  await graphSession.locator("button.run").click();
+  await page.locator("#sheet-run").click();
   // The output view renders each stream value as its own block.
   await expect(graphSession.locator('[part~="output"] .cm-content').first()).toContainText(
     '"status": "received"',
@@ -773,7 +764,7 @@ test("form input mode drives placeOrder through schema fields", async ({
   await customer.fill("FormBot");
   await size.selectOption("v2");
 
-  await workbench.locator("button.run").click();
+  await page.locator("#sheet-run").click();
   await expect(workbench.locator('[part~="output"] .cm-content').first()).toContainText(
     '"status": "received"',
     { timeout: 30_000 },

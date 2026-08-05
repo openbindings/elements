@@ -41,7 +41,8 @@ test("invoking with a wrong token surfaces a non-empty, ideally credential-namin
 }) => {
   await page.goto("/#token=wrong-token");
   const workbench = page.locator("ob-operation-workbench:not([hidden])");
-  const run = workbench.locator("button.run");
+  // Rev 17.6: the strip owns Run inside the app.
+  const run = page.locator("#sheet-run");
 
   let errorText = "";
   let runnable = false;

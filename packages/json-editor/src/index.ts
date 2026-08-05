@@ -420,22 +420,6 @@ const styles = `
     --_ob-editor-font-size: var(--ob-editor-font-size, 0.78rem);
     --_ob-editor-line-height: var(--ob-editor-line-height, 1.55);
     --_ob-editor-padding: var(--ob-editor-padding, 0.6rem);
-    --_ob-editor-token-key: var(--ob-editor-token-key, #1a4fd6);
-    --_ob-editor-token-string: var(--ob-editor-token-string, #0b7a52);
-    --_ob-editor-token-number: var(--ob-editor-token-number, #9a5300);
-    --_ob-editor-token-keyword: var(--ob-editor-token-keyword, #8b21c9);
-    --_ob-editor-token-punct: var(--ob-editor-token-punct, var(--_ob-color-text-muted));
-    --_ob-editor-token-comment: var(--ob-editor-token-comment, var(--_ob-color-text-muted));
-    --_ob-editor-token-invalid: var(--ob-editor-token-invalid, var(--_ob-color-danger));
-  }
-
-  @media (prefers-color-scheme: dark) {
-    :host {
-      --_ob-editor-token-key: var(--ob-editor-token-key, #8fb4ff);
-      --_ob-editor-token-string: var(--ob-editor-token-string, #6bd6a4);
-      --_ob-editor-token-number: var(--ob-editor-token-number, #f0b45f);
-      --_ob-editor-token-keyword: var(--ob-editor-token-keyword, #d3a2ff);
-    }
   }
 
   .frame {

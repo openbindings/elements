@@ -1392,8 +1392,14 @@ function createOperationSession(seed: OperationSessionSeed): OperationSession {
   invocation.context = effectiveTargetContext();
   invocation.hidden = true;
   // The sheet strip + breadcrumb already name the invocation; the element's
-  // identity header would be the third naming in two rows (rev 17.1).
+  // identity header would be the third naming in two rows (rev 17.1). The
+  // strip also owns the Run verb (rev 17.6), so the rail's play button would
+  // be a second Run two inches away — cancel and ⌘/Ctrl+Enter stay.
   invocation.hideIdentity = true;
+  invocation.hideRun = true;
+  // The sheet provides the frame and the height; the element's card chrome
+  // would be a second border and a band of dead space (rev 17.7).
+  invocation.flush = true;
   invocation.dataset.operationKey = operationKey;
   invocation.dataset.sessionId = id;
 

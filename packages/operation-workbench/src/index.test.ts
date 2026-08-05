@@ -17,6 +17,7 @@ import { operationInvokerInterface } from "./requirement.js";
 import {
   OPERATION_WORKBENCH_TAG,
   OperationWorkbenchElement,
+  formatDuration,
   presentInvocationError,
 } from "./index.js";
 
@@ -425,11 +426,8 @@ describe("OperationWorkbenchElement", () => {
     await waitFor(() =>
       element.shadowRoot?.querySelector(".status")?.textContent === "Ready",
     );
-    // A cancelled run never settles timing: no duration chip, no stale
-    // output blocks, and the placeholder returns.
-    expect(
-      element.shadowRoot?.querySelector<HTMLElement>(".output-timing")?.hidden,
-    ).toBe(true);
+    // A cancelled run never settles: no stale output blocks, and the
+    // placeholder returns.
     expect(
       element.shadowRoot?.querySelectorAll(".output-item").length,
     ).toBe(0);
@@ -1037,8 +1035,7 @@ async function mountGated(binding: GatedStreamBinding): Promise<{
   element: OperationWorkbenchElement;
   items: () => NodeListOf<Element>;
   notice: () => HTMLElement | null;
-  count: () => HTMLElement | null;
-  timing: () => HTMLElement | null;
+  completions: Array<{ outputCount: number; durationMs: number }>;
 }> {
   const environment = new OperationEnvironment([
     {
@@ -1058,12 +1055,23 @@ async function mountGated(binding: GatedStreamBinding): Promise<{
     element.shadowRoot?.querySelector(".status")?.textContent === "Ready",
   );
   const root = element.shadowRoot!;
+  // Count and duration left the element's chrome in rev 17.6 — the host
+  // strip reports them from this event; tests assert the same contract.
+  const completions: Array<{ outputCount: number; durationMs: number }> = [];
+  element.addEventListener("ob-invocation-complete", event => {
+    const detail = (
+      event as CustomEvent<{ outputCount: number; durationMs: number }>
+    ).detail;
+    completions.push({
+      outputCount: detail.outputCount,
+      durationMs: detail.durationMs,
+    });
+  });
   return {
     element,
     items: () => root.querySelectorAll(".output-item"),
     notice: () => root.querySelector<HTMLElement>(".output-notice"),
-    count: () => root.querySelector<HTMLElement>(".output-count"),
-    timing: () => root.querySelector<HTMLElement>(".output-timing"),
+    completions,
   };
 }
 
@@ -1083,7 +1091,7 @@ describe("output view v2", () => {
     await settled();
 
     expect(a.items().length).toBe(1);
-    expect(a.count()?.textContent).toBe("1 value");
+    expect(a.completions[0]?.outputCount).toBe(1);
     // A single value renders directly in the shared editor: no selector
     // chrome (rev 17.4).
     expect(
@@ -1106,7 +1114,7 @@ describe("output view v2", () => {
     await settled();
 
     expect(b.items().length).toBe(2);
-    expect(b.count()?.textContent).toBe("2 values");
+    expect(b.completions[0]?.outputCount).toBe(2);
     expect(
       b.element.shadowRoot?.querySelector<HTMLElement>(".output-list")?.hidden,
     ).toBe(false);
@@ -1150,7 +1158,7 @@ describe("output view v2", () => {
     await run;
   });
 
-  it("records stream offsets from the first frame and settles a total duration chip", async () => {
+  it("records stream offsets from the first frame and settles a total duration", async () => {
     let fakeNow = 1000;
     vi.spyOn(performance, "now").mockImplementation(() => fakeNow);
 
@@ -1168,9 +1176,11 @@ describe("output view v2", () => {
     await runA;
     await settled();
 
-    expect(a.timing()?.hidden).toBe(false);
-    expect(a.timing()?.textContent).toBe("213ms");
-    expect(a.count()?.textContent).toBe("1 value");
+    // The duration reaches hosts through the completion event; the strip
+    // renders it with the same formatter.
+    expect(a.completions[0]?.durationMs).toBe(213);
+    expect(formatDuration(a.completions[0]!.durationMs)).toBe("213ms");
+    expect(a.completions[0]?.outputCount).toBe(1);
 
     fakeNow = 0;
     const stream = new GatedStreamBinding();
@@ -1193,12 +1203,12 @@ describe("output view v2", () => {
     const rows = Array.from(b.items()).map(item => item.textContent ?? "");
     expect(rows[0]).toContain("+0ms");
     expect(rows[1]).toContain("+1.2s");
-    expect(b.timing()?.textContent).toBe("1.4s");
+    expect(formatDuration(b.completions[0]!.durationMs)).toBe("1.4s");
   });
 
   it("reads as live progress while streaming and settles on terminal", async () => {
     const binding = new GatedStreamBinding();
-    const { element, count, timing } = await mountGated(binding);
+    const { element, items, completions } = await mountGated(binding);
     const announcer = element.shadowRoot?.querySelector(".status-announcer");
     const run = element.run();
     await waitFor(() =>
@@ -1207,17 +1217,20 @@ describe("output view v2", () => {
 
     await binding.push(1);
     await binding.push(2);
-    await waitFor(() => count()?.textContent === "2 values · streaming…");
-    expect(timing()?.hidden).toBe(true);
-    expect(announcer?.textContent).toBe(
-      "Invocation running. 2 values so far.",
+    await waitFor(() => items().length === 2);
+    // Mid-stream: progress speaks through the live region (the visible
+    // count/duration chrome moved to the host strip in rev 17.6), and the
+    // completion event has not fired yet.
+    await waitFor(
+      () =>
+        announcer?.textContent === "Invocation running. 2 values so far.",
     );
+    expect(completions.length).toBe(0);
 
     await binding.finish();
     await run;
     await settled();
-    expect(count()?.textContent).toBe("2 values");
-    expect(timing()?.hidden).toBe(false);
+    expect(completions[0]?.outputCount).toBe(2);
     expect(announcer?.textContent).toBe(
       "Invocation complete. 2 output values received.",
     );
@@ -1289,12 +1302,12 @@ describe("output view v2", () => {
       expect(JSON.parse(writes[0]!)).toEqual({ answer: 42 });
       await Promise.resolve();
       await Promise.resolve();
-      expect(copyButton?.textContent).toBe("Copied");
+      expect(copyButton?.classList.contains("copied")).toBe(true);
       expect(copyButton?.getAttribute("aria-label")).toBe("Copied");
       vi.advanceTimersByTime(1700);
       await Promise.resolve();
       await Promise.resolve();
-      expect(copyButton?.textContent).toBe("Copy");
+      expect(copyButton?.classList.contains("copied")).toBe(false);
       expect(copyButton?.getAttribute("aria-label")).toBe(
         "Copy output as JSON",
       );
@@ -1321,7 +1334,7 @@ describe("output view v2", () => {
 
   it("never renders frames or timings from a cancelled run", async () => {
     const binding = new GatedStreamBinding();
-    const { element, items, timing, notice } = await mountGated(binding);
+    const { element, items, notice, completions } = await mountGated(binding);
     const run = element.run();
     await waitFor(() =>
       element.shadowRoot?.querySelector(".status")?.textContent === "Running",
@@ -1335,14 +1348,15 @@ describe("output view v2", () => {
     await run;
     await settled();
 
-    // The stale run's later frames never render, and no duration settles.
+    // The stale run's later frames never render, and no completion (hence no
+    // duration) ever settles for a cancelled run.
     expect(items().length).toBe(1);
-    expect(timing()?.hidden).toBe(true);
+    expect(completions.length).toBe(0);
 
     element.clearOutput();
     await settled();
     expect(items().length).toBe(0);
-    expect(timing()?.hidden).toBe(true);
+    expect(completions.length).toBe(0);
     expect(notice()?.textContent).toBe("No output yet.");
   });
 });
@@ -1477,11 +1491,10 @@ describe("form input view", () => {
       },
     });
     await settled();
+    // The decline-with-reason lives on the disabled toggle itself (rev 17.6
+    // moved the old hint row's copy into the button's tooltip).
     expect(combinator.formButton()?.disabled).toBe(true);
     expect(combinator.formButton()?.title).toContain('"allOf"');
-    expect(
-      combinator.root.querySelector(".input-hint")?.textContent,
-    ).toContain('"allOf"');
 
     const sequence = mountForm();
     sequence.element.inputMode = "sequence";

@@ -225,8 +225,6 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
   #outputCount = 0;
   /** Timestamp of the run's FIRST output frame; offsets are measured from it. */
   #firstFrameTime: number | null = null;
-  /** Run start → terminal, settled only by the run's own terminal (runID-fenced). */
-  #totalDurationMs: number | null = null;
   #copied = false;
   #copyTimer: ReturnType<typeof setTimeout> | null = null;
   #frameError: OperationFrameError | null = null;
@@ -253,7 +251,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
   #dragChanged = false;
 
   static get observedAttributes(): string[] {
-    return ["layout", "hide-identity"];
+    return ["layout", "hide-identity", "hide-run", "flush"];
   }
 
   attributeChangedCallback(
@@ -267,6 +265,8 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       this.layout = value === "split" ? "split" : "stacked";
     }
     if (name === "hide-identity") this.hideIdentity = value !== null;
+    if (name === "hide-run") this.hideRun = value !== null;
+    if (name === "flush") this.flush = value !== null;
   }
 
   /**
@@ -280,6 +280,36 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
 
   set hideIdentity(value: boolean) {
     this.toggleAttribute("hide-identity", Boolean(value));
+  }
+
+  /**
+   * Hides the rail's Run control for hosts whose own chrome carries the verb
+   * — the workbench's invocation strip (rev 17.6). Cancel stays in the rail
+   * (the strip has no cancel), and ⌘/Ctrl+Enter still runs. Standalone
+   * consumers keep the play button by default.
+   */
+  get hideRun(): boolean {
+    return this.hasAttribute("hide-run");
+  }
+
+  set hideRun(value: boolean) {
+    this.toggleAttribute("hide-run", Boolean(value));
+  }
+
+  /**
+   * Flush presentation (rev 17.7): the host provides the frame — border,
+   * background, and a definite height (the workbench's invocation sheet) —
+   * so the cockpit drops its own card chrome (padding band, border,
+   * min-height floors) and sizes to exactly the space it is granted. The
+   * editors and panes scroll within themselves. Standalone consumers keep
+   * the framed card by default.
+   */
+  get flush(): boolean {
+    return this.hasAttribute("flush");
+  }
+
+  set flush(value: boolean) {
+    this.toggleAttribute("flush", Boolean(value));
   }
 
   constructor() {
@@ -639,7 +669,6 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     this.#selectedOutputIndex = null;
     this.#renderedOutputIndex = null;
     this.#firstFrameTime = null;
-    this.#totalDurationMs = null;
     this.#frameError = null;
     this.#runtimeError = null;
     this.emit<InvocationStartDetail>("ob-invocation-start", {
@@ -724,7 +753,6 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       await call.closed;
       if (runID !== this.#runID) return;
       const durationMs = performance.now() - runStart;
-      this.#totalDurationMs = durationMs;
       if (this.#frameError) {
         this.emit<InvocationErrorDetail>("ob-invocation-error", {
           error: this.#frameError,
@@ -740,7 +768,6 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       }
     } catch (error) {
       if (runID !== this.#runID) return;
-      this.#totalDurationMs = performance.now() - runStart;
       this.#runtimeError =
         error instanceof Error ? error : new Error(String(error));
       this.emit<InvocationErrorDetail>("ob-invocation-error", {
@@ -808,9 +835,9 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       }
     });
 
-    refs.find<HTMLSelectElement>(".input-mode")?.addEventListener("change", event => {
-      this.inputMode = (event.target as HTMLSelectElement)
-        .value as OperationInputMode;
+    // Cardinality is a two-state toggle (rev 17.6): pressed = sequence.
+    refs.find<HTMLButtonElement>(".input-mode")?.addEventListener("click", () => {
+      this.inputMode = this.#inputMode === "single" ? "sequence" : "single";
       this.#emitInputChange();
     });
 
@@ -994,16 +1021,14 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     const empty = refs.find(".empty");
     const workspace = refs.find(".workspace");
     const editor = refs.find<JSONEditorElement>(".input-editor");
-    const inputHint = refs.find(".input-hint");
-    const inputMode = refs.find<HTMLSelectElement>(".input-mode");
+    const inputEmpty = refs.find(".input-empty");
+    const inputMode = refs.find<HTMLButtonElement>(".input-mode");
     const formatInput = refs.find<HTMLButtonElement>(".format-input");
     const resetInput = refs.find<HTMLButtonElement>(".reset-input");
     const runButton = refs.find<HTMLButtonElement>(".run");
     const cancelButton = refs.find<HTMLButtonElement>(".cancel");
     const outputNotice = refs.find(".output-notice");
     const outputList = refs.find(".output-list");
-    const outputCount = refs.find(".output-count");
-    const outputTiming = refs.find(".output-timing");
     const copyOutput = refs.find<HTMLButtonElement>(".copy-output");
     const clearOutput = refs.find<HTMLButtonElement>(".clear-output");
     const error = refs.find(".error");
@@ -1109,7 +1134,16 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     if (inputMode) {
       inputMode.hidden = !hasInput;
       inputMode.disabled = this.#running;
-      inputMode.value = this.#inputMode;
+      const sequence = this.#inputMode === "sequence";
+      inputMode.setAttribute("aria-pressed", String(sequence));
+      const cardinality = sequence
+        ? "Value sequence — a JSON array supplies one input value per member"
+        : "One value — the input is a single JSON value";
+      inputMode.setAttribute(
+        "aria-label",
+        `Input cardinality: ${sequence ? "value sequence" : "one value"}`,
+      );
+      inputMode.title = cardinality;
     }
     if (formatInput) {
       formatInput.hidden = !hasInput;
@@ -1119,15 +1153,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       resetInput.hidden = !hasInput;
       resetInput.disabled = this.#running || !starterAvailable;
     }
-    if (inputHint) {
-      inputHint.textContent = hasInput
-        ? !form.capability.supported && form.capability.reason
-          ? `Form view unavailable: ${form.capability.reason}`
-          : this.#inputMode === "single"
-            ? "One JSON value"
-            : "JSON array → input values"
-        : "This operation declares no input";
-    }
+    if (inputEmpty) inputEmpty.hidden = hasInput;
 
     const available = this.#dependency.status === "available";
     if (runButton) {
@@ -1203,33 +1229,12 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
         if (this.#outputs.length === 0) this.#renderedOutputIndex = null;
       }
     }
-    if (outputCount) {
-      const plural = this.#outputCount === 1 ? "value" : "values";
-      outputCount.textContent =
-        this.#outputCount === 0
-          ? ""
-          : this.#running
-            ? `${this.#outputCount} ${plural} · streaming…`
-            : `${this.#outputCount} ${plural}`;
-    }
-    if (outputTiming) {
-      const showTiming =
-        this.#outputCount > 0 &&
-        !this.#running &&
-        this.#totalDurationMs !== null;
-      outputTiming.hidden = !showTiming;
-      outputTiming.textContent =
-        showTiming && this.#totalDurationMs !== null
-          ? formatDuration(this.#totalDurationMs)
-          : "";
-    }
     if (copyOutput) {
       copyOutput.hidden = this.#outputCount === 0;
-      copyOutput.textContent = this.#copied ? "Copied" : "Copy";
-      copyOutput.setAttribute(
-        "aria-label",
-        this.#copied ? "Copied" : "Copy output as JSON",
-      );
+      copyOutput.classList.toggle("copied", this.#copied);
+      const copyLabel = this.#copied ? "Copied" : "Copy output as JSON";
+      copyOutput.setAttribute("aria-label", copyLabel);
+      copyOutput.title = copyLabel;
     }
     if (clearOutput) {
       clearOutput.hidden =
@@ -1792,7 +1797,6 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     this.#selectedOutputIndex = null;
     this.#renderedOutputIndex = null;
     this.#firstFrameTime = null;
-    this.#totalDurationMs = null;
     this.#lastAnnouncedOutputCount = 0;
     this.#frameError = null;
     this.#runtimeError = null;
@@ -2424,6 +2428,52 @@ declare global {
 }
 
 /**
+ * Rail iconography (rev 17.6): lucide-drawn 24×24 stroke glyphs inlined so
+ * the element stays dependency-free. Every icon is aria-hidden — the buttons
+ * carry the accessible names.
+ */
+function icon(paths: string): string {
+  return (
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
+    `stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ` +
+    `aria-hidden="true" focusable="false">${paths}</svg>`
+  );
+}
+
+const ICON_PLAY = icon('<polygon points="6 3 20 12 6 21 6 3"/>');
+const ICON_STOP = icon('<rect x="5" y="5" width="14" height="14" rx="2"/>');
+const ICON_CODE = icon(
+  '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
+);
+const ICON_FORM = icon(
+  '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/>' +
+    '<line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/>' +
+    '<line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
+);
+const ICON_FORMAT = icon(
+  '<line x1="21" y1="6" x2="3" y2="6"/><line x1="15" y1="12" x2="3" y2="12"/>' +
+    '<line x1="17" y1="18" x2="3" y2="18"/>',
+);
+const ICON_RESET = icon(
+  '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+);
+const ICON_SEQUENCE = icon(
+  '<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/>' +
+    '<path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/>' +
+    '<path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>',
+);
+const ICON_COPY = icon(
+  '<rect x="8" y="8" width="14" height="14" rx="2" ry="2"/>' +
+    '<path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+);
+const ICON_CHECK = icon('<path d="M20 6 9 17l-5-5"/>');
+const ICON_CLEAR = icon(
+  '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>' +
+    '<path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>' +
+    '<line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>',
+);
+
+/**
  * The workbench shell, parsed once. Every subsequent render mutates these
  * nodes rather than replacing them, so the input editor keeps its caret,
  * selection and scroll position while output streams in beside it.
@@ -2445,72 +2495,60 @@ const CONTENT_SHELL = `
          </header>
          <div class="empty" part="empty"></div>
          <div class="workspace">
-           <section class="input-column">
-             <div class="section-heading">
-               <h3>Input</h3>
-               <div class="input-options">
-                 <span class="input-hint"></span>
-                 <span class="input-view-toggle" part="input-mode-toggle" role="group" aria-label="Input editing view" hidden>
-                   <button class="view-json subtle" type="button" aria-pressed="true">Source</button>
-                   <button class="view-form subtle" type="button" aria-pressed="false">Form</button>
-                 </span>
-                 <button class="format-input subtle" part="format-input" type="button">Format JSON</button>
-                 <button class="reset-input subtle" part="reset-input" type="button">Reset starter</button>
-                 <label>
-                   <span class="sr-only">Input cardinality</span>
-                   <select class="input-mode" part="input-mode" aria-label="Input cardinality">
-                     <option value="single">One value</option>
-                     <option value="sequence">Value sequence</option>
-                   </select>
+           <section class="input-column" aria-label="Input">
+             <div class="tool-rail input-rail" role="toolbar" aria-orientation="vertical" aria-label="Input tools">
+               <button class="run" part="run" type="button" aria-label="Run" title="Run (⌘/Ctrl+Enter)">${ICON_PLAY}</button>
+               <button class="cancel" part="cancel" type="button" aria-label="Cancel run" title="Cancel" hidden>${ICON_STOP}</button>
+               <span class="input-view-toggle" part="input-mode-toggle" role="group" aria-label="Input editing view" hidden>
+                 <button class="view-json" type="button" aria-pressed="true" aria-label="Edit input as JSON source" title="Source">${ICON_CODE}</button>
+                 <button class="view-form" type="button" aria-pressed="false" aria-label="Edit input as a form" title="Form">${ICON_FORM}</button>
+               </span>
+               <button class="format-input" part="format-input" type="button" aria-label="Format JSON" title="Format JSON">${ICON_FORMAT}</button>
+               <button class="reset-input" part="reset-input" type="button" aria-label="Reset to schema starter" title="Reset starter">${ICON_RESET}</button>
+               <button class="input-mode" part="input-mode" type="button" aria-pressed="false" aria-label="Input cardinality: one value" title="One value">${ICON_SEQUENCE}</button>
+             </div>
+             <div class="pane-body input-body">
+               <div class="input-shape-bar" hidden>
+                 <label class="input-shape-row">
+                   <span class="input-shape-label">Input shape</span>
+                   <select class="input-shape" part="input-shape"></select>
                  </label>
                </div>
-             </div>
-             <div class="input-shape-bar" hidden>
-               <label class="input-shape-row">
-                 <span class="input-shape-label">Input shape</span>
-                 <select class="input-shape" part="input-shape"></select>
-               </label>
-             </div>
-             <ob-json-editor part="input" class="input-editor"></ob-json-editor>
-             <div class="form-view" hidden>
-               <div class="form-status" hidden>
-                 <p class="form-status-text"></p>
-                 <div class="form-status-actions">
-                   <button class="form-banner-json subtle" type="button">Edit as JSON</button>
-                   <button class="form-banner-reset subtle" type="button">Reset starter</button>
+               <ob-json-editor part="input" class="input-editor"></ob-json-editor>
+               <div class="form-view" hidden>
+                 <div class="form-status" hidden>
+                   <p class="form-status-text"></p>
+                   <div class="form-status-actions">
+                     <button class="form-banner-json subtle" type="button">Edit as JSON</button>
+                     <button class="form-banner-reset subtle" type="button">Reset starter</button>
+                   </div>
                  </div>
+                 <fieldset class="form-fields"></fieldset>
                </div>
-               <fieldset class="form-fields"></fieldset>
-             </div>
-             <div class="actions">
-               <button class="run" part="run" type="button">Run</button>
-               <button class="cancel" part="cancel" type="button">Cancel</button>
+               <p class="input-empty" hidden>This operation declares no input.</p>
              </div>
            </section>
            <div class="layout-gutter" part="layout-gutter" role="separator" aria-orientation="vertical" aria-label="Resize input and output" aria-valuemin="20" aria-valuemax="80" tabindex="0" hidden>
              <span class="layout-gutter-handle" aria-hidden="true"></span>
            </div>
-           <section class="output-column">
-             <div class="section-heading">
-               <h3>Output</h3>
-               <div class="output-options">
-                 <span class="output-count"></span>
-                 <span class="output-timing" part="output-timing" hidden></span>
-                 <button class="copy-output subtle" part="copy-output" type="button" aria-label="Copy output as JSON" hidden>Copy</button>
-                 <button class="clear-output subtle" part="clear-output" type="button">Clear</button>
+           <section class="output-column" aria-label="Output">
+             <div class="pane-body output-body">
+               <div class="output-view" part="output-view">
+                 <p class="output-notice">No output yet.</p>
+                 <div class="output-list" role="listbox" aria-label="Output values" hidden></div>
+                 <ob-json-editor class="output-editor" part="output" hidden></ob-json-editor>
+               </div>
+               <div class="error" part="error" role="alert">
+                 <p class="error-summary"></p>
+                 <details>
+                   <summary>Technical details</summary>
+                   <pre class="error-detail"></pre>
+                 </details>
                </div>
              </div>
-             <div class="output-view" part="output-view">
-               <p class="output-notice">No output yet.</p>
-               <div class="output-list" role="listbox" aria-label="Output values" hidden></div>
-               <ob-json-editor class="output-editor" part="output" hidden></ob-json-editor>
-             </div>
-             <div class="error" part="error" role="alert">
-               <p class="error-summary"></p>
-               <details>
-                 <summary>Technical details</summary>
-                 <pre class="error-detail"></pre>
-               </details>
+             <div class="tool-rail output-rail" role="toolbar" aria-orientation="vertical" aria-label="Output tools">
+               <button class="copy-output" part="copy-output" type="button" aria-label="Copy output as JSON" title="Copy output as JSON" hidden><span class="icon-copy">${ICON_COPY}</span><span class="icon-check">${ICON_CHECK}</span></button>
+               <button class="clear-output" part="clear-output" type="button" aria-label="Clear output" title="Clear output">${ICON_CLEAR}</button>
              </div>
            </section>
          </div>
@@ -2560,6 +2598,38 @@ const styles = `
     overflow: hidden;
   }
 
+  /* Flush presentation (rev 17.7): the host owns the frame — the sheet's
+     border, background, and a definite height — so the card chrome would be
+     a second frame and a padding band of dead space. The cockpit hugs its
+     container; the min-height floors go too, because the granted height is
+     the truth and the editors scroll within themselves. */
+  :host([flush]) .container {
+    min-height: 0;
+    padding: calc(var(--_ob-space) * 0.6);
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+  }
+
+  :host([flush]) .workspace {
+    margin-top: 0;
+  }
+
+  :host([flush]) header {
+    margin-bottom: calc(var(--_ob-space) * 0.6);
+  }
+
+  :host([flush]) .workspace.split {
+    min-height: 0;
+  }
+
+  :host([flush]) .workspace.split .input-editor,
+  :host([flush]) .workspace.split .form-view,
+  :host([flush]) .workspace.split .output-view,
+  :host([flush]) .workspace.split .input-empty {
+    min-height: 0;
+  }
+
   :host([hide-identity]) header > .identity,
   :host([hide-identity]) header .status {
     display: none;
@@ -2577,14 +2647,14 @@ const styles = `
     display: none;
   }
 
-  header, .section-heading, .actions, .input-options, .output-options {
+  header {
     display: flex;
     gap: var(--_ob-space);
     align-items: center;
     justify-content: space-between;
   }
 
-  .eyebrow, h2, h3 {
+  .eyebrow, h2 {
     margin: 0;
   }
 
@@ -2599,10 +2669,6 @@ const styles = `
   h2 {
     overflow-wrap: anywhere;
     font: 650 1rem / 1.3 var(--_ob-font-mono);
-  }
-
-  h3 {
-    font-size: 0.78rem;
   }
 
   .status {
@@ -2639,10 +2705,22 @@ const styles = `
     grid-template-rows: minmax(0, 1fr);
   }
 
-  .workspace.split .input-column,
-  .workspace.split .output-column {
+  /* Each pane is [rail][body] (input) or [body][rail] (output): the rail is
+     a fixed-width vertical toolbar, the body a flex column that owns all
+     remaining width. In split mode the body's editors flex to full height. */
+  .input-column, .output-column {
     display: flex;
+    gap: calc(var(--_ob-space) * 0.6);
+    align-items: stretch;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .pane-body {
+    display: flex;
+    flex: 1 1 auto;
     flex-direction: column;
+    min-width: 0;
     min-height: 0;
   }
 
@@ -2664,8 +2742,53 @@ const styles = `
     max-height: none;
   }
 
-  .input-column, .output-column {
-    min-width: 0;
+  .workspace.split .input-empty {
+    flex: 1 1 0;
+    min-height: 13rem;
+  }
+
+  .tool-rail {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    gap: 0.3rem;
+    align-items: center;
+  }
+
+  .tool-rail > button,
+  .input-view-toggle button {
+    display: grid;
+    width: 2.1rem;
+    min-height: 2.1rem;
+    padding: 0;
+    place-items: center;
+    color: var(--_ob-color-text-muted);
+    background: var(--_ob-color-background);
+  }
+
+  .tool-rail svg {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .tool-rail > button:not(:disabled, [aria-pressed="true"], .run, .cancel):hover,
+  .input-view-toggle button:not(:disabled, [aria-pressed="true"]):hover {
+    color: var(--_ob-color-text);
+  }
+
+  /* Narrow single-column fallback: the rails turn horizontal above their
+     pane so the editors keep the full width. */
+  .workspace.narrow .input-column,
+  .workspace.narrow .output-column {
+    flex-direction: column;
+  }
+
+  .workspace.narrow .output-column {
+    flex-direction: column-reverse;
+  }
+
+  .workspace.narrow .tool-rail {
+    flex-direction: row;
   }
 
   .layout-gutter {
@@ -2695,24 +2818,6 @@ const styles = `
     box-shadow: var(--_ob-focus-ring);
   }
 
-  .section-heading {
-    margin-bottom: 0.45rem;
-  }
-
-  .input-hint, .output-count {
-    color: var(--_ob-color-text-muted);
-    font-size: 0.7rem;
-  }
-
-  .input-options {
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-
-  .output-options {
-    justify-content: flex-end;
-  }
-
   .header-tools {
     display: flex;
     flex-wrap: wrap;
@@ -2729,7 +2834,6 @@ const styles = `
     font-size: 0.7rem;
   }
 
-  .input-mode,
   .binding-select,
   .input-shape {
     min-height: 1.8rem;
@@ -2742,27 +2846,33 @@ const styles = `
   }
 
   .input-view-toggle {
-    display: inline-flex;
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
     border: 1px solid var(--_ob-color-border);
     border-radius: var(--_ob-radius);
   }
 
   .input-view-toggle button {
-    min-height: 1.8rem;
-    padding: 0.2rem 0.5rem;
-    color: var(--_ob-color-text-muted);
-    font-size: 0.68rem;
-    background: var(--_ob-color-background);
     border: 0;
     border-radius: 0;
   }
 
   .input-view-toggle button + button {
+    border-top: 1px solid var(--_ob-color-border);
+  }
+
+  .workspace.narrow .input-view-toggle {
+    flex-direction: row;
+  }
+
+  .workspace.narrow .input-view-toggle button + button {
+    border-top: 0;
     border-left: 1px solid var(--_ob-color-border);
   }
 
-  .input-view-toggle button[aria-pressed="true"] {
+  .input-view-toggle button[aria-pressed="true"],
+  .input-mode[aria-pressed="true"] {
     color: var(--_ob-color-accent-contrast);
     background: var(--_ob-color-accent);
   }
@@ -2995,8 +3105,7 @@ const styles = `
     white-space: nowrap;
   }
 
-  .output-item-offset,
-  .output-timing {
+  .output-item-offset {
     padding: 0.05rem 0.4rem;
     color: var(--_ob-color-text-muted);
     font-size: 0.66rem;
@@ -3021,11 +3130,6 @@ const styles = `
     display: none;
   }
 
-  .actions {
-    justify-content: flex-start;
-    margin-top: var(--_ob-space);
-  }
-
   button {
     min-height: 2.25rem;
     padding: 0.42rem 0.8rem;
@@ -3047,15 +3151,55 @@ const styles = `
     opacity: 0.48;
   }
 
-  .run {
+  /* button.run/button.cancel tie the rail rule's specificity and come later
+     in the cascade, so their verb colors win over the rail's muted default. */
+  button.run {
     color: var(--_ob-color-accent-contrast);
     background: var(--_ob-color-accent);
     border-color: var(--_ob-color-accent);
   }
 
-  .cancel {
+  /* The host strip owns the Run verb (rev 17.6); ⌘/Ctrl+Enter and cancel
+     keep working in the element. */
+  :host([hide-run]) button.run {
+    display: none;
+  }
+
+  button.cancel {
     color: var(--_ob-color-danger);
     background: var(--_ob-color-background);
+  }
+
+  /* One button, two glyphs: the check replaces the copy icon during the
+     ~1.6s copied acknowledgement. */
+  .copy-output span {
+    display: contents;
+  }
+
+  .copy-output .icon-check,
+  .copy-output.copied .icon-copy {
+    display: none;
+  }
+
+  .copy-output.copied {
+    color: var(--_ob-color-success);
+  }
+
+  .input-empty {
+    display: grid;
+    min-height: 6rem;
+    margin: 0;
+    padding: var(--_ob-space);
+    place-items: center;
+    color: var(--_ob-color-text-muted);
+    font-size: 0.72rem;
+    background: var(--_ob-code-surface);
+    border: 1px solid var(--_ob-color-border);
+    border-radius: var(--_ob-radius);
+  }
+
+  .input-empty[hidden] {
+    display: none;
   }
 
   .error {

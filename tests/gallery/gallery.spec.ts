@@ -198,13 +198,13 @@ async function sweep(page: Page, theme: Theme, width: Width): Promise<void> {
   });
 
   await shoot("cockpit-output", "single-value-with-duration", async () => {
-    await active.locator("button.run").click();
+    // Rev 17.6: the strip owns Run and reports count + duration.
+    await page.locator("#sheet-run").click();
     await expect(active.locator('[part~="output"] .cm-content')).toContainText(
       '"name": "OpenBindings CLI"',
       { timeout: 15_000 },
     );
-    await expect(active.locator(".output-count")).toHaveText("1 value");
-    await expect(active.locator('[part~="output-timing"]')).toBeVisible();
+    await expect(page.locator("#sheet-status")).toContainText("1 value");
     return active.locator(".output-column");
   });
 
@@ -212,7 +212,7 @@ async function sweep(page: Page, theme: Theme, width: Width): Promise<void> {
   await shoot("cockpit-output", "error-category-card", async () => {
     await selectOperation(page, "openbindings.ob.getContext");
     await setEditorValue(active, '{"key":""}');
-    await active.locator("button.run").click();
+    await page.locator("#sheet-run").click();
     await expect(active.locator(".error")).toBeVisible({ timeout: 15_000 });
     await expect(active.locator(".error-summary")).not.toBeEmpty();
     return active.locator(".output-column");

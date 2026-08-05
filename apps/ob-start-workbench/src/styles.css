@@ -9,6 +9,10 @@
   --page-surface: #ffffff;
   --page-surface-raised: #f4f4f4;
   --page-code-surface: #f7f7f5;
+  --page-token-key: #2456c4;
+  --page-token-string: #0d7050;
+  --page-token-number: #94510a;
+  --page-token-keyword: #7c2fb8;
   --accent: #111111;
   --accent-hover: #2a2a2a;
   --accent-soft: #f0f0f0;
@@ -36,6 +40,10 @@
   --page-surface: #0a0a0a;
   --page-surface-raised: #171717;
   --page-code-surface: #101010;
+  --page-token-key: #8fb4ff;
+  --page-token-string: #6bd6a4;
+  --page-token-number: #f0b45f;
+  --page-token-keyword: #d3a2ff;
   --accent: #f1f1ec;
   --accent-hover: #d7d7d1;
   --accent-soft: #171717;
@@ -92,6 +100,13 @@ main {
   --ob-color-success: var(--success);
   --ob-color-danger: var(--danger);
   --ob-code-surface: var(--page-code-surface);
+  /* One token palette app-wide (rev 17.6), keyed to the APP theme — the
+     element defaults follow the OS scheme, which desyncs from the in-app
+     toggle. */
+  --ob-editor-token-key: var(--page-token-key);
+  --ob-editor-token-string: var(--page-token-string);
+  --ob-editor-token-number: var(--page-token-number);
+  --ob-editor-token-keyword: var(--page-token-keyword);
   --ob-radius: 0;
 }
 
@@ -902,10 +917,20 @@ textarea {
   color: var(--danger);
 }
 
+/* Icon-based Run (rev 17.6): a fixed square so the anchor law holds — the
+   button's footprint never changes with state. */
 #sheet-run {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.9rem;
   min-height: 1.6rem;
-  padding: 0 0.7rem;
-  font-size: 0.72rem;
+  padding: 0.2rem;
+}
+
+#sheet-run .panel-icon {
+  width: 0.85rem;
+  height: 0.85rem;
 }
 
 #sheet-run[hidden] {

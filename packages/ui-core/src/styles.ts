@@ -44,6 +44,17 @@ export const baseStyles = `
       --ob-code-surface,
       color-mix(in srgb, var(--_ob-color-surface-strong) 45%, var(--_ob-color-background))
     );
+    /* One token palette for machine text (rev 17.6): editors, code views,
+       and code blocks all draw these. Hosts theme them app-wide through
+       --ob-editor-token-*; the defaults below follow the OS scheme so a
+       standalone element still reads correctly. */
+    --_ob-editor-token-key: var(--ob-editor-token-key, #1a4fd6);
+    --_ob-editor-token-string: var(--ob-editor-token-string, #0b7a52);
+    --_ob-editor-token-number: var(--ob-editor-token-number, #9a5300);
+    --_ob-editor-token-keyword: var(--ob-editor-token-keyword, #8b21c9);
+    --_ob-editor-token-punct: var(--ob-editor-token-punct, var(--_ob-color-text-muted));
+    --_ob-editor-token-comment: var(--ob-editor-token-comment, var(--_ob-color-text-muted));
+    --_ob-editor-token-invalid: var(--ob-editor-token-invalid, var(--_ob-color-danger));
 
     color: var(--_ob-color-text);
     font: 400 var(--_ob-font-size) / 1.45 var(--_ob-font-family);
@@ -58,6 +69,15 @@ export const baseStyles = `
      <summary> (or a host-drawn toggle) folds content. Drawn with borders in
      currentColor — no glyphs, no image assets — closed points right, open
      points down, turning over --_ob-duration. */
+  @media (prefers-color-scheme: dark) {
+    :host {
+      --_ob-editor-token-key: var(--ob-editor-token-key, #8fb4ff);
+      --_ob-editor-token-string: var(--ob-editor-token-string, #6bd6a4);
+      --_ob-editor-token-number: var(--ob-editor-token-number, #f0b45f);
+      --_ob-editor-token-keyword: var(--ob-editor-token-keyword, #d3a2ff);
+    }
+  }
+
   summary {
     cursor: pointer;
     list-style: none;

@@ -34,7 +34,8 @@ test("first run: navigate to Ready, first invocation, one visible session", asyn
 
   const workbench = page.locator("ob-operation-workbench:not([hidden])");
   await expect(workbench.locator("h2")).toHaveText("openbindings.ob.describe");
-  const run = workbench.locator("button.run");
+  // Rev 17.6: the strip owns Run inside the app.
+  const run = page.locator("#sheet-run");
   await expect(run).toBeEnabled();
 
   // Moment: Run click -> first output frame visible (WB-PERF-03).

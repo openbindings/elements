@@ -70,31 +70,31 @@ export function renderCodeBlock(
  */
 export const CODE_BLOCK_STYLES = `
   .tok-propertyName {
-    color: var(--_ob-editor-token-key, var(--ob-editor-token-key, #1a4fd6));
+    color: var(--_ob-editor-token-key);
   }
 
   .tok-string, .tok-string2 {
-    color: var(--_ob-editor-token-string, var(--ob-editor-token-string, #0b7a52));
+    color: var(--_ob-editor-token-string);
   }
 
   .tok-number {
-    color: var(--_ob-editor-token-number, var(--ob-editor-token-number, #9a5300));
+    color: var(--_ob-editor-token-number);
   }
 
   .tok-bool, .tok-null, .tok-keyword, .tok-atom {
-    color: var(--_ob-editor-token-keyword, var(--ob-editor-token-keyword, #8b21c9));
+    color: var(--_ob-editor-token-keyword);
   }
 
   .tok-punctuation, .tok-separator, .tok-bracket, .tok-squareBracket,
   .tok-brace, .tok-paren {
-    color: var(--_ob-editor-token-punct, var(--ob-editor-token-punct, inherit));
+    color: var(--_ob-editor-token-punct);
   }
 
   .tok-comment {
-    color: var(--_ob-editor-token-comment, var(--ob-editor-token-comment, inherit));
+    color: var(--_ob-editor-token-comment);
   }
 
   .tok-invalid {
-    color: var(--_ob-editor-token-invalid, var(--ob-editor-token-invalid, inherit));
+    color: var(--_ob-editor-token-invalid);
   }
 `;

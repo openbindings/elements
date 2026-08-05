@@ -227,8 +227,10 @@ for (const theme of THEMES) {
           .first(),
       },
       {
+        // Rev 17.6: the app's visible Run is the strip's — the element's
+        // rail play button is hidden inside the workbench.
         name: "Run button text vs button background",
-        locator: page.locator("ob-operation-workbench:not([hidden]) .run"),
+        locator: page.locator("#sheet-run"),
       },
       {
         // Rev 17.1: the pill is dot-only when Ready — its text (same muted
@@ -304,14 +306,17 @@ for (const theme of THEMES) {
     await page.keyboard.press("ArrowLeft");
     assertRing("layout gutter", theme, await page.evaluate(readActiveFocusRing));
 
-    // 5. Run, reached by keyboard: Cancel is hidden while idle, so Shift+Tab
-    //    from the gutter lands on the Run button.
-    await page.keyboard.press("Shift+Tab");
+    // 5. Run — the strip's #sheet-run (rev 17.6): the element's rail Run is
+    //    hidden inside the app, so the strip button is the app's one Run
+    //    verb. Focus + a harmless keypress upgrades to :focus-visible
+    //    (Shift never activates the button).
+    await page.locator("#sheet-run").focus();
+    await page.keyboard.press("Shift");
     const runRing = await page.evaluate(readActiveFocusRing);
     expect(
       runRing.description,
-      `expected Shift+Tab from the layout gutter to land on Run, got ${runRing.description}`,
-    ).toContain("run");
+      `expected keyboard focus on #sheet-run, got ${runRing.description}`,
+    ).toContain("sheet-run");
     assertRing("Run button", theme, runRing);
   });
 }
