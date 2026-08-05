@@ -197,14 +197,15 @@ test("the workbench layout is adjustable, accessible, and persistent", async ({
   // Reset layout died with the Panels menu (rev 17): widths accumulate —
   // 352 + two ArrowRight steps — and persist across the reload.
   await railGutter.press("ArrowRight");
+  // Tri-state cycle (rev 17.9): system → light → dark.
+  await page.locator("#theme-toggle").click();
   await page.locator("#theme-toggle").click();
   await expect(page.locator("html")).toHaveAttribute("data-dark", "");
   await page.reload();
   await expect(railGutter).toHaveAttribute("aria-valuenow", "400");
-  await expect(page.locator("#theme-toggle")).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  // The pinned mode survives the reload.
+  await expect(page.locator("html")).toHaveAttribute("data-theme-mode", "dark");
+  await expect(page.locator("html")).toHaveAttribute("data-dark", "");
 });
 
 test("the exec split is adjustable from the session gutter and persists", async ({

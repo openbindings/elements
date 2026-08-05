@@ -163,10 +163,15 @@ async function openWorkbench(page: Page, theme: Theme): Promise<void> {
   await expect(page.locator("#connection-status-text")).toHaveText("Ready", {
     timeout: 20_000,
   });
-  const dark = await page.evaluate(() =>
-    document.documentElement.hasAttribute("data-dark"),
-  );
-  if ((theme === "dark") !== dark) await page.locator("#theme-toggle").click();
+  // The toggle cycles light → dark → system (rev 17.9); walk it until the
+  // appearance matches (three states, so at most two clicks).
+  for (let clicks = 0; clicks < 3; clicks += 1) {
+    const dark = await page.evaluate(() =>
+      document.documentElement.hasAttribute("data-dark"),
+    );
+    if ((theme === "dark") === dark) break;
+    await page.locator("#theme-toggle").click();
+  }
   if (theme === "dark") {
     await expect(page.locator("html")).toHaveAttribute("data-dark", "");
   }

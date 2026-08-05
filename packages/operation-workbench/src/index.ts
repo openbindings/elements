@@ -1131,9 +1131,12 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
           ? "Enter one JSON input value"
           : "Enter a JSON array; each member is one input value";
     }
+    // Rail doctrine (rev 17.9): controls never appear or vanish — a rail
+    // that reshuffles underfoot is jarring, and a hidden control teaches the
+    // user nothing. Everything stays visible; what is not useful right now
+    // is disabled.
     if (inputMode) {
-      inputMode.hidden = !hasInput;
-      inputMode.disabled = this.#running;
+      inputMode.disabled = this.#running || !hasInput;
       const sequence = this.#inputMode === "sequence";
       inputMode.setAttribute("aria-pressed", String(sequence));
       const cardinality = sequence
@@ -1146,12 +1149,11 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       inputMode.title = cardinality;
     }
     if (formatInput) {
-      formatInput.hidden = !hasInput;
-      formatInput.disabled = this.#running || !this.#inputText.trim();
+      formatInput.disabled =
+        !hasInput || this.#running || !this.#inputText.trim();
     }
     if (resetInput) {
-      resetInput.hidden = !hasInput;
-      resetInput.disabled = this.#running || !starterAvailable;
+      resetInput.disabled = !hasInput || this.#running || !starterAvailable;
     }
     if (inputEmpty) inputEmpty.hidden = hasInput;
 
@@ -1160,7 +1162,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       runButton.disabled = !available || this.#running;
     }
     if (cancelButton) {
-      cancelButton.hidden = !this.#running;
+      cancelButton.disabled = !this.#running;
     }
 
     if (outputNotice) {
@@ -1230,16 +1232,16 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       }
     }
     if (copyOutput) {
-      copyOutput.hidden = this.#outputCount === 0;
+      copyOutput.disabled = this.#outputCount === 0;
       copyOutput.classList.toggle("copied", this.#copied);
       const copyLabel = this.#copied ? "Copied" : "Copy output as JSON";
       copyOutput.setAttribute("aria-label", copyLabel);
       copyOutput.title = copyLabel;
     }
     if (clearOutput) {
-      clearOutput.hidden =
-        this.#outputCount === 0 && !this.#frameError && !this.#runtimeError;
-      clearOutput.disabled = this.#running;
+      clearOutput.disabled =
+        this.#running ||
+        (this.#outputCount === 0 && !this.#frameError && !this.#runtimeError);
     }
     if (error) {
       const currentError = this.#frameError ?? this.#runtimeError;
@@ -1422,14 +1424,16 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
         ? (form.capability.reason ?? "Form view is unavailable for this schema.")
         : null;
 
-    if (toggle) toggle.hidden = !hasInput;
     if (viewJson) {
       viewJson.setAttribute("aria-pressed", String(!showForm));
+      viewJson.disabled = this.#running || !hasInput;
     }
     if (viewForm) {
       viewForm.setAttribute("aria-pressed", String(showForm));
-      viewForm.disabled = this.#running || blockedReason !== null;
-      viewForm.title = blockedReason ?? "Edit as a schema-driven form";
+      viewForm.disabled = this.#running || !hasInput || blockedReason !== null;
+      viewForm.title = !hasInput
+        ? "This operation declares no input"
+        : (blockedReason ?? "Edit as a schema-driven form");
     }
 
     if (shapeBar && shape) {
@@ -2498,8 +2502,8 @@ const CONTENT_SHELL = `
            <section class="input-column" aria-label="Input">
              <div class="tool-rail input-rail" role="toolbar" aria-orientation="vertical" aria-label="Input tools">
                <button class="run" part="run" type="button" aria-label="Run" title="Run (⌘/Ctrl+Enter)">${ICON_PLAY}</button>
-               <button class="cancel" part="cancel" type="button" aria-label="Cancel run" title="Cancel" hidden>${ICON_STOP}</button>
-               <span class="input-view-toggle" part="input-mode-toggle" role="group" aria-label="Input editing view" hidden>
+               <button class="cancel" part="cancel" type="button" aria-label="Cancel run" title="Cancel" disabled>${ICON_STOP}</button>
+               <span class="input-view-toggle" part="input-mode-toggle" role="group" aria-label="Input editing view">
                  <button class="view-json" type="button" aria-pressed="true" aria-label="Edit input as JSON source" title="Source">${ICON_CODE}</button>
                  <button class="view-form" type="button" aria-pressed="false" aria-label="Edit input as a form" title="Form">${ICON_FORM}</button>
                </span>
@@ -2547,7 +2551,7 @@ const CONTENT_SHELL = `
                </div>
              </div>
              <div class="tool-rail output-rail" role="toolbar" aria-orientation="vertical" aria-label="Output tools">
-               <button class="copy-output" part="copy-output" type="button" aria-label="Copy output as JSON" title="Copy output as JSON" hidden><span class="icon-copy">${ICON_COPY}</span><span class="icon-check">${ICON_CHECK}</span></button>
+               <button class="copy-output" part="copy-output" type="button" aria-label="Copy output as JSON" title="Copy output as JSON" disabled><span class="icon-copy">${ICON_COPY}</span><span class="icon-check">${ICON_CHECK}</span></button>
                <button class="clear-output" part="clear-output" type="button" aria-label="Clear output" title="Clear output">${ICON_CLEAR}</button>
              </div>
            </section>
@@ -2660,9 +2664,13 @@ const styles = `
   }
 
   /* The one divider: the gutter always draws its hairline in flush, and
-     widens to the grab affordance on interaction. */
+     widens to the grab affordance on interaction. It carries the panes'
+     surface so the two sides read as one field split by a line — never a
+     channel of host background. */
   :host([flush]) .layout-gutter {
     width: 0.5rem;
+    background: var(--_ob-code-surface);
+    border-radius: 0;
   }
 
   :host([flush]) .layout-gutter-handle {

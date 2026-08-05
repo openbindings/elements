@@ -74,6 +74,7 @@ export class OBIEditorElement extends OpenBindingsElement {
             <p class="eyebrow">Interface document</p>
           </div>
           <div class="actions">
+            <span class="status" part="status" role="status" aria-live="polite" hidden></span>
             <label>
               <span class="sr-only">Document format</span>
               <select class="format" part="format" aria-label="Document format">
@@ -84,7 +85,6 @@ export class OBIEditorElement extends OpenBindingsElement {
           </div>
         </header>
         <ob-json-editor class="editor" part="editor"></ob-json-editor>
-        <footer class="status" part="status" role="status" aria-live="polite"></footer>
       </section>`;
     this.#editor = root.querySelector(".editor");
     this.#formatSelect = root.querySelector(".format");
@@ -178,13 +178,22 @@ export class OBIEditorElement extends OpenBindingsElement {
       this.#formatSelect.disabled = this.#readOnly;
     }
     if (this.#status) {
-      const dirty = this.#text !== this.#baseline;
-      this.#status.dataset.state = this.#result.valid ? "valid" : "invalid";
-      this.#status.textContent = this.#result.valid
-        ? dirty
-          ? "Valid OpenBindings interface · unsaved changes"
-          : "Valid OpenBindings interface"
-        : this.#result.error;
+      // Linter doctrine (rev 17.9): validity is silent — only INVALIDITY
+      // surfaces, as a toolbar chip carrying the diagnostic in its tooltip
+      // (the editor also marks the offending line).
+      const result = this.#result;
+      this.#status.hidden = result.valid;
+      if (!result.valid) {
+        this.#status.dataset.state = "invalid";
+        this.#status.textContent = "Invalid";
+        this.#status.title = result.error;
+        this.#status.setAttribute("aria-label", `Invalid: ${result.error}`);
+      } else {
+        delete this.#status.dataset.state;
+        this.#status.textContent = "";
+        this.#status.removeAttribute("title");
+        this.#status.removeAttribute("aria-label");
+      }
     }
   }
 
@@ -318,7 +327,7 @@ const styles = `
 
   .container {
     display: grid;
-    grid-template-rows: auto minmax(10rem, 1fr) auto;
+    grid-template-rows: auto minmax(10rem, 1fr);
     width: 100%;
     height: 100%;
     min-height: 0;
@@ -387,26 +396,34 @@ const styles = `
     width: 100%;
     min-width: 0;
     min-height: 0;
-    padding: var(--_ob-space);
   }
 
+  /* The editor is the pane: no padding band, no inner frame — the code
+     surface runs edge to edge under the toolbar (rev 17.9). */
+  .editor::part(container) {
+    height: 100%;
+    border: 0;
+    border-radius: 0;
+  }
+
+  /* Invalidity chip: shown only when the document does not parse or
+     validate — validity itself is silent, like every linter. */
   .status {
-    min-height: 2rem;
-    padding: 0.4rem var(--_ob-space);
-    overflow: auto;
-    color: var(--_ob-color-text-muted);
-    background: var(--_ob-color-surface);
-    border-top: 1px solid var(--_ob-color-border);
-    font-size: 0.72rem;
-    white-space: pre-wrap;
-  }
-
-  .status[data-state="valid"] {
-    color: var(--_ob-color-success);
-  }
-
-  .status[data-state="invalid"] {
+    max-width: 16rem;
+    padding: 0.18rem 0.55rem;
+    overflow: hidden;
     color: var(--_ob-color-danger);
+    background: color-mix(in srgb, var(--_ob-color-danger) 10%, var(--_ob-color-background));
+    border: 1px solid color-mix(in srgb, var(--_ob-color-danger) 30%, var(--_ob-color-border));
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .status[hidden] {
+    display: none;
   }
 
   .sr-only {

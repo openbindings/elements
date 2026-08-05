@@ -1283,7 +1283,7 @@ describe("output view v2", () => {
       ".copy-output",
     );
     expect(copyButton).toBeTruthy();
-    expect(copyButton?.hidden).toBe(true);
+    expect(copyButton?.disabled).toBe(true);
     const runA = a.element.run();
     await waitFor(() =>
       a.element.shadowRoot?.querySelector(".status")?.textContent ===
@@ -1294,7 +1294,7 @@ describe("output view v2", () => {
     await runA;
     await settled();
 
-    expect(copyButton?.hidden).toBe(false);
+    expect(copyButton?.disabled).toBe(false);
     // Fake timers wrap the copy so the ~1.6s "Copied" revert is observable.
     vi.useFakeTimers();
     try {

@@ -305,8 +305,9 @@ button.primary {
   border-color: var(--accent);
 }
 
-/* The theme toggle is icon-only: lucide moon in light mode (the action is
-   dark), lucide sun in dark mode. The accessible name carries the action. */
+/* The theme toggle is icon-only and tri-state (rev 17.9): sun = light,
+   moon = dark, monitor = system. The accessible name carries the state and
+   the next action. */
 #theme-toggle {
   display: inline-flex;
   align-items: center;
@@ -322,12 +323,16 @@ button.primary {
   height: 1.05rem;
 }
 
-#theme-toggle .icon-sun,
-:root[data-dark] #theme-toggle .icon-moon {
+/* Tri-state (rev 17.9): the icon mirrors the CURRENT mode. Before main.ts
+   stamps data-theme-mode, the monitor shows — system is the default. */
+#theme-toggle .theme-icon {
   display: none;
 }
 
-:root[data-dark] #theme-toggle .icon-sun {
+:root[data-theme-mode="light"] #theme-toggle .icon-sun,
+:root[data-theme-mode="dark"] #theme-toggle .icon-moon,
+:root[data-theme-mode="system"] #theme-toggle .icon-system,
+:root:not([data-theme-mode]) #theme-toggle .icon-system {
   display: block;
 }
 

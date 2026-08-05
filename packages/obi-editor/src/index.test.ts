@@ -38,9 +38,11 @@ describe("OBIEditorElement", () => {
     expect(element.text).toContain('"openbindings": "0.2.0"');
     expect(element.value).toEqual(obi);
     expect(edited).not.toHaveBeenCalled();
-    expect(element.shadowRoot?.querySelector(".status")?.textContent).toBe(
-      "Valid OpenBindings interface",
-    );
+    // Linter doctrine (rev 17.9): validity is silent — the chip renders
+    // only when the document is invalid.
+    expect(
+      element.shadowRoot?.querySelector<HTMLElement>(".status")?.hidden,
+    ).toBe(true);
   });
 
   it("reports invalid edits and preserves the source text", async () => {
@@ -84,9 +86,9 @@ describe("OBIEditorElement", () => {
     typeInto(element, `${element.text}\noperations: {}\n`);
     await validated();
     expect(element.value).toBeNull();
-    expect(element.shadowRoot?.querySelector(".status")?.textContent).toContain(
-      "Map keys must be unique",
-    );
+    expect(
+      element.shadowRoot?.querySelector<HTMLElement>(".status")?.title,
+    ).toContain("Map keys must be unique");
   });
 });
 

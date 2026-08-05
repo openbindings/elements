@@ -151,6 +151,56 @@ const operationEnvironment = new OperationEnvironment();
 const sessionStorageKey = "openbindings.ob-start.session-token.v1";
 const layoutStorageKey = "openbindings.ob-start.layout.v1";
 const themeStorageKey = "openbindings.ob-start.theme.v1";
+
+/**
+ * Tri-state theme (rev 17.9): light → dark → system → light. "System"
+ * follows the OS live (the media listener below re-applies on OS change)
+ * and is the default — the app respects the platform until the user pins a
+ * mode. The button is icon-only and shows the CURRENT mode (sun / moon /
+ * monitor); the accessible name carries the state and the next action.
+ */
+type ThemeMode = "light" | "dark" | "system";
+
+const themeMedia =
+  typeof globalThis.matchMedia === "function"
+    ? globalThis.matchMedia("(prefers-color-scheme: dark)")
+    : null;
+let themeMode: ThemeMode = "system";
+
+function setTheme(mode: ThemeMode): void {
+  themeMode = mode;
+  const dark =
+    mode === "dark" || (mode === "system" && Boolean(themeMedia?.matches));
+  document.documentElement.toggleAttribute("data-dark", dark);
+  document.documentElement.setAttribute("data-theme-mode", mode);
+  const next = nextThemeMode(mode);
+  const label =
+    mode === "system"
+      ? `Theme: system (follows the OS) — click for ${next}`
+      : `Theme: ${mode} — click for ${next}`;
+  themeToggle.setAttribute("aria-label", label);
+  themeToggle.title = label;
+}
+
+function nextThemeMode(mode: ThemeMode): ThemeMode {
+  return mode === "light" ? "dark" : mode === "dark" ? "system" : "light";
+}
+
+themeMedia?.addEventListener("change", () => {
+  if (themeMode === "system") setTheme("system");
+});
+
+function restoreTheme(): ThemeMode {
+  try {
+    const stored = globalThis.localStorage.getItem(themeStorageKey);
+    // Pre-17.9 storage held "light"/"dark" from the two-state toggle; both
+    // read as a pinned mode. Anything else means "system".
+    return stored === "dark" || stored === "light" ? stored : "system";
+  } catch {
+    return "system";
+  }
+}
+
 const tabsStoragePrefix = "openbindings.ob-start.operation-tabs.v1.";
 const defaultWorkspaceLayout: WorkspaceLayout = {
   explorer: true,
@@ -640,8 +690,10 @@ function renderBreadcrumb(): void {
 
 /**
  * The validity chip is the contract's own verdict: validateInterface runs
- * against the live document on every document change. A chip that cannot
- * reach the server says "—", never a stale "Valid".
+ * against the live document on every document change. Linter doctrine
+ * (rev 17.9): validity is SILENT — the chip renders only when the server
+ * reports problems. Unverified, checking, and valid all show nothing;
+ * spell checkers don't flag correct words.
  */
 async function refreshDocumentValidity(obi: OBInterface): Promise<void> {
   const attempt = ++validationAttempt;
@@ -649,13 +701,9 @@ async function refreshDocumentValidity(obi: OBInterface): Promise<void> {
   // Same rule as preflight (rev 13): no authenticated call before the
   // session credential is verified — a guaranteed 401 is noise, not honesty.
   if (sessionAuth !== "verified") {
-    documentValidity.textContent = "—";
-    documentValidity.className = "badge";
+    documentValidity.hidden = true;
     return;
   }
-  documentValidity.textContent = "…";
-  documentValidity.className = "badge";
-  documentValidity.removeAttribute("title");
   try {
     const report = await invokeThroughOB<
       { interface: OBInterface },
@@ -663,10 +711,11 @@ async function refreshDocumentValidity(obi: OBInterface): Promise<void> {
     >(obInterface, "openbindings.ob.validateInterface", { interface: obi });
     if (attempt !== validationAttempt) return;
     if (report.valid) {
-      documentValidity.textContent = "Valid";
-      documentValidity.className = "badge connected";
+      documentValidity.hidden = true;
+      documentValidity.removeAttribute("title");
     } else {
       const problems = report.problems ?? [];
+      documentValidity.hidden = false;
       documentValidity.textContent = problems.length
         ? `${problems.length} problem${problems.length === 1 ? "" : "s"}`
         : "Invalid";
@@ -675,8 +724,7 @@ async function refreshDocumentValidity(obi: OBInterface): Promise<void> {
     }
   } catch {
     if (attempt !== validationAttempt) return;
-    documentValidity.textContent = "—";
-    documentValidity.className = "badge";
+    documentValidity.hidden = true;
   }
 }
 
@@ -836,10 +884,10 @@ targetContextForm.addEventListener("submit", event => {
 clearTargetContextButton.addEventListener("click", clearTargetContext);
 
 themeToggle.addEventListener("click", () => {
-  const dark = !document.documentElement.hasAttribute("data-dark");
-  setTheme(dark);
+  const mode = nextThemeMode(themeMode);
+  setTheme(mode);
   try {
-    globalThis.localStorage.setItem(themeStorageKey, dark ? "dark" : "light");
+    globalThis.localStorage.setItem(themeStorageKey, mode);
   } catch {
     // The selected theme still applies for the current page.
   }
@@ -2591,24 +2639,6 @@ function setConnectionStatus(
     `${message} — connection and credentials`,
   );
   connectionStatus.title = `${message} — connection and credentials`;
-}
-
-function setTheme(dark: boolean): void {
-  document.documentElement.toggleAttribute("data-dark", dark);
-  themeToggle.setAttribute("aria-pressed", String(dark));
-  // The button is icon-only (lucide moon/sun, index.html; CSS swaps them on
-  // [data-dark]) — the accessible name carries the action.
-  const label = dark ? "Switch to light theme" : "Switch to dark theme";
-  themeToggle.setAttribute("aria-label", label);
-  themeToggle.title = label;
-}
-
-function restoreTheme(): boolean {
-  try {
-    return globalThis.localStorage.getItem(themeStorageKey) === "dark";
-  } catch {
-    return false;
-  }
 }
 
 interface WorkspaceLayout {
