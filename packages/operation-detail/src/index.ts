@@ -51,11 +51,6 @@ export class OperationDetailElement extends OpenBindingsElement {
   set hideSchemas(value: boolean) {
     this.toggleAttribute("hide-schemas", Boolean(value));
   }
-  // True until the next successful render of the bindings disclosure applies
-  // the default open state. Raised only when the operation identity changes,
-  // so a user's manual toggle survives every other re-render (selection
-  // changes, document refreshes) instead of snapping back to the default.
-  #bindingsOpenStale = true;
 
   get obi(): OBInterface | null {
     return this.#obi;
@@ -75,7 +70,6 @@ export class OperationDetailElement extends OpenBindingsElement {
     if (value === this.#operationKey) return;
     this.#operationKey = value;
     this.#selectedBindingKey = null;
-    this.#bindingsOpenStale = true;
     this.requestRender();
   }
 
@@ -161,14 +155,10 @@ export class OperationDetailElement extends OpenBindingsElement {
       .filter(([, binding]) => binding.operation === this.#operationKey)
       .sort(([a], [b]) => a.localeCompare(b));
     refs.require(".bindings").hidden = bindingEntries.length === 0;
-    // The default only lands when the operation identity changed; every other
-    // pass leaves `open` alone so a manual toggle (and focus inside the body,
-    // which reconcile already preserves) survives re-renders.
-    if (this.#bindingsOpenStale) {
-      this.#bindingsOpenStale = false;
-      refs.require<HTMLDetailsElement>(".bindings details").open =
-        bindingEntries.length <= 2;
-    }
+    // An OPEN list (rev 17.13): a binding is which implementation serves
+    // this operation — load-bearing, not appendix material. The modal count
+    // is 1–3; the detail region scrolls for outliers, and the disclosure's
+    // open-state machinery went with it.
     setTextIfChanged(
       refs.require(".bindings-count"),
       `Bindings · ${bindingEntries.length}`,
@@ -275,10 +265,8 @@ const SHELL = `
         <div class="alias-list"></div>
       </section>
       <section class="bindings">
-        <details>
-          <summary part="bindings-summary"><span class="bindings-count"></span><span class="bindings-via"></span></summary>
-          <div class="binding-list" part="binding-list"></div>
-        </details>
+        <h3 part="bindings-heading"><span class="bindings-count"></span><span class="bindings-via"></span></h3>
+        <div class="binding-list" part="binding-list"></div>
       </section>
       <section class="examples" part="examples">
         <h3>Examples</h3>
@@ -376,16 +364,13 @@ const styles = `
     margin-top: calc(var(--_ob-space) * 1.5);
   }
 
-  .bindings summary {
+  .bindings h3 {
+    margin: 0 0 0.45rem;
     color: var(--_ob-color-text-muted);
     font-size: 0.72rem;
+    font-weight: 600;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    cursor: pointer;
-  }
-
-  .bindings details[open] summary {
-    margin-bottom: 0.45rem;
   }
 
   /* Binding keys are case-sensitive identifiers; keep them verbatim. */

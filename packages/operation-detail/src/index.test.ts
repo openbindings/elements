@@ -194,36 +194,25 @@ describe("OperationDetailElement bindings disclosure", () => {
     return element;
   }
 
-  function details(element: OperationDetailElement): HTMLDetailsElement {
-    const node = element.shadowRoot?.querySelector<HTMLDetailsElement>(
-      ".bindings details",
-    );
-    if (!node) throw new Error("bindings details missing");
-    return node;
-  }
-
-  function summary(element: OperationDetailElement): HTMLElement {
+  function heading(element: OperationDetailElement): HTMLElement {
     const node = element.shadowRoot?.querySelector<HTMLElement>(
-      '[part~="bindings-summary"]',
+      '[part~="bindings-heading"]',
     );
-    if (!node) throw new Error("bindings summary missing");
+    if (!node) throw new Error("bindings heading missing");
     return node;
   }
 
-  it("shows the binding count in the summary and defaults closed at three bindings", async () => {
+  it("lists bindings as an open list with the count in the heading (rev 17.13)", async () => {
     const element = mount("listPets");
     await settled();
 
-    expect(summary(element).textContent).toBe("Bindings · 3");
-    expect(details(element).open).toBe(false);
-  });
-
-  it("defaults open at two or fewer bindings", async () => {
-    const element = mount("getPet");
-    await settled();
-
-    expect(summary(element).textContent).toBe("Bindings · 1");
-    expect(details(element).open).toBe(true);
+    expect(heading(element).textContent).toBe("Bindings · 3");
+    // No disclosure: the list is always visible; the detail region scrolls.
+    expect(element.shadowRoot?.querySelector(".bindings details")).toBeNull();
+    expect(
+      element.shadowRoot?.querySelectorAll(".binding-list [data-binding-key]")
+        .length,
+    ).toBe(3);
   });
 
   it("appends the selected key to the summary only when it belongs to this operation", async () => {
@@ -231,11 +220,11 @@ describe("OperationDetailElement bindings disclosure", () => {
     element.selectedBindingKey = "listPetsHTTP";
     await settled();
 
-    expect(summary(element).textContent).toBe("Bindings · 3 · via listPetsHTTP");
+    expect(heading(element).textContent).toBe("Bindings · 3 · via listPetsHTTP");
 
     element.selectedBindingKey = "getPetHTTP";
     await settled();
-    expect(summary(element).textContent).toBe("Bindings · 3");
+    expect(heading(element).textContent).toBe("Bindings · 3");
   });
 
   it("renders informational rows inside the disclosure and highlights the host's selection", async () => {
@@ -245,7 +234,7 @@ describe("OperationDetailElement bindings disclosure", () => {
     await settled();
 
     const row = element.shadowRoot?.querySelector<HTMLElement>(
-      '.bindings details [part~="binding"][data-binding-key="listPetsQueue"]',
+      '.bindings [part~="binding"][data-binding-key="listPetsQueue"]',
     );
     expect(row).toBeTruthy();
     expect(row?.querySelector(".binding-family")?.textContent).toContain(
@@ -261,41 +250,7 @@ describe("OperationDetailElement bindings disclosure", () => {
     element.selectedBindingKey = "listPetsQueue";
     await settled();
     expect(row?.classList.contains("selected")).toBe(true);
-    expect(summary(element).textContent).toBe("Bindings · 3 · via listPetsQueue");
-  });
-
-  it("preserves a manual toggle across selectedBindingKey re-renders", async () => {
-    const element = mount("listPets");
-    await settled();
-
-    // User opens the disclosure the render pass defaulted closed.
-    details(element).open = true;
-
-    element.selectedBindingKey = "listPetsHTTP";
-    await settled();
-    expect(details(element).open).toBe(true);
-
-    // And the converse: a manual close on an open-by-default operation.
-    const other = mount("getPet");
-    await settled();
-    details(other).open = false;
-    other.selectedBindingKey = "getPetHTTP";
-    await settled();
-    expect(details(other).open).toBe(false);
-  });
-
-  it("re-applies the default open state when the operation changes", async () => {
-    const element = mount("listPets");
-    await settled();
-    details(element).open = true;
-
-    element.operationKey = "getPet";
-    await settled();
-    expect(details(element).open).toBe(true);
-
-    element.operationKey = "listPets";
-    await settled();
-    expect(details(element).open).toBe(false);
+    expect(heading(element).textContent).toBe("Bindings · 3 · via listPetsQueue");
   });
 
   it("hides the bindings section entirely when the operation has no bindings", async () => {

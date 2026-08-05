@@ -25,7 +25,7 @@ type Width = (typeof WIDTHS)[number];
 const PLAN: Record<string, string[]> = {
   rail: ["default", "filtered-with-count", "keyboard-focused-row"],
   tabs: ["multiple", "overflow"],
-  detail: ["bindings-collapsed", "bindings-open"],
+  detail: ["bindings-open"],
   "cockpit-input": ["json-starter", "focused-editor"],
   "cockpit-output": [
     "empty",
@@ -171,30 +171,15 @@ async function sweep(page: Page, theme: Theme, width: Width): Promise<void> {
     return explorer;
   });
 
-  // -- operation detail: the local describe operation carries one binding ---
+  // -- operation detail: bindings are an OPEN list (rev 17.13) -------------
   await shoot("detail", "bindings-open", async () => {
     const bindings = detail.locator(".bindings");
     if (await bindings.isHidden()) {
       throw new SkipShot("selected operation exposes no bindings");
     }
-    // One binding on the local operations, so the disclosure defaults open.
-    await expect(detail.locator(".bindings details")).toHaveAttribute("open", "");
+    await expect(detail.locator('[part~="binding-list"]')).toBeVisible();
     return detail;
   });
-
-  await shoot("detail", "bindings-collapsed", async () => {
-    const disclosure = detail.locator(".bindings details");
-    if (await detail.locator(".bindings").isHidden()) {
-      throw new SkipShot("selected operation exposes no bindings");
-    }
-    await detail.locator('[part~="bindings-summary"]').click();
-    await expect(disclosure).not.toHaveAttribute("open", "");
-    return detail;
-  });
-  // Restore the disclosure so later full shots keep the default state.
-  if (await detail.locator(".bindings details:not([open])").count()) {
-    await detail.locator('[part~="bindings-summary"]').click();
-  }
 
   // -- cockpit output: empty, then a completed single-value run -------------
   await shoot("cockpit-output", "empty", async () => {
