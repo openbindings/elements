@@ -1,5 +1,9 @@
 import type { OBInterface } from "@openbindings/sdk";
 import {
+  CODE_BLOCK_STYLES,
+  renderCodeBlock,
+} from "@openbindings/json-editor/highlight";
+import {
   OpenBindingsElement,
   baseStyles,
   formatJSON,
@@ -63,7 +67,7 @@ export class OperationDetailElement extends OpenBindingsElement {
   }
 
   protected render(): void {
-    const refs = this.shell(SHELL, baseStyles, styles);
+    const refs = this.shell(SHELL, baseStyles, styles, CODE_BLOCK_STYLES);
     if (!refs) return;
 
     const operation =
@@ -188,23 +192,29 @@ export class OperationDetailElement extends OpenBindingsElement {
           label.className = "example-direction";
           label.textContent = direction;
           const value = document.createElement("pre");
-          value.textContent = formatJSON(example[direction]);
+          renderCodeBlock(value, formatJSON(example[direction]));
           parts.push(label, value);
         }
         node.replaceChildren(...parts);
       },
     });
 
-    setTextIfChanged(
-      refs.require(".input-schema"),
-      operation.input === undefined ? "No input schema" : formatJSON(operation.input),
-    );
-    setTextIfChanged(
-      refs.require(".output-schema"),
-      operation.output === undefined
-        ? "No output schema"
-        : formatJSON(operation.output),
-    );
+    // Schemas are reference machine text — the design system's code BLOCK
+    // tier (rev 17.5): highlighted statically, never an editor instance.
+    const inputSchema = refs.require<HTMLElement>(".input-schema");
+    if (operation.input === undefined) {
+      setTextIfChanged(inputSchema, "No input schema");
+      delete inputSchema.dataset.obCode;
+    } else {
+      renderCodeBlock(inputSchema, formatJSON(operation.input));
+    }
+    const outputSchema = refs.require<HTMLElement>(".output-schema");
+    if (operation.output === undefined) {
+      setTextIfChanged(outputSchema, "No output schema");
+      delete outputSchema.dataset.obCode;
+    } else {
+      renderCodeBlock(outputSchema, formatJSON(operation.output));
+    }
   }
 }
 

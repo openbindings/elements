@@ -146,6 +146,9 @@ importers:
 
   packages/operation-detail:
     dependencies:
+      '@openbindings/json-editor':
+        specifier: workspace:^
+        version: link:../json-editor
       '@openbindings/ui-core':
         specifier: workspace:^
         version: link:../ui-core

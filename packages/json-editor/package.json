@@ -14,6 +14,10 @@
     "./define": {
       "types": "./dist/define.d.ts",
       "default": "./dist/define.js"
+    },
+    "./highlight": {
+      "types": "./dist/highlight.d.ts",
+      "default": "./dist/highlight.js"
     }
   },
   "files": [
@@ -22,7 +26,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsup src/index.ts src/define.ts --format esm --dts --clean",
+    "build": "tsup src/index.ts src/define.ts src/highlight.ts --format esm --dts --clean",
     "check": "tsc --noEmit"
   },
   "dependencies": {

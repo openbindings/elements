@@ -1,5 +1,9 @@
 import type { JSONEditorElement } from "@openbindings/json-editor";
 import {
+  CODE_BLOCK_STYLES,
+  renderCodeBlock,
+} from "@openbindings/json-editor/highlight";
+import {
   resolveOperationRequirement,
   type BindingEntry,
   type Invocation,
@@ -286,7 +290,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     // the accessibility tree *before* their content changes, or assistive
     // technology announces nothing — rebuilding them on every render is why
     // status and output updates used to be silent.
-    adoptStyles(root, baseStyles, styles);
+    adoptStyles(root, baseStyles, styles, CODE_BLOCK_STYLES);
     root.innerHTML = CONTENT_SHELL;
     this.#refs = new Refs(root);
     this.#contentRoot = this.#refs.find(".render-root");
@@ -1242,7 +1246,23 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
         errorSummary.textContent = presentation?.summary ?? "";
       }
       if (errorDetail) {
-        errorDetail.textContent = presentation?.detail ?? "";
+        // Error detail is reference machine text: highlight it as a code
+        // block when it IS JSON; prose stays plain (the error-tolerant JSON
+        // parse would smear tok-invalid over ordinary words).
+        const detailText = presentation?.detail ?? "";
+        let parses = false;
+        try {
+          JSON.parse(detailText);
+          parses = true;
+        } catch {
+          parses = false;
+        }
+        if (parses && detailText) {
+          renderCodeBlock(errorDetail as HTMLElement, detailText);
+        } else {
+          errorDetail.textContent = detailText;
+          delete (errorDetail as HTMLElement).dataset.obCode;
+        }
       }
       if (errorDetails) {
         errorDetails.hidden = !presentation?.detail;
