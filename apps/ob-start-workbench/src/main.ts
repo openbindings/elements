@@ -474,11 +474,10 @@ function applySheetLayout(): void {
     : "Collapse the invocation sheet";
   sheetToggle.title = toggleLabel;
   sheetToggle.setAttribute("aria-label", toggleLabel);
-  // The Run button is the collapsed strip's standing invitation; expanded,
-  // the workbench has its own Run. The status keeps ONE home — this strip,
-  // same slot in both states (rev 17.2): controls that jump between rows
-  // cost more than they save.
-  sheetRun.hidden = !session.collapsed;
+  // The strip keeps ONE layout in both states (rev 17.2/17.3): controls
+  // that jump between rows or slots cost more than they save. Run is a
+  // permanent fixture — the standing "hey, try it" — and only its enabled
+  // state changes (updateSheetStatus).
   updateSheetStatus();
 }
 
@@ -519,6 +518,8 @@ function updateSheetStatus(): void {
   sheetDot.title = label;
   sheetStatus.textContent = text;
   sheetStatus.classList.toggle("danger", danger);
+  // Run is a fixture: present in both states, disabled when it cannot act.
+  sheetRun.disabled = !capable || status.state === "running";
 }
 
 function formatDuration(durationMs: number): string {
