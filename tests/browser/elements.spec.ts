@@ -325,8 +325,9 @@ test("tab overflow hint fades the tabs themselves — no scrim painted over them
 test("workspace-item tabs show kind subtitles and rename inline with real input events", async ({
   page,
 }) => {
-  // Rev 16: tabs are named workspace items. The kind renders as a muted
-  // subtitle; double-click opens an inline rename committed with Enter.
+  // Rev 16 tabs are named workspace items; rev 17.1 renders the kind as a
+  // small inline chip. Double-click opens an inline rename committed with
+  // Enter.
   await page.evaluate(() => {
     const strip = document.createElement("ob-operation-tabs") as HTMLElement & {
       tabs: { key: string; label: string; kind?: string }[];

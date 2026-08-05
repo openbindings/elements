@@ -12,9 +12,10 @@ export interface OperationTab {
   key: string;
   label?: string;
   /**
-   * Workspace-item kind (rev 16), rendered as a smaller muted subtitle line
-   * under the label — a token, not a color code. The element stays generic:
-   * any string renders; it knows nothing about what the kinds mean.
+   * Workspace-item kind (rev 16; rev 17.1 form): rendered as a small inline
+   * chip after the label — a token, not a color code. Hosts typically mark
+   * only non-default kinds. The element stays generic: any string renders;
+   * it knows nothing about what the kinds mean.
    */
   kind?: string;
   dirty?: boolean;
@@ -375,8 +376,14 @@ export class OperationTabsElement extends OpenBindingsElement {
       button.title = label;
     }
 
-    const labelNode = node.querySelector(".label");
-    if (labelNode) setTextIfChanged(labelNode, label);
+    const head = node.querySelector(".label-head");
+    const tail = node.querySelector(".label-tail");
+    if (head && tail) {
+      const TAIL = 8;
+      const split = label.length > TAIL + 4 ? label.length - TAIL : label.length;
+      setTextIfChanged(head, label.slice(0, split));
+      setTextIfChanged(tail, label.slice(split));
+    }
 
     const kindNode = node.querySelector<HTMLElement>(".kind");
     if (kindNode) {
@@ -594,16 +601,22 @@ function createTab(key: string): HTMLElement {
   status.setAttribute("part", "status");
   status.hidden = true;
 
-  const stack = document.createElement("span");
-  stack.className = "label-stack";
   const label = document.createElement("span");
   label.className = "label";
+  // Middle ellipsis (rev 17.1): uniform key prefixes make end-truncation
+  // collide ("openbindings.ob.de…" twice), and delimiters are conventions,
+  // not contract — so the tail is preserved by construction: the head
+  // shrinks with its own ellipsis while the tail never gives way.
+  const labelHead = document.createElement("span");
+  labelHead.className = "label-head";
+  const labelTail = document.createElement("span");
+  labelTail.className = "label-tail";
+  label.append(labelHead, labelTail);
   const kind = document.createElement("span");
   kind.className = "kind";
   kind.setAttribute("part", "kind");
   kind.hidden = true;
-  stack.append(label, kind);
-  button.append(status, stack);
+  button.append(status, label, kind);
 
   const close = document.createElement("button");
   close.type = "button";
@@ -802,26 +815,37 @@ const styles = `
     text-align: left;
   }
 
-  .label-stack {
-    display: grid;
+  /* Middle ellipsis: the head shrinks with its own ellipsis, the tail is
+     rigid — together they truncate long labels in the middle, where the
+     information usually isn't. */
+  .label {
+    display: flex;
     min-width: 0;
-    gap: 0.05rem;
   }
 
-  .label,
-  .kind {
+  .label-head {
+    flex: 0 1 auto;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+    white-space: pre;
   }
 
-  /* The workspace-item kind: a smaller, muted second line — a token, never
-     a color code alone. */
+  .label-tail {
+    flex: none;
+    white-space: pre;
+  }
+
+  /* The workspace-item kind (rev 17.1): an inline chip, present only when
+     the host marks a non-default kind — a token, never a color code alone. */
   .kind {
+    flex: none;
+    padding: 0.02rem 0.32rem;
     color: var(--_ob-color-text-muted);
-    font-size: 0.62rem;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    font-size: 0.6rem;
+    letter-spacing: 0.03em;
+    background: color-mix(in srgb, var(--_ob-color-surface-strong) 70%, transparent);
+    border: 1px solid var(--_ob-color-border);
+    border-radius: 999px;
   }
 
   .kind[hidden] {

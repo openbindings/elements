@@ -231,8 +231,10 @@ for (const theme of THEMES) {
         locator: page.locator("ob-operation-workbench:not([hidden]) .run"),
       },
       {
-        name: "status pill text vs pill background",
-        locator: page.locator("#connection-status-text"),
+        // Rev 17.1: the pill is dot-only when Ready — its text (same muted
+        // token) is measured where it is always painted, the breadcrumb.
+        name: "breadcrumb text vs background",
+        locator: page.locator("#crumb-document"),
       },
     ];
     for (const probe of probes) {

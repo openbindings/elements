@@ -240,7 +240,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
   #dragChanged = false;
 
   static get observedAttributes(): string[] {
-    return ["layout"];
+    return ["layout", "hide-identity"];
   }
 
   attributeChangedCallback(
@@ -253,6 +253,20 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     if (name === "layout") {
       this.layout = value === "split" ? "split" : "stacked";
     }
+    if (name === "hide-identity") this.hideIdentity = value !== null;
+  }
+
+  /**
+   * Hides the header's identity block (eyebrow + operation key) for hosts
+   * that already name the invocation — the workbench's rev-17 bottom sheet
+   * strip. The functional header tools (binding select, status) stay.
+   */
+  get hideIdentity(): boolean {
+    return this.hasAttribute("hide-identity");
+  }
+
+  set hideIdentity(value: boolean) {
+    this.toggleAttribute("hide-identity", Boolean(value));
   }
 
   constructor() {
@@ -2352,7 +2366,7 @@ declare global {
 const CONTENT_SHELL = `
   <div class="render-root"><section class="container" part="container" aria-label="Operation invocation workbench">
          <header>
-           <div>
+           <div class="identity">
              <p class="eyebrow">Invocation</p>
              <h2></h2>
            </div>
@@ -2478,6 +2492,16 @@ const styles = `
     flex-direction: column;
     height: 100%;
     overflow: hidden;
+  }
+
+  :host([hide-identity]) header > .identity {
+    display: none;
+  }
+
+  /* With the identity hidden the header row is just the tools; right-align
+     them without the vanished block's flex partner. */
+  :host([hide-identity]) header {
+    justify-content: flex-end;
   }
 
   header, .section-heading, .actions, .input-options, .output-options {

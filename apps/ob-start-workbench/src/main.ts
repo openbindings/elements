@@ -125,7 +125,6 @@ const rightPanelToggle = requiredElement<HTMLButtonElement>(
 );
 const crumbDocument = requiredElement<HTMLElement>("#crumb-document");
 const crumbItem = requiredElement<HTMLElement>("#crumb-item");
-const crumbKind = requiredElement<HTMLElement>("#crumb-kind");
 const railColumn = requiredElement<HTMLElement>(".rail-column");
 const workbenchGrid = requiredElement<HTMLElement>(".workbench-grid");
 const railGutter = requiredElement<HTMLElement>("#rail-gutter");
@@ -468,14 +467,18 @@ function applySheetLayout(): void {
     "aria-valuenow",
     String(Math.round(session.ratio * 100)),
   );
-  sheetToggle.textContent = session.collapsed ? "Expand" : "Collapse";
   sheetToggle.setAttribute("aria-expanded", String(!session.collapsed));
-  sheetToggle.title = session.collapsed
+  const toggleLabel = session.collapsed
     ? "Expand the invocation sheet"
     : "Collapse the invocation sheet";
+  sheetToggle.title = toggleLabel;
+  sheetToggle.setAttribute("aria-label", toggleLabel);
   // The Run button is the collapsed strip's standing invitation; expanded,
-  // the workbench has its own Run.
+  // the workbench has its own Run. Same rule for the strip's status: it
+  // reports only for a hidden invocation — expanded, the workbench's own
+  // status is visible below (rev 17.1).
   sheetRun.hidden = !session.collapsed;
+  sheetStatus.hidden = !session.collapsed;
   updateSheetStatus();
 }
 
@@ -603,8 +606,8 @@ function renderDocumentBar(obi: OBInterface): void {
 /**
  * Wayfinding under the tab strip (rev 17): the document identity lives in
  * the hideable rail, so the core column names where you are —
- * "<document> › <tab label>" with the workspace item's kind as a muted
- * suffix. With no open item, the document name stands alone.
+ * "<document> › <tab label>". No kind suffix (rev 17.1): the tab's own
+ * chip classifies. With no open item, the document name stands alone.
  */
 function renderBreadcrumb(): void {
   const documentTitle =
@@ -612,7 +615,6 @@ function renderBreadcrumb(): void {
   const session = activeSession();
   crumbDocument.textContent = documentTitle;
   crumbItem.textContent = session?.label ?? "";
-  crumbKind.textContent = session ? session.kind : "";
   crumbItem.parentElement
     ?.querySelector(".crumb-separator")
     ?.toggleAttribute("hidden", !session);
@@ -1368,6 +1370,9 @@ function createOperationSession(seed: OperationSessionSeed): OperationSession {
   invocation.operationSource = operationEnvironment;
   invocation.context = effectiveTargetContext();
   invocation.hidden = true;
+  // The sheet strip + breadcrumb already name the invocation; the element's
+  // identity header would be the third naming in two rows (rev 17.1).
+  invocation.hideIdentity = true;
   invocation.dataset.operationKey = operationKey;
   invocation.dataset.sessionId = id;
 
@@ -1549,7 +1554,9 @@ function renderOperationTabs(): void {
       {
         key: id,
         label: session.label,
-        kind: session.kind,
+        // The default kind goes unmarked (rev 17.1): only source views
+        // carry the inline chip, so operation tabs stay one clean line.
+        ...(session.kind === "source" ? { kind: "source" } : {}),
         running: session.status.state === "running",
       },
     ];
@@ -2549,6 +2556,14 @@ function setConnectionStatus(
 ): void {
   connectionStatusText.textContent = message;
   connectionStatus.dataset.state = state;
+  // Dot-only when Ready (rev 17.1): the healthy state spends no words; any
+  // other state brings the text back. The accessible name always carries
+  // the message plus the pill's job as the connection-settings entry.
+  connectionStatus.setAttribute(
+    "aria-label",
+    `${message} — connection and credentials`,
+  );
+  connectionStatus.title = `${message} — connection and credentials`;
 }
 
 function setTheme(dark: boolean): void {

@@ -454,8 +454,9 @@ test("tabs are workspace items: duplicate forks a session, rename sticks, the co
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
   const tabs = page.locator("ob-operation-tabs");
   await expect(tabs.locator('[role="tab"]')).toHaveCount(1);
-  // The workspace-item kind renders as a muted subtitle under the label.
-  await expect(tabs.locator(".kind").first()).toHaveText("operation");
+  // The default kind goes unmarked (rev 17.1): operation tabs are one clean
+  // line; only source views carry the inline kind chip.
+  await expect(tabs.locator(".kind").first()).toBeHidden();
 
   // Duplicate forks the session: same operation, its own tab and history.
   await tabs.locator(".menu-toggle").click();

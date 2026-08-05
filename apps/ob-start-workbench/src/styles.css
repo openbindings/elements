@@ -191,6 +191,17 @@ h3 {
   box-shadow: 0 0 0 0.2rem var(--success-soft);
 }
 
+/* Dot-only when Ready (rev 17.1): health spends no words; any other state
+   brings the text back. The accessible name carries the message always. */
+.status-pill[data-state="ready"] #connection-status-text {
+  display: none;
+}
+
+.status-pill[data-state="ready"] {
+  justify-content: center;
+  min-width: 2rem;
+}
+
 .status-pill[data-state="attention"] .status-dot {
   background: var(--warning);
   box-shadow: 0 0 0 0.2rem var(--warning-soft);
@@ -330,16 +341,6 @@ button.primary {
   display: none;
 }
 
-.tab-breadcrumb .crumb-kind {
-  color: var(--page-faint);
-  font-size: 0.66rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.tab-breadcrumb .crumb-kind:empty {
-  display: none;
-}
 
 
 
@@ -884,12 +885,34 @@ textarea {
 }
 
 #sheet-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.7rem;
   min-height: 1.6rem;
-  padding: 0 0.55rem;
+  padding: 0.2rem;
   color: var(--page-muted);
-  font-size: 0.72rem;
   background: transparent;
   border: 1px solid transparent;
+}
+
+.sheet-chevron {
+  display: block;
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+#sheet-toggle .chevron-up,
+.tab-content.sheet-collapsed #sheet-toggle .chevron-down {
+  display: none;
+}
+
+.tab-content.sheet-collapsed #sheet-toggle .chevron-up {
+  display: block;
+}
+
+#sheet-status[hidden] {
+  display: none;
 }
 
 #sheet-toggle:hover {

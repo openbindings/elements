@@ -61,7 +61,6 @@ export class OBIEditorElement extends OpenBindingsElement {
   readonly #scheduleValidation = debounce(() => this.#validateNow(), 180);
   #formatSelect: HTMLSelectElement | null = null;
   #status: HTMLElement | null = null;
-  #reset: HTMLButtonElement | null = null;
 
   constructor() {
     super();
@@ -82,7 +81,6 @@ export class OBIEditorElement extends OpenBindingsElement {
                 <option value="yaml">YAML</option>
               </select>
             </label>
-            <button class="reset" part="reset" type="button">Reset</button>
           </div>
         </header>
         <ob-json-editor class="editor" part="editor"></ob-json-editor>
@@ -91,7 +89,6 @@ export class OBIEditorElement extends OpenBindingsElement {
     this.#editor = root.querySelector(".editor");
     this.#formatSelect = root.querySelector(".format");
     this.#status = root.querySelector(".status");
-    this.#reset = root.querySelector(".reset");
 
     // Schema validation walks the whole document, so running it per keystroke
     // made typing cost grow with document size. The keystroke now only records
@@ -111,14 +108,6 @@ export class OBIEditorElement extends OpenBindingsElement {
       this.#result = parseInterface(this.#text, next);
       this.#update();
       this.#emitEdit();
-    });
-    this.#reset?.addEventListener("click", () => {
-      if (this.#readOnly || this.#text === this.#baseline) return;
-      this.#text = this.#baseline;
-      this.#result = parseInterface(this.#text, this.#format);
-      this.#update();
-      this.#emitEdit();
-      this.#editor?.focusEditor();
     });
   }
 
@@ -187,9 +176,6 @@ export class OBIEditorElement extends OpenBindingsElement {
     if (this.#formatSelect) {
       this.#formatSelect.value = this.#format;
       this.#formatSelect.disabled = this.#readOnly;
-    }
-    if (this.#reset) {
-      this.#reset.disabled = this.#readOnly || this.#text === this.#baseline;
     }
     if (this.#status) {
       const dirty = this.#text !== this.#baseline;
