@@ -214,11 +214,10 @@ const defaultWorkspaceLayout: WorkspaceLayout = {
   railWidth: 352,
   sourceWidth: 420,
   execSplit: 0.5,
-  schemas: true,
-  schemasSize: 0.22,
 };
 const SCHEMAS_SIZE_MIN = 0.08;
 const SCHEMAS_SIZE_MAX = 0.6;
+const DEFAULT_SCHEMAS_SIZE = 0.22;
 const DEFAULT_SHEET_RATIO = 0.45;
 const SHEET_RATIO_MIN = 0.05;
 const SHEET_RATIO_MAX = 0.95;
@@ -279,6 +278,11 @@ interface OperationSession {
   collapsed: boolean;
   /** Sheet height as a fraction of the tab content, 0.05–0.95. */
   ratio: number;
+  /** SCHEMAS strip state, per session (17.12.3): each tab is its own
+   *  little workspace. */
+  schemasCollapsed: boolean;
+  /** Schemas strip height as a fraction of the tab content, 0.08–0.6. */
+  schemasSize: number;
   lastActiveAt: number;
   element: OperationWorkbenchElement;
   status: SessionRunStatus;
@@ -437,22 +441,28 @@ function applyExecSplit(ratio: number): void {
 // The SCHEMAS strip collapse (rev 17.12): same law as the sheet — the
 // header row never moves, the chevron is pinned far right.
 schemasToggle.addEventListener("click", () => {
-  workspaceLayout = { ...workspaceLayout, schemas: !workspaceLayout.schemas };
+  const active = activeSession();
+  if (active?.kind !== "operation") return;
+  active.schemasCollapsed = !active.schemasCollapsed;
   applySchemasStrip();
-  persistWorkspaceLayout();
+  persistSessions();
 });
 
 function applySchemasStrip(): void {
-  const expanded = workspaceLayout.schemas;
+  // Per-session (17.12.3): each tab is its own little workspace — one tab
+  // can study the contract while another gives the cockpit every pixel.
+  const active = activeSession();
+  if (active?.kind !== "operation") return;
+  const expanded = !active.schemasCollapsed;
   schemasStrip.classList.toggle("collapsed", !expanded);
   tabContent.classList.toggle("schemas-collapsed", !expanded);
   tabContent.style.setProperty(
     "--schemas-size",
-    `${Math.round(workspaceLayout.schemasSize * 1000) / 10}%`,
+    `${Math.round(active.schemasSize * 1000) / 10}%`,
   );
   schemasGutter.setAttribute(
     "aria-valuenow",
-    String(Math.round(workspaceLayout.schemasSize * 100)),
+    String(Math.round(active.schemasSize * 100)),
   );
   schemasToggle.setAttribute("aria-expanded", String(expanded));
   const label = expanded
@@ -467,42 +477,55 @@ function applySchemasStrip(): void {
 // one strip, one size — unlike the per-session sheet ratio.
 schemasGutter.addEventListener("pointerdown", event => {
   if (event.button !== 0) return;
-  if (!workspaceLayout.schemas) return;
+  const session = activeSession();
+  if (session?.kind !== "operation" || session.schemasCollapsed) return;
   const bounds = tabContent.getBoundingClientRect();
+  // The strip's bottom edge is anchored (the rows below it are fixed), so
+  // capture it once — it stays valid even through a mid-drag snap.
+  const stripBottom = schemasStrip.getBoundingClientRect().bottom;
   startPointerResize(schemasGutter, event, move => {
-    // Same math as the sheet: the row includes the header, the strip's
-    // bottom edge stays put, its top edge follows the pointer.
-    const stripBottom = schemasStrip.getBoundingClientRect().bottom;
-    workspaceLayout.schemasSize = clamp(
-      (stripBottom - move.clientY) / bounds.height,
-      SCHEMAS_SIZE_MIN,
-      SCHEMAS_SIZE_MAX,
-    );
+    const raw = (stripBottom - move.clientY) / bounds.height;
+    // Snap (17.12.3): shove the strip below its minimum and it clicks shut,
+    // size memory intact; drag back up and it reopens.
+    if (raw < SCHEMAS_SIZE_MIN - 0.03) {
+      if (!session.schemasCollapsed) {
+        session.schemasCollapsed = true;
+        applySchemasStrip();
+      }
+      return;
+    }
+    if (session.schemasCollapsed) {
+      session.schemasCollapsed = false;
+    }
+    session.schemasSize = clamp(raw, SCHEMAS_SIZE_MIN, SCHEMAS_SIZE_MAX);
     applySchemasStrip();
   });
-  globalThis.addEventListener("pointerup", () => persistWorkspaceLayout(), {
+  globalThis.addEventListener("pointerup", () => persistSessions(), {
     once: true,
   });
 });
 
 schemasGutter.addEventListener("keydown", event => {
-  if (!workspaceLayout.schemas) return;
-  let size = workspaceLayout.schemasSize;
+  const session = activeSession();
+  if (session?.kind !== "operation" || session.schemasCollapsed) return;
+  let size = session.schemasSize;
   if (event.key === "ArrowUp") size += 0.04;
   else if (event.key === "ArrowDown") size -= 0.04;
   else if (event.key === "Home") size = SCHEMAS_SIZE_MIN;
   else if (event.key === "End") size = SCHEMAS_SIZE_MAX;
   else return;
   event.preventDefault();
-  workspaceLayout.schemasSize = clamp(size, SCHEMAS_SIZE_MIN, SCHEMAS_SIZE_MAX);
+  session.schemasSize = clamp(size, SCHEMAS_SIZE_MIN, SCHEMAS_SIZE_MAX);
   applySchemasStrip();
-  persistWorkspaceLayout();
+  persistSessions();
 });
 
 schemasGutter.addEventListener("dblclick", () => {
-  workspaceLayout = { ...workspaceLayout, schemas: !workspaceLayout.schemas };
+  const session = activeSession();
+  if (session?.kind !== "operation") return;
+  session.schemasCollapsed = !session.schemasCollapsed;
   applySchemasStrip();
-  persistWorkspaceLayout();
+  persistSessions();
 });
 
 // The invocation element's own compact selector emits the same intent event;
@@ -585,12 +608,24 @@ sheetGutter.addEventListener("pointerdown", event => {
   if (session?.kind !== "operation" || session.collapsed) return;
   const bounds = tabContent.getBoundingClientRect();
   startPointerResize(sheetGutter, event, move => {
-    session.ratio = clamp(
-      (bounds.bottom - move.clientY) / bounds.height,
-      SHEET_RATIO_MIN,
-      SHEET_RATIO_MAX,
-    );
+    const raw = (bounds.bottom - move.clientY) / bounds.height;
+    // Snap (17.12.3): dragging below the minimum clicks the sheet shut with
+    // its size memory intact; dragging back up reopens it.
+    if (raw < SHEET_RATIO_MIN - 0.03) {
+      if (!session.collapsed) {
+        session.collapsed = true;
+        applySheetLayout();
+      }
+      return;
+    }
+    if (session.collapsed) {
+      session.collapsed = false;
+    }
+    session.ratio = clamp(raw, SHEET_RATIO_MIN, SHEET_RATIO_MAX);
     applySheetLayout();
+  });
+  globalThis.addEventListener("pointerup", () => persistSessions(), {
+    once: true,
   });
 });
 
@@ -1040,15 +1075,29 @@ rightPanelToggle.addEventListener("click", () => {
 
 railGutter.addEventListener("pointerdown", event => {
   if (event.button !== 0) return;
+  if (!workspaceLayout.explorer) return;
   const bounds = workbenchGrid.getBoundingClientRect();
   const maximum = Math.max(240, Math.min(560, bounds.width - 320));
   startPointerResize(railGutter, event, move => {
-    workspaceLayout.railWidth = clamp(
-      move.clientX - bounds.left,
-      240,
-      maximum,
-    );
+    const raw = move.clientX - bounds.left;
+    // Snap (17.12.3): shove the rail past its minimum and it clicks shut,
+    // width memory intact; drag back out and it reopens. Same law as the
+    // strips — the panel toggle stays the discoverable door back in.
+    if (raw < 240 - 48) {
+      if (workspaceLayout.explorer) {
+        workspaceLayout.explorer = false;
+        applyWorkspaceLayout();
+      }
+      return;
+    }
+    if (!workspaceLayout.explorer) {
+      workspaceLayout.explorer = true;
+    }
+    workspaceLayout.railWidth = clamp(raw, 240, maximum);
     applyWorkspaceLayout();
+  });
+  globalThis.addEventListener("pointerup", () => persistWorkspaceLayout(), {
+    once: true,
   });
 });
 
@@ -1066,6 +1115,7 @@ railGutter.addEventListener("keydown", event => {
 
 sourceGutter.addEventListener("pointerdown", event => {
   if (event.button !== 0) return;
+  if (!workspaceLayout.source) return;
   const bounds = workbenchGrid.getBoundingClientRect();
   const minimumMainWidth = 360;
   const maximum = Math.max(
@@ -1078,12 +1128,23 @@ sourceGutter.addEventListener("pointerdown", event => {
     ),
   );
   startPointerResize(sourceGutter, event, move => {
-    workspaceLayout.sourceWidth = clamp(
-      bounds.right - move.clientX,
-      300,
-      maximum,
-    );
+    const raw = bounds.right - move.clientX;
+    // Snap (17.12.3), mirrored for the right panel.
+    if (raw < 300 - 48) {
+      if (workspaceLayout.source) {
+        workspaceLayout.source = false;
+        applyWorkspaceLayout();
+      }
+      return;
+    }
+    if (!workspaceLayout.source) {
+      workspaceLayout.source = true;
+    }
+    workspaceLayout.sourceWidth = clamp(raw, 300, maximum);
     applyWorkspaceLayout();
+  });
+  globalThis.addEventListener("pointerup", () => persistWorkspaceLayout(), {
+    once: true,
   });
 });
 
@@ -1563,6 +1624,8 @@ interface OperationSessionSeed {
   label?: string;
   collapsed?: boolean;
   ratio?: number;
+  schemasCollapsed?: boolean;
+  schemasSize?: number;
 }
 
 function createOperationSession(seed: OperationSessionSeed): OperationSession {
@@ -1601,6 +1664,12 @@ function createOperationSession(seed: OperationSessionSeed): OperationSession {
       seed.ratio ?? DEFAULT_SHEET_RATIO,
       SHEET_RATIO_MIN,
       SHEET_RATIO_MAX,
+    ),
+    schemasCollapsed: seed.schemasCollapsed ?? false,
+    schemasSize: clamp(
+      seed.schemasSize ?? DEFAULT_SCHEMAS_SIZE,
+      SCHEMAS_SIZE_MIN,
+      SCHEMAS_SIZE_MAX,
     ),
     lastActiveAt: Date.now(),
     element: invocation,
@@ -1794,6 +1863,8 @@ interface PersistedOperationSessionV2 {
   label: string;
   collapsed: boolean;
   ratio: number;
+  schemasCollapsed?: boolean;
+  schemasSize?: number;
 }
 
 interface PersistedSourceSessionV2 {
@@ -1842,6 +1913,11 @@ function restoreSessions(): void {
               typeof candidate.ratio === "number"
                 ? clamp(candidate.ratio, SHEET_RATIO_MIN, SHEET_RATIO_MAX)
                 : DEFAULT_SHEET_RATIO,
+            schemasCollapsed: candidate.schemasCollapsed === true,
+            schemasSize:
+              typeof candidate.schemasSize === "number"
+                ? clamp(candidate.schemasSize, SCHEMAS_SIZE_MIN, SCHEMAS_SIZE_MAX)
+                : DEFAULT_SCHEMAS_SIZE,
           });
         } else if (candidate.kind === "source") {
           if (
@@ -1884,6 +1960,8 @@ function restoreSessions(): void {
         label: key,
         collapsed: false,
         ratio: DEFAULT_SHEET_RATIO,
+        schemasCollapsed: false,
+        schemasSize: DEFAULT_SCHEMAS_SIZE,
       }));
       const activeKey =
         typeof parsed.activeKey === "string" ? parsed.activeKey : null;
@@ -1996,6 +2074,8 @@ function persistSessions(): void {
               label: session.label,
               collapsed: session.collapsed,
               ratio: session.ratio,
+              schemasCollapsed: session.schemasCollapsed,
+              schemasSize: session.schemasSize,
             },
           ];
         }),
@@ -2790,10 +2870,6 @@ interface WorkspaceLayout {
   railWidth: number;
   sourceWidth: number;
   execSplit: number;
-  /** The SCHEMAS strip's expanded state (rev 17.12). */
-  schemas: boolean;
-  /** Strip height as a fraction of the tab content (17.12.2). */
-  schemasSize: number;
 }
 
 function applyWorkspaceLayout(): void {
@@ -2880,14 +2956,6 @@ function restoreWorkspaceLayout(): WorkspaceLayout {
         typeof parsed.execSplit === "number"
           ? clamp(parsed.execSplit, 0.2, 0.8)
           : defaultWorkspaceLayout.execSplit,
-      schemas:
-        typeof parsed.schemas === "boolean"
-          ? parsed.schemas
-          : defaultWorkspaceLayout.schemas,
-      schemasSize:
-        typeof parsed.schemasSize === "number"
-          ? clamp(parsed.schemasSize, 0.08, 0.6)
-          : defaultWorkspaceLayout.schemasSize,
     };
   } catch {
     return { ...defaultWorkspaceLayout };
