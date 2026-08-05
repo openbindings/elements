@@ -400,6 +400,25 @@ schemaSplit.addEventListener("ob-layout-change", event => {
   applyExecSplit(layoutEvent.detail.splitRatio);
 });
 
+// ONE divider (rev 17.12.1): the LIVE input stream during a drag moves the
+// visible surfaces together frame by frame; commit persists and fans out to
+// the hidden sessions.
+invocationSessions.addEventListener("ob-layout-input", event => {
+  const layoutEvent = event as CustomEvent<{ splitRatio: number }>;
+  applyExecSplitLive(layoutEvent.detail.splitRatio);
+});
+
+schemaSplit.addEventListener("ob-layout-input", event => {
+  const layoutEvent = event as CustomEvent<{ splitRatio: number }>;
+  applyExecSplitLive(layoutEvent.detail.splitRatio);
+});
+
+function applyExecSplitLive(ratio: number): void {
+  const active = activeSession();
+  if (active?.kind === "operation") active.element.splitRatio = ratio;
+  schemaSplit.splitRatio = ratio;
+}
+
 function applyExecSplit(ratio: number): void {
   workspaceLayout.execSplit = ratio;
   for (const session of sessionsById.values()) {

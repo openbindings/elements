@@ -183,6 +183,7 @@ export interface LayoutChangeDetail {
 export interface OperationWorkbenchEventMap {
   "ob-dependency-state": CustomEvent<OperationDependencyStateDetail>;
   "ob-binding-select": CustomEvent<BindingSelectDetail>;
+  "ob-layout-input": CustomEvent<LayoutChangeDetail>;
   "ob-layout-change": CustomEvent<LayoutChangeDetail>;
   "ob-invocation-start": CustomEvent<InvocationStartDetail>;
   "ob-output": CustomEvent<InvocationOutputDetail>;
@@ -950,6 +951,12 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       resize: next => {
         this.#splitRatio = next;
         this.requestRender();
+        // input/change semantics (rev 17.12.1): the LIVE stream during a
+        // drag, so a host keeping several strips on one axis can move them
+        // as ONE divider; ob-layout-change stays the committed intent.
+        this.emit<LayoutChangeDetail>("ob-layout-input", {
+          splitRatio: next,
+        });
       },
       commit: next => {
         this.emit<LayoutChangeDetail>("ob-layout-change", {

@@ -1,3 +1,5 @@
+import "@openbindings/json-editor/define";
+import type { JSONEditorElement } from "@openbindings/json-editor";
 import type { OBInterface } from "@openbindings/sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SCHEMA_SPLIT_TAG, SchemaSplitElement } from "./index.js";
@@ -20,6 +22,19 @@ const obi: OBInterface = {
     },
     describe: {
       output: { $ref: "#/schemas/Descriptor" },
+    },
+    tangled: {
+      input: { $ref: "#/schemas/Node" },
+    },
+  },
+  schemas: {
+    Descriptor: {
+      type: "object",
+      properties: { name: { type: "string" } },
+    },
+    Node: {
+      type: "object",
+      properties: { next: { $ref: "#/schemas/Node" } },
     },
   },
 };
@@ -52,17 +67,35 @@ describe("SchemaSplitElement", () => {
   it("renders both declared schemas as highlighted code blocks", async () => {
     const element = await mount("echo");
     const root = element.shadowRoot!;
-    const input = root.querySelector<HTMLElement>(".input-schema")!;
-    const output = root.querySelector<HTMLElement>(".output-schema")!;
+    const input = root.querySelector<JSONEditorElement>(".input-schema")!;
+    const output = root.querySelector<JSONEditorElement>(".output-schema")!;
     expect(input.hidden).toBe(false);
-    expect(input.textContent).toContain('"message"');
-    // Highlighted, not plain text: lezer token spans are present.
-    expect(input.querySelector(".tok-propertyName")).toBeTruthy();
+    // Read-only code views (rev 17.12.1): the panes are the same material
+    // as the editors they sit above.
+    expect(input.readOnly).toBe(true);
+    expect(input.text).toContain('"message"');
     expect(output.hidden).toBe(false);
-    expect(output.textContent).toContain('"type": "object"');
+    expect(output.text).toContain('"type": "object"');
     expect(
       root.querySelector<HTMLButtonElement>(".copy-input")!.disabled,
     ).toBe(false);
+  });
+
+  it("dereferences local refs so the reader sees the contract, not a pointer", async () => {
+    const element = await mount("describe");
+    const root = element.shadowRoot!;
+    const output = root.querySelector<JSONEditorElement>(".output-schema")!;
+    expect(output.text).toContain('"name"');
+    expect(output.text).not.toContain("$ref");
+  });
+
+  it("keeps a cyclic ref as an honest $ref marker instead of hanging", async () => {
+    const element = await mount("tangled");
+    const root = element.shadowRoot!;
+    const input = root.querySelector<JSONEditorElement>(".input-schema")!;
+    // The outer ref expands once; the inner self-reference stays a pointer.
+    expect(input.text).toContain('"next"');
+    expect(input.text).toContain('"$ref": "#/schemas/Node"');
   });
 
   it("keeps the rail verb visible but disabled for an absent schema", async () => {

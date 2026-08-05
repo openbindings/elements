@@ -102,8 +102,12 @@ test("the schemas strip shows the contract over the cockpit on one shared axis",
   await expect(page.locator("#schemas-strip")).toBeVisible();
   await expect(split.locator(".input-empty")).toBeVisible();
   await expect(split.locator(".input-empty")).toHaveText("No input schema.");
+  // Read-only code views (17.12.1): assert through the CM content layer,
+  // and dereferenced — the reader sees the contract, not a bare pointer.
   await expect(split.locator('[part~="output-schema"]')).toBeVisible();
-  await expect(split.locator('[part~="output-schema"]')).toContainText("{");
+  await expect(
+    split.locator('[part~="output-schema"] .cm-content'),
+  ).toContainText('"type"');
 
   // The detail tab no longer duplicates the contract (hideSchemas).
   await expect(

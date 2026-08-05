@@ -1,3 +1,4 @@
+import "@openbindings/json-editor/define";
 import { defineElement } from "@openbindings/ui-core";
 import { SCHEMA_SPLIT_TAG, SchemaSplitElement } from "./index.js";
 

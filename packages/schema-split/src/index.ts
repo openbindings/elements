@@ -1,7 +1,4 @@
-import {
-  CODE_BLOCK_STYLES,
-  renderCodeBlock,
-} from "@openbindings/json-editor/highlight";
+import type { JSONEditorElement } from "@openbindings/json-editor";
 import type { OBInterface } from "@openbindings/sdk";
 import {
   OpenBindingsElement,
@@ -28,19 +25,21 @@ export interface SchemaSplitLayoutChangeDetail {
 }
 
 export interface SchemaSplitEventMap {
+  "ob-layout-input": CustomEvent<SchemaSplitLayoutChangeDetail>;
   "ob-layout-change": CustomEvent<SchemaSplitLayoutChangeDetail>;
 }
 
 const COPY_FEEDBACK_MS = 1600;
 
 /**
- * An operation's declared input and output schemas as a full-width split of
- * static highlighted code blocks (the code BLOCK tier, rev 17.5) — the
- * contract presented in the same column geometry as the invocation cockpit
- * below it, so input schema sits directly over input and output over
- * output (rev 17.12). The rails carry one verb per side (copy) and exist
- * for alignment as much as utility: their width IS the cockpit rails'
- * width, from the shared ui-core rail contract.
+ * An operation's declared input and output schemas in the SAME column
+ * geometry as the invocation cockpit below — input schema directly over
+ * input, output over output (rev 17.12). The panes are read-only CODE
+ * VIEWS (rev 17.12.1, the 17.5 escape hatch taken on the taste gate's
+ * ruling: "visual consistency is huge") — line numbers, folding, and the
+ * exact material of the editors they sit above. The rails carry one verb
+ * per side (copy) and exist for alignment as much as utility: their width
+ * IS the cockpit rails' width, from the shared ui-core rail contract.
  */
 export class SchemaSplitElement extends OpenBindingsElement {
   #obi: OBInterface | null = null;
@@ -80,14 +79,7 @@ export class SchemaSplitElement extends OpenBindingsElement {
     super();
     const root = this.renderRoot;
     if (!root) return;
-    adoptStyles(
-      root,
-      baseStyles,
-      railStyles,
-      splitGutterStyles,
-      styles,
-      CODE_BLOCK_STYLES,
-    );
+    adoptStyles(root, baseStyles, railStyles, splitGutterStyles, styles);
     root.innerHTML = SHELL;
     this.#refs = new Refs(root);
     this.#bind();
@@ -131,6 +123,14 @@ export class SchemaSplitElement extends OpenBindingsElement {
   #bind(): void {
     const refs = this.#refs;
     if (!refs) return;
+    for (const side of ["input", "output"] as const) {
+      const view = refs.find<JSONEditorElement>(`.${side}-schema`);
+      if (view) {
+        view.readOnly = true;
+        view.language = "json";
+        view.label = `Declared ${side} schema`;
+      }
+    }
     refs
       .find(".copy-input")
       ?.addEventListener("click", () => void this.#copy("input"));
@@ -150,6 +150,11 @@ export class SchemaSplitElement extends OpenBindingsElement {
         resize: next => {
           this.#splitRatio = next;
           this.requestRender();
+          // Live stream during a drag (input/change semantics): the host
+          // moves every strip on the axis as ONE divider.
+          this.emit<SchemaSplitLayoutChangeDetail>("ob-layout-input", {
+            splitRatio: next,
+          });
         },
         commit: next => {
           this.emit<SchemaSplitLayoutChangeDetail>("ob-layout-change", {
@@ -168,7 +173,12 @@ export class SchemaSplitElement extends OpenBindingsElement {
     if (!operation) return null;
     const schema = side === "input" ? operation.input : operation.output;
     if (schema === undefined || schema === null) return null;
-    return JSON.stringify(schema, null, 2) ?? null;
+    // The declared form is often just {"$ref": "#/schemas/X"} — virtually
+    // useless to a reader (rev 17.12.1). Local refs resolve against the
+    // document before display; the copy verb copies what is SHOWN.
+    return (
+      JSON.stringify(dereferenceLocalRefs(schema, this.#obi), null, 2) ?? null
+    );
   }
 
   async #copy(side: "input" | "output"): Promise<boolean> {
@@ -233,12 +243,14 @@ export class SchemaSplitElement extends OpenBindingsElement {
 
     for (const side of ["input", "output"] as const) {
       const text = this.#schemaText(side);
-      const block = refs.find<HTMLElement>(`.${side}-schema`);
+      const block = refs.find<JSONEditorElement>(`.${side}-schema`);
       const none = refs.find<HTMLElement>(`.${side}-empty`);
       const copy = refs.find<HTMLButtonElement>(`.copy-${side}`);
       if (block) {
         block.hidden = text === null;
-        if (text !== null) renderCodeBlock(block, text);
+        // The code view's text setter no-ops on identical text, so
+        // re-renders never rebuild the document or lose fold state.
+        if (text !== null) block.text = text;
       }
       if (none) none.hidden = text !== null;
       if (copy) {
@@ -253,6 +265,74 @@ export class SchemaSplitElement extends OpenBindingsElement {
       }
     }
   }
+}
+
+/**
+ * Dereferences local ("#/...") schema refs against the OBI document so the
+ * reader sees the CONTRACT, not a pointer. A cycle keeps its {"$ref": ...}
+ * form — an honest marker where expansion cannot terminate — as does any
+ * pointer that resolves to nothing. Sibling keywords beside $ref survive,
+ * overriding the resolved target's (JSON Schema 2020-12 reading).
+ */
+function dereferenceLocalRefs(
+  schema: unknown,
+  root: OBInterface | null,
+  seen: ReadonlySet<string> = new Set(),
+  depth = 0,
+): unknown {
+  if (depth > 32 || schema === null || typeof schema !== "object") {
+    return schema;
+  }
+  if (Array.isArray(schema)) {
+    return schema.map(entry =>
+      dereferenceLocalRefs(entry, root, seen, depth + 1),
+    );
+  }
+  const record = schema as Record<string, unknown>;
+  const ref = record.$ref;
+  if (typeof ref === "string" && ref.startsWith("#/")) {
+    if (seen.has(ref)) return { $ref: ref };
+    const target = resolveLocalPointer(root, ref);
+    if (target === undefined) return { ...record };
+    const next = new Set(seen);
+    next.add(ref);
+    const resolved = dereferenceLocalRefs(target, root, next, depth + 1);
+    const { $ref: _dropped, ...siblings } = record;
+    if (Object.keys(siblings).length === 0) return resolved;
+    const resolvedSiblings = dereferenceLocalRefs(
+      siblings,
+      root,
+      next,
+      depth + 1,
+    ) as Record<string, unknown>;
+    return typeof resolved === "object" &&
+      resolved !== null &&
+      !Array.isArray(resolved)
+      ? { ...(resolved as Record<string, unknown>), ...resolvedSiblings }
+      : resolved;
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) {
+    out[key] = dereferenceLocalRefs(value, root, seen, depth + 1);
+  }
+  return out;
+}
+
+function resolveLocalPointer(root: OBInterface | null, ref: string): unknown {
+  if (!root || !ref.startsWith("#/")) return undefined;
+  let current: unknown = root;
+  for (const rawToken of ref.slice(2).split("/")) {
+    if (
+      current === null ||
+      typeof current !== "object" ||
+      Array.isArray(current)
+    ) {
+      return undefined;
+    }
+    const token = rawToken.replace(/~1/g, "/").replace(/~0/g, "~");
+    current = (current as Record<string, unknown>)[token];
+  }
+  return current;
 }
 
 function icon(paths: string): string {
@@ -277,14 +357,14 @@ const SHELL = `
         <div class="tool-rail input-rail" role="toolbar" aria-orientation="vertical" aria-label="Input schema tools">
           <button class="copy-input" part="copy-input" type="button" aria-label="Copy input schema as JSON" title="Copy input schema as JSON" disabled><span class="icon-copy">${ICON_COPY}</span><span class="icon-check">${ICON_CHECK}</span></button>
         </div>
-        <pre class="schema-block input-schema" part="input-schema" hidden></pre>
+        <ob-json-editor class="schema-view input-schema" part="input-schema" hidden></ob-json-editor>
         <p class="schema-empty input-empty" hidden>No input schema.</p>
       </section>
       <div class="layout-gutter" part="layout-gutter" role="separator" aria-orientation="vertical" aria-label="Resize input and output schemas" aria-valuemin="20" aria-valuemax="80" tabindex="0">
         <span class="layout-gutter-handle" aria-hidden="true"></span>
       </div>
       <section class="output-column" aria-label="Output schema">
-        <pre class="schema-block output-schema" part="output-schema" hidden></pre>
+        <ob-json-editor class="schema-view output-schema" part="output-schema" hidden></ob-json-editor>
         <p class="schema-empty output-empty" hidden>No output schema.</p>
         <div class="tool-rail output-rail" role="toolbar" aria-orientation="vertical" aria-label="Output schema tools">
           <button class="copy-output" part="copy-output" type="button" aria-label="Copy output schema as JSON" title="Copy output schema as JSON" disabled><span class="icon-copy">${ICON_COPY}</span><span class="icon-check">${ICON_CHECK}</span></button>
@@ -349,19 +429,12 @@ const styles = `
     gap: 0;
   }
 
-  /* The reference block: code material, machine text, scrolls within. */
-  .schema-block {
+  /* The read-only code view: the exact material of the editors below. */
+  .schema-view {
+    display: block;
     flex: 1 1 auto;
     min-width: 0;
     min-height: 0;
-    margin: 0;
-    padding: 0.55rem;
-    overflow: auto;
-    color: var(--_ob-color-text);
-    font: 0.76rem / 1.5 var(--_ob-font-mono);
-    background: var(--_ob-code-surface);
-    border: 1px solid var(--_ob-color-border);
-    border-radius: var(--_ob-radius);
   }
 
   .schema-empty {
@@ -378,13 +451,19 @@ const styles = `
     border-radius: var(--_ob-radius);
   }
 
-  :host([flush]) .schema-block,
+  /* json-editor's frame part is "frame", not "container" (rev 17.11.1). */
+  :host([flush]) .schema-view::part(frame) {
+    height: 100%;
+    border: 0;
+    border-radius: 0;
+  }
+
   :host([flush]) .schema-empty {
     border: 0;
     border-radius: 0;
   }
 
-  .schema-block[hidden],
+  .schema-view[hidden],
   .schema-empty[hidden] {
     display: none;
   }
