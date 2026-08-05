@@ -1020,15 +1020,15 @@ textarea {
   border-color: var(--page-border);
 }
 
-/* System disclosure semantics: open points down, closed points right. */
+/* Edge-travel semantics, same as the sheet (17.12.5). */
 #schemas-toggle .disclosure-chevron {
   margin-top: -0.15rem;
   transform: rotate(45deg);
 }
 
 .schemas-strip.collapsed #schemas-toggle .disclosure-chevron {
-  margin-top: 0;
-  transform: rotate(-45deg);
+  margin-top: 0.15rem;
+  transform: rotate(-135deg);
 }
 
 #sheet-toggle {
@@ -1056,17 +1056,19 @@ textarea {
 
 /* Sheet edge semantics: expanded points down (collapse travels down),
    collapsed points up. Same construction, contextual rotation. */
-/* System disclosure semantics on BOTH strips (17.12.4): open points down,
-   closed points right — the sheet's old contextual up/down read as noise
-   next to the schemas strip's system chevron. */
+/* Bottom-anchored strip chevrons (17.12.5): the chevron points where the
+   edge will TRAVEL when clicked — collapsed points up (expand grows
+   upward), expanded points down (collapse drops away). The right/down
+   system semantics stay with top-anchored disclosures (details, fold
+   gutters), where content flows downward. Both strips share this. */
 #sheet-toggle .disclosure-chevron {
   margin-top: -0.15rem;
   transform: rotate(45deg);
 }
 
 .tab-content.sheet-collapsed #sheet-toggle .disclosure-chevron {
-  margin-top: 0;
-  transform: rotate(-45deg);
+  margin-top: 0.15rem;
+  transform: rotate(-135deg);
 }
 
 #sheet-toggle:hover {
