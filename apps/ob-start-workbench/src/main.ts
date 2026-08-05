@@ -215,11 +215,13 @@ const defaultWorkspaceLayout: WorkspaceLayout = {
   sourceWidth: 420,
   execSplit: 0.5,
 };
-const SCHEMAS_SIZE_MIN = 0.08;
+// Practical floors (17.12.4): expanded must always show real content — a
+// minimum smaller than the strip's own header reads as a 0px broken state.
+const SCHEMAS_SIZE_MIN = 0.12;
 const SCHEMAS_SIZE_MAX = 0.6;
 const DEFAULT_SCHEMAS_SIZE = 0.22;
 const DEFAULT_SHEET_RATIO = 0.45;
-const SHEET_RATIO_MIN = 0.05;
+const SHEET_RATIO_MIN = 0.15;
 const SHEET_RATIO_MAX = 0.95;
 let sessionToken = tokenFromFragment() || restoreSessionToken();
 /**
@@ -458,7 +460,7 @@ function applySchemasStrip(): void {
   tabContent.classList.toggle("schemas-collapsed", !expanded);
   tabContent.style.setProperty(
     "--schemas-size",
-    `${Math.round(active.schemasSize * 1000) / 10}%`,
+    `${Math.round(active.schemasSize * 10000) / 100}%`,
   );
   schemasGutter.setAttribute(
     "aria-valuenow",
@@ -607,10 +609,17 @@ sheetGutter.addEventListener("pointerdown", event => {
   const session = activeSession();
   if (session?.kind !== "operation" || session.collapsed) return;
   const bounds = tabContent.getBoundingClientRect();
+  // Neighbor-first (17.12.4): the sheet trades space with the SCHEMAS strip
+  // — its adjacent region — first. The schemas strip's TOP edge stays
+  // anchored while its bottom follows the divider; only when schemas
+  // bottoms out (or snaps shut) does the drag push into the detail. Distant
+  // content never slides just because the sheet resized.
+  const schemasTop = schemasStrip.getBoundingClientRect().top;
+  const schemasParticipates = !session.schemasCollapsed;
   startPointerResize(sheetGutter, event, move => {
     const raw = (bounds.bottom - move.clientY) / bounds.height;
-    // Snap (17.12.3): dragging below the minimum clicks the sheet shut with
-    // its size memory intact; dragging back up reopens it.
+    // Snap: dragging below the minimum clicks the sheet shut with its size
+    // memory intact; dragging back up reopens it.
     if (raw < SHEET_RATIO_MIN - 0.03) {
       if (!session.collapsed) {
         session.collapsed = true;
@@ -622,6 +631,21 @@ sheetGutter.addEventListener("pointerdown", event => {
       session.collapsed = false;
     }
     session.ratio = clamp(raw, SHEET_RATIO_MIN, SHEET_RATIO_MAX);
+    if (schemasParticipates) {
+      const rawSchemas = (move.clientY - schemasTop) / bounds.height;
+      if (rawSchemas < SCHEMAS_SIZE_MIN - 0.03) {
+        // Pushed past its minimum: the strip snaps shut (reversible while
+        // the drag is still held).
+        if (!session.schemasCollapsed) session.schemasCollapsed = true;
+      } else {
+        if (session.schemasCollapsed) session.schemasCollapsed = false;
+        session.schemasSize = clamp(
+          rawSchemas,
+          SCHEMAS_SIZE_MIN,
+          SCHEMAS_SIZE_MAX,
+        );
+      }
+    }
     applySheetLayout();
   });
   globalThis.addEventListener("pointerup", () => persistSessions(), {
@@ -639,7 +663,17 @@ sheetGutter.addEventListener("keydown", event => {
   else if (event.key === "End") ratio = SHEET_RATIO_MAX;
   else return;
   event.preventDefault();
+  const previous = session.ratio;
   session.ratio = clamp(ratio, SHEET_RATIO_MIN, SHEET_RATIO_MAX);
+  // Neighbor-first (17.12.4): keyboard steps trade with the schemas strip
+  // too, floored at its practical minimum (no snap from a key step).
+  if (!session.schemasCollapsed) {
+    session.schemasSize = clamp(
+      session.schemasSize - (session.ratio - previous),
+      SCHEMAS_SIZE_MIN,
+      SCHEMAS_SIZE_MAX,
+    );
+  }
   applySheetLayout();
   persistSessions();
 });
@@ -671,7 +705,7 @@ function applySheetLayout(): void {
   tabContent.classList.toggle("sheet-collapsed", session.collapsed);
   tabContent.style.setProperty(
     "--sheet-size",
-    `${Math.round(session.ratio * 1000) / 10}%`,
+    `${Math.round(session.ratio * 10000) / 100}%`,
   );
   sheetGutter.setAttribute(
     "aria-valuenow",

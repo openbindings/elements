@@ -1056,14 +1056,17 @@ textarea {
 
 /* Sheet edge semantics: expanded points down (collapse travels down),
    collapsed points up. Same construction, contextual rotation. */
+/* System disclosure semantics on BOTH strips (17.12.4): open points down,
+   closed points right — the sheet's old contextual up/down read as noise
+   next to the schemas strip's system chevron. */
 #sheet-toggle .disclosure-chevron {
   margin-top: -0.15rem;
   transform: rotate(45deg);
 }
 
 .tab-content.sheet-collapsed #sheet-toggle .disclosure-chevron {
-  margin-top: 0.15rem;
-  transform: rotate(-135deg);
+  margin-top: 0;
+  transform: rotate(-45deg);
 }
 
 #sheet-toggle:hover {
