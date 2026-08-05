@@ -199,7 +199,7 @@ async function sweep(page: Page, theme: Theme, width: Width): Promise<void> {
 
   await shoot("cockpit-output", "single-value-with-duration", async () => {
     await active.locator("button.run").click();
-    await expect(active.locator('pre[part~="output"]')).toContainText(
+    await expect(active.locator('[part~="output"] .cm-content')).toContainText(
       '"name": "OpenBindings CLI"',
       { timeout: 15_000 },
     );

@@ -8,6 +8,7 @@
   --page-border-strong: #d8d8d8;
   --page-surface: #ffffff;
   --page-surface-raised: #f4f4f4;
+  --page-code-surface: #f7f7f5;
   --accent: #111111;
   --accent-hover: #2a2a2a;
   --accent-soft: #f0f0f0;
@@ -34,6 +35,7 @@
   --page-border-strong: #343434;
   --page-surface: #0a0a0a;
   --page-surface-raised: #171717;
+  --page-code-surface: #101010;
   --accent: #f1f1ec;
   --accent-hover: #d7d7d1;
   --accent-soft: #171717;
@@ -89,6 +91,7 @@ main {
   --ob-color-accent-contrast: var(--page-background);
   --ob-color-success: var(--success);
   --ob-color-danger: var(--danger);
+  --ob-code-surface: var(--page-code-surface);
   --ob-radius: 0;
 }
 

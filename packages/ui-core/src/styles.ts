@@ -37,6 +37,13 @@ export const baseStyles = `
     --_ob-focus-ring: var(--ob-focus-ring, 0 0 0 3px color-mix(in srgb, var(--_ob-color-accent) 28%, transparent));
     --_ob-shadow: var(--ob-shadow, 0 1px 2px color-mix(in srgb, var(--_ob-color-text) 12%, transparent));
     --_ob-duration: var(--ob-duration, 120ms);
+    /* One material for machine text (rev 17.4): every surface that renders
+       code — editors, output views, schema blocks, previews — draws on this
+       token, a step between background and surface-strong by default. */
+    --_ob-code-surface: var(
+      --ob-code-surface,
+      color-mix(in srgb, var(--_ob-color-surface-strong) 45%, var(--_ob-color-background))
+    );
 
     color: var(--_ob-color-text);
     font: 400 var(--_ob-font-size) / 1.45 var(--_ob-font-family);

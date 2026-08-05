@@ -35,10 +35,10 @@ test("plain HTML composes explorer, detail, and invocation", async ({
   await expect(workbench.locator(".status")).toHaveText("Ready");
 
   await workbench.locator(".run").click();
-  await expect(workbench.locator('pre[part~="output"]')).toContainText(
+  await expect(workbench.locator('[part~="output"] .cm-content')).toContainText(
     "local-result",
   );
-  await expect(workbench.locator('pre[part~="output"]')).toContainText(
+  await expect(workbench.locator('[part~="output"] .cm-content')).toContainText(
     "Ship reusable elements",
   );
 
@@ -85,7 +85,7 @@ test("narrow layouts preserve independent element usability", async ({
   await expect(
     page
       .locator("ob-operation-workbench")
-      .locator("ob-json-editor .cm-content"),
+      .locator(".input-editor .cm-content"),
   ).toBeVisible();
 });
 

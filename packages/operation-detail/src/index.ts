@@ -450,7 +450,7 @@ const styles = `
     overflow: auto;
     color: var(--_ob-color-text);
     font: 0.74rem / 1.5 var(--_ob-font-mono);
-    background: var(--_ob-color-surface);
+    background: var(--_ob-code-surface);
     border: 1px solid var(--_ob-color-border);
     border-radius: var(--_ob-radius);
     white-space: pre-wrap;

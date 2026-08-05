@@ -320,7 +320,7 @@ const editorTheme = EditorView.theme({
   "&": {
     height: "100%",
     color: "var(--_ob-color-text)",
-    backgroundColor: "transparent",
+    backgroundColor: "var(--_ob-code-surface)",
     fontSize: "var(--_ob-editor-font-size)",
   },
   ".cm-scroller": {
@@ -337,7 +337,7 @@ const editorTheme = EditorView.theme({
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--_ob-color-text)" },
   ".cm-gutters": {
     color: "var(--_ob-color-text-muted)",
-    backgroundColor: "var(--_ob-color-surface)",
+    backgroundColor: "var(--_ob-code-surface)",
     border: "0",
     borderRight: "1px solid var(--_ob-color-border)",
     fontVariantNumeric: "tabular-nums",

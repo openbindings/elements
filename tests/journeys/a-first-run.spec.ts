@@ -40,7 +40,7 @@ test("first run: navigate to Ready, first invocation, one visible session", asyn
   // Moment: Run click -> first output frame visible (WB-PERF-03).
   await moment("run-to-output", "WB-PERF-03", async () => {
     await run.click();
-    await expect(workbench.locator('pre[part~="output"]')).toContainText(
+    await expect(workbench.locator('[part~="output"] .cm-content')).toContainText(
       '"name": "OpenBindings CLI"',
       { timeout: 15_000 },
     );

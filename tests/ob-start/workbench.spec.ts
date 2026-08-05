@@ -70,7 +70,7 @@ test("the embedded workbench invokes ob start through its published interface", 
   await expect(run).toBeEnabled();
   await run.click();
 
-  await expect(workbench.locator('pre[part~="output"]')).toContainText(
+  await expect(workbench.locator('[part~="output"] .cm-content')).toContainText(
     '"name": "OpenBindings CLI"',
   );
   await expect(workbench.locator(".output-count")).toHaveText("1 value");
@@ -402,7 +402,7 @@ test("operation tabs retain independent invocation sessions, reorder, close, and
     "openbindings.ob.listBindingSpecs",
   );
   await activeWorkbench.locator("button.run").click();
-  await expect(activeWorkbench.locator('pre[part~="output"]')).toContainText(
+  await expect(activeWorkbench.locator('[part~="output"] .cm-content')).toContainText(
     "openbindings.openapi@1",
   );
 
@@ -420,7 +420,7 @@ test("operation tabs retain independent invocation sessions, reorder, close, and
     .locator('[role="tab"]')
     .filter({ hasText: "openbindings.ob.listBindingSpecs" })
     .click();
-  await expect(activeWorkbench.locator('pre[part~="output"]')).toContainText(
+  await expect(activeWorkbench.locator('[part~="output"] .cm-content')).toContainText(
     "openbindings.openapi@1",
   );
 
@@ -532,7 +532,7 @@ test("a raw API artifact is synthesized and invoked without a browser binding-fa
   await expect(workbench.locator("h2")).toHaveText("getOBI");
   await workbench.locator("button.run").click();
 
-  await expect(workbench.locator('pre[part~="output"]')).toContainText(
+  await expect(workbench.locator('[part~="output"] .cm-content')).toContainText(
     '"openbindings": "0.2.0"',
   );
   await expect(workbench.locator(".error")).toBeHidden();
@@ -573,7 +573,7 @@ test("target authentication is preflighted into focused fields", async ({
   await expect(page.locator("#requirement-banner")).toBeHidden();
   const workbench = page.locator("ob-operation-workbench:not([hidden])");
   await workbench.locator("button.run").click();
-  await expect(workbench.locator('pre[part~="output"]')).toContainText(
+  await expect(workbench.locator('[part~="output"] .cm-content')).toContainText(
     '"name": "OpenBindings CLI"',
   );
   await expect(workbench.locator(".error")).toBeHidden();
@@ -693,7 +693,7 @@ test("multi-binding operations default to the author's preferred binding and run
     "author's preferred binding",
   );
   await workbench.locator("button.run").click();
-  await expect(workbench.locator('pre[part~="output"]')).toContainText(
+  await expect(workbench.locator('[part~="output"] .cm-content')).toContainText(
     "Schema Latte",
     { timeout: 15_000 },
   );
@@ -721,11 +721,11 @@ test("multi-binding operations default to the author's preferred binding and run
   }, '{"customer":"E2E","drink":"Schema Latte","size":"v2"}');
   await graphSession.locator("button.run").click();
   // The output view renders each stream value as its own block.
-  await expect(graphSession.locator('pre[part~="output"]').first()).toContainText(
+  await expect(graphSession.locator('[part~="output"] .cm-content').first()).toContainText(
     '"status": "received"',
     { timeout: 30_000 },
   );
-  await expect(graphSession.locator('pre[part~="output"]').last()).toContainText(
+  await expect(graphSession.locator('[part~="output"] .cm-content').last()).toContainText(
     '"status": "ready"',
     { timeout: 60_000 },
   );
@@ -774,11 +774,11 @@ test("form input mode drives placeOrder through schema fields", async ({
   await size.selectOption("v2");
 
   await workbench.locator("button.run").click();
-  await expect(workbench.locator('pre[part~="output"]').first()).toContainText(
+  await expect(workbench.locator('[part~="output"] .cm-content').first()).toContainText(
     '"status": "received"',
     { timeout: 30_000 },
   );
-  await expect(workbench.locator('pre[part~="output"]').first()).toContainText(
+  await expect(workbench.locator('[part~="output"] .cm-content').first()).toContainText(
     '"customer": "FormBot"',
   );
   await expect(workbench.locator(".error")).toBeHidden();

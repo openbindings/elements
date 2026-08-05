@@ -322,9 +322,7 @@ describe("OperationWorkbenchElement", () => {
     expect(statusAnnouncer?.textContent).toBe(
       "Invocation complete. 1 output value received.",
     );
-    expect(element.shadowRoot?.querySelector("pre")?.textContent).toContain(
-      '"message": "hello"',
-    );
+    expect(outputEditorText(element)).toContain('"message": "hello"');
   });
 
   it("invokes an explicitly selected binding without also naming an operation", async () => {
@@ -482,8 +480,8 @@ describe("OperationWorkbenchElement", () => {
     ).toBe("Showing the last 2 of 3 values.");
     const items = element.shadowRoot?.querySelectorAll(".output-item") ?? [];
     expect(items.length).toBe(2);
-    expect(items[0]?.querySelector("summary")?.textContent).toContain("#2");
-    expect(items[1]?.querySelector("summary")?.textContent).toContain("#3");
+    expect(items[0]?.textContent).toContain("#2");
+    expect(items[1]?.textContent).toContain("#3");
   });
 
   it("keeps one array input distinct from an explicit input sequence", async () => {
@@ -1086,11 +1084,12 @@ describe("output view v2", () => {
 
     expect(a.items().length).toBe(1);
     expect(a.count()?.textContent).toBe("1 value");
-    // A single value renders directly: no disclosure chrome.
-    expect(a.items()[0]?.querySelector("summary")?.hidden).toBe(true);
+    // A single value renders directly in the shared editor: no selector
+    // chrome (rev 17.4).
     expect(
-      a.items()[0]?.querySelector(".output-value")?.textContent?.trimStart(),
-    ).toMatch(/^\[/);
+      a.element.shadowRoot?.querySelector<HTMLElement>(".output-list")?.hidden,
+    ).toBe(true);
+    expect(outputEditorText(a.element).trimStart()).toMatch(/^\[/);
 
     const pair = new GatedStreamBinding();
     const b = await mountGated(pair);
@@ -1108,13 +1107,13 @@ describe("output view v2", () => {
 
     expect(b.items().length).toBe(2);
     expect(b.count()?.textContent).toBe("2 values");
-    const summaries = Array.from(b.items()).map(item =>
-      item.querySelector("summary"),
-    );
-    expect(summaries[0]?.hidden).toBe(false);
-    expect(summaries[1]?.hidden).toBe(false);
-    expect(summaries[0]?.textContent).toContain("#1");
-    expect(summaries[1]?.textContent).toContain("#2");
+    expect(
+      b.element.shadowRoot?.querySelector<HTMLElement>(".output-list")?.hidden,
+    ).toBe(false);
+    expect(b.items()[0]?.textContent).toContain("#1");
+    expect(b.items()[1]?.textContent).toContain("#2");
+    // Default selection follows the latest frame.
+    expect(b.items()[1]?.classList.contains("selected")).toBe(true);
   });
 
   it("appends per frame with stable node identity (O(new frame) rendering)", async () => {
@@ -1129,23 +1128,20 @@ describe("output view v2", () => {
     await binding.push({ frame: 1 });
     await waitFor(() => items().length === 1);
     const first = items()[0]!;
-    const firstValue = first.querySelector(".output-value")!;
-    const firstText = firstValue.textContent;
+    const firstText = first.textContent;
 
     await binding.push({ frame: 2 });
     await waitFor(() => items().length === 2);
-    // The first block is the same node with the same rendered text — no
+    // The first row is the same node with the same preview text — no
     // rebuild, no re-stringify of already-displayed values.
     expect(items()[0]).toBe(first);
-    expect(items()[0]?.querySelector(".output-value")).toBe(firstValue);
-    expect(firstValue.textContent).toBe(firstText);
+    expect(first.textContent).toBe(firstText);
     const second = items()[1]!;
 
     await binding.push({ frame: 3 });
     await waitFor(() =>
       items().length === 2 &&
-      items()[1]?.querySelector("summary")?.textContent?.includes("#3") ===
-        true,
+      items()[1]?.textContent?.includes("#3") === true,
     );
     // Retention evicted frame 1; frame 2's node survived by identity.
     expect(items()[0]).toBe(second);
@@ -1194,11 +1190,9 @@ describe("output view v2", () => {
     await runB;
     await settled();
 
-    const summaries = Array.from(b.items()).map(
-      item => item.querySelector("summary")?.textContent ?? "",
-    );
-    expect(summaries[0]).toContain("+0ms");
-    expect(summaries[1]).toContain("+1.2s");
+    const rows = Array.from(b.items()).map(item => item.textContent ?? "");
+    expect(rows[0]).toContain("+0ms");
+    expect(rows[1]).toContain("+1.2s");
     expect(b.timing()?.textContent).toBe("1.4s");
   });
 
@@ -1229,7 +1223,7 @@ describe("output view v2", () => {
     );
   });
 
-  it("preserves manual collapse state across subsequent appends", async () => {
+  it("preserves an explicit selection across subsequent appends", async () => {
     const binding = new GatedStreamBinding();
     const { element, items } = await mountGated(binding);
     const run = element.run();
@@ -1240,14 +1234,19 @@ describe("output view v2", () => {
     await binding.push(1);
     await binding.push(2);
     await waitFor(() => items().length === 2);
-    const first = items()[0] as HTMLDetailsElement;
-    expect(first.open).toBe(true);
-    first.open = false;
+    // Default follows the latest…
+    expect(items()[1]?.classList.contains("selected")).toBe(true);
+    // …until the user picks a value; the pick then survives appends instead
+    // of yanking the editor to each new frame.
+    (items()[0] as HTMLButtonElement).click();
+    await settled();
+    expect(items()[0]?.classList.contains("selected")).toBe(true);
+    expect(outputEditorText(element)).toBe("1");
 
     await binding.push(3);
     await waitFor(() => items().length === 3);
-    expect(items()[0]).toBe(first);
-    expect((items()[0] as HTMLDetailsElement).open).toBe(false);
+    expect(items()[0]?.classList.contains("selected")).toBe(true);
+    expect(outputEditorText(element)).toBe("1");
 
     await binding.finish();
     await run;
@@ -1893,6 +1892,13 @@ describe("split layout", () => {
     }
   });
 });
+
+function outputEditorText(element: HTMLElement): string {
+  const editor = element.shadowRoot?.querySelector(".output-editor") as
+    | (HTMLElement & { text: string })
+    | null;
+  return editor?.text ?? "";
+}
 
 async function settled(): Promise<void> {
   await Promise.resolve();

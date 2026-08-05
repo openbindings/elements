@@ -206,6 +206,15 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
   #runID = 0;
   #running = false;
   #maxDisplayedOutputs = DEFAULT_MAX_DISPLAYED_OUTPUTS;
+  /**
+   * Global index of the output the shared editor renders; null follows the
+   * latest frame. A stream shows one value at a time through a real code
+   * view (rev 17.4) — highlight, folding, search, and viewport-only
+   * rendering — instead of one <pre> per frame.
+   */
+  #selectedOutputIndex: number | null = null;
+  /** The global index the editor last rendered, to avoid rewrites. */
+  #renderedOutputIndex: number | null = null;
   #outputs: unknown[] = [];
   /** performance.now() per retained output, sliced in lockstep with #outputs. */
   #outputTimes: number[] = [];
@@ -623,6 +632,8 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     this.#outputs = [];
     this.#outputTimes = [];
     this.#outputCount = 0;
+    this.#selectedOutputIndex = null;
+    this.#renderedOutputIndex = null;
     this.#firstFrameTime = null;
     this.#totalDurationMs = null;
     this.#frameError = null;
@@ -759,6 +770,20 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
   #bindContent(): void {
     const refs = this.#refs;
     if (!refs) return;
+
+    const outputEditor = refs.find<JSONEditorElement>(".output-editor");
+    if (outputEditor) {
+      outputEditor.readOnly = true;
+      outputEditor.language = "json";
+    }
+    refs.find(".output-list")?.addEventListener("click", event => {
+      const item = (event.target as HTMLElement | null)?.closest<HTMLElement>(
+        ".output-item",
+      );
+      if (!item?.dataset.globalIndex) return;
+      this.#selectedOutputIndex = Number(item.dataset.globalIndex);
+      this.requestRender();
+    });
 
     refs.find(".input-editor")?.addEventListener("ob-json-input", event => {
       this.#inputTouched = true;
@@ -1121,11 +1146,10 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       outputNotice.hidden = !notice;
     }
     if (outputList) {
-      // One block per retained output, keyed by the value's global index so a
-      // frame's node is created exactly once and survives every later append
-      // (open/closed state, scroll and text included). Per-frame render work
-      // is the new block only; the value is stringified at creation, never
-      // again.
+      // The strip is a selector, one row per retained output (created once
+      // per frame); the SHARED read-only editor below renders the selected
+      // value — a real code view (highlight, folding, search, viewport-only
+      // rendering) instead of one <pre> per frame (rev 17.4).
       const startIndex = this.#outputCount - this.#outputs.length;
       const firstFrameAt = this.#firstFrameTime;
       const solo = this.#outputCount === 1;
@@ -1134,6 +1158,15 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
         globalIndex: startIndex + position,
         at: this.#outputTimes[position] ?? firstFrameAt ?? 0,
       }));
+      // Selection: an explicit pick holds while retained; otherwise (or when
+      // the pick scrolled out of the retention window) follow the latest.
+      const latestIndex = this.#outputCount - 1;
+      const selectedIndex =
+        this.#selectedOutputIndex !== null &&
+        this.#selectedOutputIndex >= startIndex &&
+        this.#selectedOutputIndex <= latestIndex
+          ? this.#selectedOutputIndex
+          : latestIndex;
       reconcile(outputList, items, {
         key: item => String(item.globalIndex),
         create: item =>
@@ -1142,13 +1175,29 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
             item.globalIndex,
             item.at - (firstFrameAt ?? item.at),
           ),
-        update: node => {
-          // The only per-pass mutation: a run's sole value renders without
-          // disclosure chrome; the chrome appears if a second frame arrives.
-          const summary = node.querySelector("summary");
-          if (summary) summary.hidden = solo;
+        update: (node, item) => {
+          const selected = item.globalIndex === selectedIndex;
+          node.classList.toggle("selected", selected);
+          node.setAttribute("aria-selected", String(selected));
         },
       });
+      // A run's sole value needs no selector chrome.
+      outputList.hidden = solo || items.length === 0;
+
+      const outputEditor = refs.find<JSONEditorElement>(".output-editor");
+      if (outputEditor) {
+        outputEditor.hidden = this.#outputs.length === 0;
+        const position = selectedIndex - startIndex;
+        const value = this.#outputs[position];
+        if (
+          this.#outputs.length > 0 &&
+          this.#renderedOutputIndex !== selectedIndex
+        ) {
+          this.#renderedOutputIndex = selectedIndex;
+          outputEditor.text = formatJSON(value);
+        }
+        if (this.#outputs.length === 0) this.#renderedOutputIndex = null;
+      }
     }
     if (outputCount) {
       const plural = this.#outputCount === 1 ? "value" : "values";
@@ -1720,6 +1769,8 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     this.#outputs = [];
     this.#outputTimes = [];
     this.#outputCount = 0;
+    this.#selectedOutputIndex = null;
+    this.#renderedOutputIndex = null;
     this.#firstFrameTime = null;
     this.#totalDurationMs = null;
     this.#lastAnnouncedOutputCount = 0;
@@ -1974,20 +2025,22 @@ function previewValue(value: unknown): string {
 }
 
 /**
- * Builds one output block. Runs exactly once per received frame: the value is
- * stringified here and never re-rendered, which is what keeps a stream's
- * per-frame cost independent of how much output is already displayed.
+ * Builds one selector row for the output strip. Runs exactly once per
+ * received frame — the preview is stringified here and never re-rendered —
+ * which keeps a stream's per-frame cost independent of how much output is
+ * already retained. The value itself renders in the shared output editor.
  */
 function createOutputItem(
   value: unknown,
   globalIndex: number,
   offsetMs: number,
-): HTMLDetailsElement {
-  const item = document.createElement("details");
+): HTMLButtonElement {
+  const item = document.createElement("button");
+  item.type = "button";
   item.className = "output-item";
   item.setAttribute("part", "output-item");
-  item.open = true;
-  const summary = document.createElement("summary");
+  item.setAttribute("role", "option");
+  item.dataset.globalIndex = String(globalIndex);
   const index = document.createElement("span");
   index.className = "output-item-index";
   index.textContent = `#${globalIndex + 1}`;
@@ -1997,15 +2050,7 @@ function createOutputItem(
   const preview = document.createElement("span");
   preview.className = "output-item-preview";
   preview.textContent = previewValue(value);
-  summary.append(index, offset, preview);
-  const rendered = document.createElement("pre");
-  rendered.className = "output-value";
-  // `output` is the long-documented part for rendered output text; it now
-  // matches each value block's <pre> so existing consumer selectors keep
-  // working across the per-value restructure.
-  rendered.setAttribute("part", "output");
-  rendered.textContent = formatJSON(value);
-  item.append(summary, rendered);
+  item.append(index, offset, preview);
   return item;
 }
 
@@ -2437,7 +2482,8 @@ const CONTENT_SHELL = `
              </div>
              <div class="output-view" part="output-view">
                <p class="output-notice">No output yet.</p>
-               <div class="output-list"></div>
+               <div class="output-list" role="listbox" aria-label="Output values" hidden></div>
+               <ob-json-editor class="output-editor" part="output" hidden></ob-json-editor>
              </div>
              <div class="error" part="error" role="alert">
                <p class="error-summary"></p>
@@ -2859,41 +2905,65 @@ const styles = `
     overflow-wrap: anywhere;
   }
 
+  /* Selector strip above, one shared code view below (rev 17.4). */
   .output-view {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
     min-height: 13rem;
     max-height: 26rem;
-    padding: var(--_ob-space);
-    overflow: auto;
-    background: var(--_ob-color-surface);
+    overflow: hidden;
+    background: var(--_ob-code-surface);
     border: 1px solid var(--_ob-color-border);
     border-radius: var(--_ob-radius);
   }
 
   .output-notice {
-    margin: 0 0 0.45rem;
+    margin: 0;
+    padding: var(--_ob-space);
     color: var(--_ob-color-text-muted);
     font-size: 0.72rem;
   }
 
+  .output-notice:empty,
+  .output-notice[hidden] {
+    display: none;
+  }
+
+  .output-list {
+    max-height: 9rem;
+    overflow: auto;
+    border-bottom: 1px solid var(--_ob-color-border);
+  }
+
+  .output-list[hidden] {
+    display: none;
+  }
+
   .output-item {
-    margin-bottom: 0.5rem;
-    background: var(--_ob-color-background);
-    border: 1px solid var(--_ob-color-border);
-    border-radius: calc(var(--_ob-radius) * 0.8);
+    display: flex;
+    width: 100%;
+    gap: 0.45rem;
+    align-items: center;
+    min-height: 0;
+    padding: 0.3rem 0.5rem;
+    color: var(--_ob-color-text-muted);
+    font-size: 0.7rem;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--_ob-color-border);
+    border-radius: 0;
+    cursor: pointer;
   }
 
   .output-item:last-child {
-    margin-bottom: 0;
+    border-bottom: 0;
   }
 
-  .output-item > summary {
-    display: flex;
-    gap: 0.45rem;
-    align-items: center;
-    padding: 0.32rem 0.5rem;
-    color: var(--_ob-color-text-muted);
-    font-size: 0.7rem;
-    cursor: pointer;
+  .output-item.selected {
+    color: var(--_ob-color-text);
+    background: var(--_ob-color-background);
+    box-shadow: inset 2px 0 var(--_ob-color-accent);
   }
 
   .output-item-preview {
@@ -2915,13 +2985,20 @@ const styles = `
     border-radius: 999px;
   }
 
-  .output-value {
-    padding: 0.45rem 0.55rem;
-    border-top: 1px solid var(--_ob-color-border);
+  .output-editor {
+    display: block;
+    min-width: 0;
+    min-height: 0;
   }
 
-  .output-item > summary[hidden] + .output-value {
-    border-top: none;
+  .output-editor::part(container) {
+    height: 100%;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .output-editor[hidden] {
+    display: none;
   }
 
   .actions {
@@ -2994,7 +3071,7 @@ const styles = `
     overflow: auto;
     color: var(--_ob-color-text);
     white-space: pre-wrap;
-    background: var(--_ob-color-surface);
+    background: var(--_ob-code-surface);
     border-radius: calc(var(--_ob-radius) * 0.8);
   }
 
