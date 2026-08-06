@@ -1374,6 +1374,18 @@ sourceGutter.addEventListener("keydown", event => {
 void bootstrap();
 
 async function bootstrap(): Promise<void> {
+  // The credential chain (rev 17.19): fragment token → stored token →
+  // redeem the session cookie. The cookie is the durable half of the
+  // fragment handoff — ob start sets it (HttpOnly, SameSite=Strict) on the
+  // first bearer-authenticated request, so one `--open` per server run
+  // auths every later tab, relaunch, and history click, and this fetch is
+  // how such a page gets the token back into the plumbing that expects a
+  // bearer. A stale cookie (rotated token) just 401s and the chain ends at
+  // the prompt, exactly as before the exchange existed.
+  if (!sessionToken) {
+    sessionToken = await redeemSessionCookie();
+    if (sessionToken) persistSessionToken(sessionToken);
+  }
   // The credential probe runs in parallel with public discovery so verified
   // readiness costs one overlapped round trip, not an extra sequential one.
   const probe = sessionToken ? probeSessionCredential() : null;
@@ -3687,11 +3699,18 @@ function focusFirstRequirement(): void {
 function renderSessionState(): void {
   const hasToken = Boolean(sessionToken);
   if (!hasToken) {
-    sessionStatus.textContent = "No local session credential is configured.";
+    // Teach the door, not just the lock: the credential normally arrives by
+    // opening the URL `ob start` prints (or `ob start --open`), and one such
+    // visit per server run authorizes this whole browser via the session
+    // cookie. The paste box is the fallback, not the path.
+    sessionStatus.textContent =
+      "No session credential. Open the workbench URL that `ob start` prints " +
+      "(or run `ob start --open`) — one visit authorizes this browser for " +
+      "the rest of the server run. Pasting a token below also works.";
     sessionBadge.textContent = "Not connected";
     sessionBadge.className = "badge attention";
   } else if (sessionAuth === "verified") {
-    sessionStatus.textContent = "Authenticated for this browser tab.";
+    sessionStatus.textContent = "Authenticated for this browser.";
     sessionBadge.textContent = "Connected";
     sessionBadge.className = "badge connected";
   } else if (sessionAuth === "rejected") {
@@ -3916,6 +3935,29 @@ function persistSessionToken(token: string): void {
     else globalThis.sessionStorage.removeItem(sessionStorageKey);
   } catch {
     // A privacy mode may disable storage. The in-memory session still works.
+  }
+}
+
+/**
+ * Redeem the run's session cookie for the token (rev 17.19). Same-origin
+ * fetches send cookies by default; the route sits behind the same auth
+ * middleware as everything else, so this either returns the current run
+ * token or 401s. Failure is silence — the chain falls through to the
+ * prompt, and the connection panel explains where credentials come from.
+ */
+async function redeemSessionCookie(): Promise<string> {
+  try {
+    const response = await fetch(
+      new URL("/session/token", globalThis.location.origin),
+      { cache: "no-store", signal: AbortSignal.timeout(LIVENESS_TIMEOUT_MS) },
+    );
+    // 204 is the empty redemption window — no cookie, or a stale one from
+    // a rotated token. Normal, quiet, falls through to the prompt.
+    if (response.status !== 200) return "";
+    const body = (await response.json()) as { token?: string };
+    return body.token?.trim() ?? "";
+  } catch {
+    return "";
   }
 }
 

@@ -699,7 +699,7 @@ test("local and target credentials remain visibly separate", async ({
 
   await page.locator("#connection-status").click();
   await expect(page.locator("#session-status")).toHaveText(
-    "Authenticated for this browser tab.",
+    "Authenticated for this browser.",
   );
   await expect(page.locator("#target-context-status")).toHaveText(
     "No target credentials configured.",
@@ -714,7 +714,7 @@ test("local and target credentials remain visibly separate", async ({
     "Context is configured for the selected target.",
   );
   await expect(page.locator("#session-status")).toHaveText(
-    "Authenticated for this browser tab.",
+    "Authenticated for this browser.",
   );
 
   await openTargetUrl(page, "http://127.0.0.1:20391/openapi.yaml");
@@ -1192,4 +1192,63 @@ test("a second tab boots the default beside a live session and can fork it", asy
   await expect(beside.locator(".session-row")).toHaveCount(2);
   await beside.locator("#sessions-close").click();
   await beside.close();
+});
+
+// Rev 17.19: the cookie exchange. One fragment visit per server run earns
+// the browser a durable credential — an HttpOnly SameSite=Strict cookie the
+// server sets on the first bearer-authenticated request — so a tab opened
+// WITHOUT the fragment still reaches Ready by redeeming the cookie.
+test("a clean-URL tab is authenticated by the cookie a fragment visit earned", async ({
+  page,
+  context,
+}) => {
+  // Tab one arrives through the fragment handoff, as `ob start --open` does.
+  await page.goto("/#token=test-token");
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+
+  // The exchange happened: the browser now holds the session cookie, and
+  // script cannot read it (HttpOnly).
+  const cookies = await context.cookies();
+  const session = cookies.find(c => c.name === "ob_start_session");
+  expect(session?.httpOnly).toBe(true);
+  expect(session?.sameSite).toBe("Strict");
+  expect(
+    await page.evaluate(() => document.cookie.includes("ob_start_session")),
+  ).toBe(false);
+
+  // Tab two: the clean URL, no fragment — the exact path that used to strand
+  // the user at "Session credential needed".
+  const clean = await context.newPage();
+  await clean.goto("/");
+  await expect(clean.locator("#connection-status-text")).toHaveText("Ready", {
+    timeout: 15_000,
+  });
+  await clean.close();
+});
+
+test("a stale cookie from a rotated token does not authenticate", async ({
+  page,
+  context,
+}) => {
+  // Plant a cookie from a "previous run" (wrong token) and arrive clean.
+  await context.addCookies([
+    {
+      name: "ob_start_session",
+      value: "previous-run-token",
+      url: "http://127.0.0.1:20391",
+      httpOnly: true,
+      sameSite: "Strict",
+    },
+  ]);
+  await page.goto("/");
+  // The chain ends at the prompt, which teaches the door: the printed URL.
+  await expect(page.locator("#connection-status-text")).toHaveText(
+    "Session credential needed",
+  );
+  await page.locator("#connection-status").click();
+  await expect(page.locator("#session-status")).toContainText(
+    "ob start --open",
+  );
+  // No console-error filter needed: the empty redemption window answers
+  // 204, so an unauthed or stale-cookie boot is QUIET by design.
 });
