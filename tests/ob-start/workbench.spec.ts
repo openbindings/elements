@@ -202,7 +202,16 @@ test("the operation dependency becomes available when session context changes", 
   // change it (rev 17.20: the full-width panel it used to open is gone).
   await page.locator("#connection-status").click();
   await expect(page.locator("#credential-dialog")).toBeVisible();
+  // The verbs say when they cannot act (rev 17.20.1): Use token is inert
+  // on an empty field, Clear is inert with no credential to clear.
+  await expect(
+    page.locator('#token-form button[type="submit"]'),
+  ).toBeDisabled();
+  await expect(page.locator("#clear-session-token")).toBeDisabled();
   await page.locator("#session-token").fill("test-token");
+  await expect(
+    page.locator('#token-form button[type="submit"]'),
+  ).toBeEnabled();
   await page.locator('#token-form button[type="submit"]').click();
 
   await expect(page.locator("#session-badge")).toHaveText("Connected");
@@ -1309,4 +1318,107 @@ test("target credentials belong to the document and survive a reload", async ({
   const status = page.locator("#sheet-status");
   await expect(status).toBeDisabled();
   await expect(status).not.toHaveClass(/actionable/);
+});
+
+// Rev 17.20.1: the nav bar reads as three categories — what you are working
+// ON, how it is DISPLAYED, and ambient STATUS in the corner. The old order
+// interleaved them.
+test("the nav bar groups its controls by category with status last", async ({
+  page,
+}) => {
+  await page.goto("/#token=test-token");
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+
+  expect(
+    await page.evaluate(() =>
+      [...document.querySelectorAll(".header-actions button")].map(b => b.id),
+    ),
+  ).toEqual([
+    "acquire-open",
+    "sessions-open",
+    "toggle-left-panel",
+    "toggle-right-panel",
+    "theme-toggle",
+    "connection-status",
+  ]);
+
+  // Grouped, not merely ordered — and laid out by flex, which a rev-17.20
+  // selector-list deletion had silently taken away.
+  await expect(page.locator(".header-group")).toHaveCount(2);
+  expect(
+    await page.evaluate(
+      () => getComputedStyle(document.querySelector(".header-actions")).display,
+    ),
+  ).toBe("flex");
+});
+
+// Rev 17.20.1: no modal is ever wider than its container, and no notice
+// outlives the user's patience.
+test("dialogs stay inside their frame and notices can be dismissed", async ({
+  page,
+}) => {
+  await page.goto("/#token=test-token");
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+
+  // A punishing document name is the stress case: grid/flex children default
+  // to min-width:auto, so one long string used to push the verbs off-screen.
+  const editor = page.locator("ob-obi-editor").locator("ob-json-editor");
+  const draft = JSON.parse(
+    await editor.evaluate(el => (el as HTMLElement & { text: string }).text),
+  ) as Record<string, unknown>;
+  draft.name =
+    "a-really-long-interface-name-that-would-blow-the-session-row-wide-open";
+  await editor.evaluate((el, text) => {
+    const target = el as HTMLElement & { text: string };
+    target.text = text;
+    target.dispatchEvent(
+      new CustomEvent("ob-json-input", {
+        detail: { text, structured: false },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }, JSON.stringify(draft, null, 2));
+  await page.waitForTimeout(700);
+
+  for (const [door, dialog] of [
+    ["#sessions-open", "#sessions-dialog"],
+    ["#acquire-open", "#acquire-dialog"],
+    ["#context-open", "#context-dialog"],
+    ["#connection-status", "#credential-dialog"],
+  ] as const) {
+    await page.locator(door).click();
+    await expect(page.locator(dialog)).toBeVisible();
+    const overflow = await page
+      .locator(dialog)
+      .evaluate(el => ({
+        x: el.scrollWidth - el.clientWidth,
+        inViewport: el.getBoundingClientRect().right <= window.innerWidth,
+      }));
+    expect(overflow.x, `${dialog} scrolls horizontally`).toBeLessThanOrEqual(1);
+    expect(overflow.inViewport, `${dialog} exceeds the viewport`).toBe(true);
+    // Every verb has to be reachable without scrolling sideways.
+    const escaped = await page.locator(`${dialog} button`).evaluateAll(
+      (buttons, frame) =>
+        buttons.filter(b => b.getBoundingClientRect().right > frame + 0.5).length,
+      await page.locator(dialog).evaluate(el => el.getBoundingClientRect().right),
+    );
+    expect(escaped, `${dialog} has verbs outside its frame`).toBe(0);
+    await page.keyboard.press("Escape");
+    await expect(page.locator(dialog)).toBeHidden();
+  }
+
+  // A notice is dismissable, and the strip keeps no furniture once empty.
+  await page.evaluate(() => {
+    document.querySelector("#bootstrap-message")!.textContent = "A notice.";
+  });
+  const dismiss = page.locator("#dismiss-message");
+  await expect(dismiss).toBeVisible();
+  await dismiss.click();
+  await expect(page.locator("#bootstrap-message")).toHaveText("");
+  await expect(dismiss).toBeHidden();
+  await expect(page.locator(".app-messages")).toHaveAttribute(
+    "data-empty",
+    "true",
+  );
 });

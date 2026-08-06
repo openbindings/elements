@@ -185,6 +185,39 @@ h3 {
   font-size: 0.76rem;
 }
 
+.field-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: center;
+}
+
+/* Three categories, three groups (rev 17.20.1): what you are working ON,
+   how it is DISPLAYED, and ambient STATUS. Tight WITHIN a group, loose
+   BETWEEN them, with a hairline making the seam explicit — at this density
+   spacing alone reads as an accident rather than a decision. */
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.1rem;
+  align-items: center;
+}
+
+.header-group {
+  display: flex;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.header-group + .header-group::before,
+.header-group + .status-pill::before {
+  width: 1px;
+  height: 1.35rem;
+  margin-right: 1.1rem;
+  background: var(--page-border-strong);
+  content: "";
+}
+
 .status-dot,
 .target-indicator {
   width: 0.5rem;
@@ -463,13 +496,48 @@ button.primary:hover:not(:disabled) {
 /* App messages (rev 17): a slim full-width strip under the header; zero
    height while empty so the chrome spends nothing when there is nothing to
    say. */
+/* The strip is one row: the notice, then its exit at the far edge — the
+   dismiss must never wrap onto a line of its own (rev 17.20.1). */
 .app-messages {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   background: var(--page-surface);
+  border-bottom: 1px solid var(--page-border);
+}
+
+/* The rule the strip lives by: no content, no furniture. */
+.app-messages[data-empty="true"] {
+  border-bottom: 0;
+}
+
+#dismiss-message {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.7rem;
+  min-height: 1.7rem;
+  margin-right: 1.1rem;
+  padding: 0.2rem;
+  color: var(--page-muted);
+  border-color: transparent;
+}
+
+#dismiss-message[hidden] {
+  display: none;
+}
+
+#dismiss-message svg {
+  display: block;
+  width: 0.85rem;
+  height: 0.85rem;
 }
 
 .app-messages > p {
+  flex: 1 1 auto;
+  min-width: 0;
   padding: 0.4rem 1.5rem;
-  border-bottom: 1px solid var(--page-border);
 }
 
 .app-messages > #bootstrap-message:empty,
@@ -1230,6 +1298,19 @@ dialog p {
   justify-content: flex-end;
 }
 
+/* No modal is ever wider than its container (rev 17.20.1). Grid and flex
+   children default to min-width:auto, so ONE long string — a session name,
+   a resolved URL — sets the floor and pushes the verbs off the edge. This
+   is the systemic statement of a fix that had been applied per-dialog:
+   the dialog owns its width, and content wraps or truncates inside it. */
+dialog {
+  max-width: calc(100vw - 2rem);
+}
+
+dialog :is(form, .context-body, .sessions-list, .dialog-heading) > * {
+  min-width: 0;
+}
+
 /* Acquisition (rev 17.16). Dismissal is chrome and lives top-right; the
    footer carries only answers to the dialog's question. The confirmation
    dialog keeps its footer Cancel because there Cancel IS an answer. */
@@ -1282,10 +1363,6 @@ dialog p {
 /* A grid item's default min-width is auto, so one unbreakable string — a raw
    githubusercontent URL, say — widens the whole dialog and the verbs scroll
    off the right edge. The dialog owns its width; content wraps inside it. */
-#acquire-dialog form > * {
-  min-width: 0;
-}
-
 .acquire-found,
 .acquire-problem {
   padding: 0.5rem 0.6rem;
@@ -1307,7 +1384,7 @@ dialog p {
    target credentials. */
 #credential-dialog,
 #context-dialog {
-  width: min(32rem, calc(100% - 2rem));
+  width: min(32rem, calc(100vw - 2rem));
 }
 
 .credential-state {
@@ -1362,16 +1439,22 @@ dialog p {
   resize: vertical;
 }
 
-#credential-dialog .field-actions input[type="password"] {
-  flex: 1 1 8rem;
-  min-width: 0;
+#credential-dialog input[type="password"] {
+  width: 100%;
+}
+
+/* The footer is a footer: separated from the field it commits, never
+   crowded under it (rev 17.20.1). */
+#credential-dialog .dialog-actions,
+.context-body .dialog-actions {
+  padding-top: 0.35rem;
 }
 
 /* Sessions (rev 17.18). Rows identify themselves by document name, version,
    origin, and recency — no rename, so no inputs. The dialog body is not a
    form; give it the form's padding rhythm by hand. */
 #sessions-dialog {
-  width: min(34rem, calc(100% - 2rem));
+  width: min(38rem, calc(100vw - 2rem));
 }
 
 .sessions-list {
@@ -1391,8 +1474,10 @@ dialog p {
 
 .session-row {
   display: flex;
-  gap: 0.6rem;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.6rem;
   align-items: center;
+  min-width: 0;
   padding: 0.5rem 0.6rem;
   border: 1px solid var(--page-border);
   border-radius: 0.4rem;
@@ -1403,7 +1488,9 @@ dialog p {
 }
 
 .session-identity {
-  flex: 1 1 auto;
+  /* Wide enough to stay readable, elastic enough that the verbs never get
+     pushed out: below this the actions row wraps under the identity. */
+  flex: 1 1 11rem;
   min-width: 0;
 }
 
@@ -1437,6 +1524,7 @@ dialog p {
   display: flex;
   flex: none;
   gap: 0.35rem;
+  margin-left: auto;
 }
 
 .session-actions button {

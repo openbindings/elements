@@ -79,6 +79,24 @@ const renameDescription = requiredElement<HTMLTextAreaElement>(
 );
 const renameCancel = requiredElement<HTMLButtonElement>("#rename-cancel");
 // Sessions (rev 17.18): the door back.
+const dismissMessage =
+  requiredElement<HTMLButtonElement>("#dismiss-message");
+/**
+ * The message strip carries whatever it was last told. Rev 17.20.1 gives
+ * it an exit: the dismiss button renders only while there is something to
+ * dismiss (linter doctrine — an empty strip spends no pixels), and an
+ * observer keeps it honest no matter which of the ~30 call sites wrote the
+ * message, so nobody has to remember to call a setter.
+ */
+const appMessages = requiredElement<HTMLElement>(".app-messages");
+
+function syncMessageDismiss(): void {
+  const empty = bootstrapMessage.textContent?.trim() === "";
+  dismissMessage.hidden = empty;
+  // No content, no furniture: the strip's rule keeps its own border honest
+  // without a :has() dependency.
+  appMessages.dataset.empty = String(empty && livenessNotice.hidden);
+}
 const sessionsOpen = requiredElement<HTMLButtonElement>("#sessions-open");
 const sessionsDialog = requiredElement<HTMLDialogElement>("#sessions-dialog");
 const sessionsCloseButton =
@@ -1211,6 +1229,14 @@ requirementForm.addEventListener("submit", event => {
   else schedulePreflight();
 });
 
+const tokenSubmit = requiredElement<HTMLButtonElement>(
+  '#token-form button[type="submit"]',
+);
+tokenSubmit.disabled = true;
+tokenInput.addEventListener("input", () => {
+  tokenSubmit.disabled = tokenInput.value.trim().length === 0;
+});
+
 tokenForm.addEventListener("submit", event => {
   event.preventDefault();
   const nextToken = tokenInput.value.trim();
@@ -1510,7 +1536,7 @@ async function resumeWorkspace(): Promise<boolean> {
   if (!recent) return false;
   adoptWorkspace(
     recent,
-    `Restored your session on ${recent.name} from ${relativeTime(recent.updatedAt)}.`,
+    `Restored your session on ${recent.name}.`,
   );
   return true;
 }
@@ -2686,6 +2712,17 @@ function applyManagedInterface(next: OBInterface, message: string): void {
  * session may be the only copy of unexported work.
  * ------------------------------------------------------------------ */
 
+dismissMessage.addEventListener("click", () => {
+  bootstrapMessage.textContent = "";
+});
+
+new MutationObserver(syncMessageDismiss).observe(bootstrapMessage, {
+  childList: true,
+  characterData: true,
+  subtree: true,
+});
+syncMessageDismiss();
+
 sessionsOpen.addEventListener("click", () => {
   sessionsDialog.showModal();
   void renderSessionsList();
@@ -2747,7 +2784,7 @@ async function renderSessionsList(): Promise<void> {
       sessionsDialog.close();
       adoptWorkspace(
         record,
-        `Opened your session on ${record.name} from ${relativeTime(record.updatedAt)}.`,
+        `Opened your session on ${record.name}.`,
       );
     });
 
@@ -3725,6 +3762,9 @@ function focusFirstRequirement(): void {
 
 function renderSessionState(): void {
   const hasToken = Boolean(sessionToken);
+  // Steady rails in the dialog: the verbs are always present and say when
+  // they cannot act. Clear has nothing to clear without a credential.
+  clearSessionTokenButton.disabled = !hasToken;
   if (!hasToken) {
     // Teach the door, not just the lock: the credential normally arrives by
     // opening the URL `ob start` prints (or `ob start --open`), and one such
