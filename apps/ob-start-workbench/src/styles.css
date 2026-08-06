@@ -1335,11 +1335,19 @@ dialog p {
   flex: none;
 }
 
+/* A grid item's default min-width is auto, so one unbreakable string — a raw
+   githubusercontent URL, say — widens the whole dialog and the verbs scroll
+   off the right edge. The dialog owns its width; content wraps inside it. */
+#acquire-dialog form > * {
+  min-width: 0;
+}
+
 .acquire-found,
 .acquire-problem {
   padding: 0.5rem 0.6rem;
   font-size: 0.82rem;
   line-height: 1.45;
+  overflow-wrap: anywhere;
   border-radius: 0.35rem;
 }
 

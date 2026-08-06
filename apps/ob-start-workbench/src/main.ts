@@ -2477,6 +2477,8 @@ let acquireCandidate: AcquisitionCandidate | null = null;
 let acquirePending: Promise<AcquisitionCandidate | null> | null = null;
 /** The locator the candidate was produced from, so we re-resolve on change. */
 let acquireResolvedFor = "";
+let acquirePendingFor = "";
+let acquireGeneration = 0;
 let acquireBusy = false;
 
 acquireOpen.addEventListener("click", () => {
@@ -2501,6 +2503,21 @@ acquireForm.addEventListener("submit", event => {
   void ensureAcquireCandidate();
 });
 
+/**
+ * The field resolves as you type. Waiting for Enter left it looking inert —
+ * a URL sat there with both verbs greyed and nothing said why.
+ *
+ * Auto-resolve fires only once the text actually looks like an address, so a
+ * half-typed "https:/" is silence rather than a complaint: linter doctrine,
+ * applied to a field. A locator that is plainly not an address still gets its
+ * message, on Enter or on blur.
+ */
+const resolveLocatorSoon = debounce(() => {
+  if (!acquireDialog.open) return;
+  if (!looksLikeAddress(acquireLocator.value.trim())) return;
+  void ensureAcquireCandidate();
+}, 450);
+
 acquireLocator.addEventListener("input", () => {
   acquireFile.value = "";
   acquireCandidate = null;
@@ -2508,6 +2525,12 @@ acquireLocator.addEventListener("input", () => {
   acquireFound.hidden = true;
   acquireProblem.hidden = true;
   renderAcquireVerbs();
+  resolveLocatorSoon();
+});
+
+acquireLocator.addEventListener("blur", () => {
+  if (!acquireLocator.value.trim() || acquireCandidate) return;
+  void ensureAcquireCandidate();
 });
 
 acquireBrowse.addEventListener("click", () => acquireFile.click());
@@ -2544,7 +2567,8 @@ function renderAcquireVerbs(): void {
 function setAcquireBusy(busy: boolean, note?: string): void {
   acquireBusy = busy;
   acquireBrowse.disabled = busy;
-  acquireLocator.disabled = busy;
+  // The locator is NEVER disabled: it resolves as you type, and disabling the
+  // field mid-keystroke would eat the rest of what you were typing.
   if (note) {
     acquireFound.textContent = note;
     acquireFound.hidden = false;
@@ -2556,6 +2580,9 @@ function setAcquireBusy(busy: boolean, note?: string): void {
 function showAcquireProblem(message: string): void {
   acquireProblem.textContent = message;
   acquireProblem.hidden = false;
+  // Clear rather than merely hide: a stale "Reading …" left behind in a
+  // hidden node is still read by anything that looks at text.
+  acquireFound.textContent = "";
   acquireFound.hidden = true;
 }
 
@@ -2570,13 +2597,20 @@ async function ensureAcquireCandidate(): Promise<AcquisitionCandidate | null> {
   if (acquireCandidate && acquireResolvedFor === locator) {
     return acquireCandidate;
   }
-  if (acquirePending) return acquirePending;
+  if (acquirePending && acquirePendingFor === locator) return acquirePending;
+
+  // Typing races its own resolves. Every run carries a generation, and a run
+  // that finishes after the text moved on paints nothing — otherwise a slow
+  // answer for a URL you already edited would overwrite a fast correct one.
+  const generation = ++acquireGeneration;
+  const current = (): boolean => generation === acquireGeneration;
 
   const file = acquireFile.files?.[0];
   const run = (
     file && file.name === locator ? acquireFromFile(file) : acquireFromAddress(locator)
   )
     .then(candidate => {
+      if (!current()) return null;
       acquireCandidate = candidate;
       acquireResolvedFor = locator;
       acquireFound.textContent = candidate.summary;
@@ -2585,17 +2619,21 @@ async function ensureAcquireCandidate(): Promise<AcquisitionCandidate | null> {
       return candidate;
     })
     .catch((error: unknown) => {
+      if (!current()) return null;
       acquireCandidate = null;
       acquireResolvedFor = "";
       showAcquireProblem(errorText(error));
       return null;
     })
     .finally(() => {
+      if (!current()) return;
       acquirePending = null;
+      acquirePendingFor = "";
       setAcquireBusy(false);
     });
 
   acquirePending = run;
+  acquirePendingFor = locator;
   setAcquireBusy(true, `Reading ${locator}…`);
   return run;
 }
@@ -2618,10 +2656,15 @@ async function acquireFromAddress(
   if (!obInterface || !ensureWorkbenchSession()) {
     throw new Error("Connect this browser session first.");
   }
+  // The field says "host", so a host has to work. ob's guard rejects every
+  // non-HTTP scheme and a bare host parses as neither, so the scheme is
+  // supplied here — plain http for loopback, which is where `ob start` and
+  // anything else local lives, https for everything else.
+  const url = withScheme(address);
   const output = await invokeThroughOB<
     { address: string },
     { interface: OBInterface; synthesizedFrom?: string; resolvedUrl?: string }
-  >(obInterface, "openbindings.ob.resolveInterface", { address });
+  >(obInterface, "openbindings.ob.resolveInterface", { address: url });
   return {
     obi: output.interface,
     summary: describeAcquired(
@@ -2629,9 +2672,29 @@ async function acquireFromAddress(
       output.synthesizedFrom
         ? `synthesized from ${output.synthesizedFrom}`
         : "a native OpenBindings document",
-      output.resolvedUrl,
+      // Only when discovery went somewhere the typed address does not say.
+      // Echoing the URL back beside the field it came from is noise.
+      sameAddress(output.resolvedUrl, address) ? undefined : output.resolvedUrl,
     ),
   };
+}
+
+function withScheme(address: string): string {
+  if (/^https?:\/\//i.test(address)) return address;
+  const host = (address.split("/")[0] ?? "").toLowerCase();
+  const loopback =
+    host === "localhost" ||
+    host.startsWith("localhost:") ||
+    host.startsWith("127.") ||
+    host.startsWith("[::1]");
+  return `${loopback ? "http" : "https"}://${address}`;
+}
+
+function sameAddress(resolved: string | undefined, typed: string): boolean {
+  if (!resolved) return true;
+  const normalize = (value: string): string =>
+    value.trim().replace(/\/+$/, "").replace(/^https?:\/\//i, "").toLowerCase();
+  return normalize(resolved) === normalize(typed);
 }
 
 /**

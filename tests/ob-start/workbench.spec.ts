@@ -968,6 +968,11 @@ test("a document is acquired through one door, merged, and undone", async ({
 
   const found = page.locator("#acquire-found");
   await expect(found).toContainText("extra · 1.2.3", { timeout: 30_000 });
+  // The dialog owns its width. One unbreakable string in the summary used to
+  // widen the whole modal and scroll the verbs off the right edge.
+  expect(
+    await dialog.evaluate(el => el.scrollWidth - el.clientWidth),
+  ).toBeLessThanOrEqual(1);
   await expect(found).toContainText("1 operation");
   await expect(found).toContainText("native OpenBindings document");
   await expect(replace).toBeEnabled();
@@ -1013,4 +1018,42 @@ test("a document is acquired through one door, merged, and undone", async ({
       { timeout: 15_000 },
     )
     .not.toContain("example.acquired");
+});
+
+test("the acquire locator resolves as it is typed, without a submit", async ({
+  page,
+}) => {
+  await page.goto("/#token=test-token");
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+
+  await page.locator("#acquire-open").click();
+  const locator = page.locator("#acquire-locator");
+  const found = page.locator("#acquire-found");
+  const problem = page.locator("#acquire-problem");
+
+  // Half-typed text is silence, not a complaint: the field does not shout
+  // while the address is still being formed.
+  await locator.pressSequentially("http", { delay: 20 });
+  await page.waitForTimeout(700);
+  await expect(problem).toBeHidden();
+  await expect(found).toBeHidden();
+
+  // A complete address resolves on its own — no Enter, no Load step.
+  await locator.fill("");
+  await locator.pressSequentially("127.0.0.1:20391", { delay: 20 });
+  await expect(found).toContainText("ob", { timeout: 30_000 });
+  await expect(page.locator("#acquire-merge")).toBeEnabled();
+  // A bare host resolves: the field says "host", so a host has to work even
+  // though ob's guard rejects anything without an http(s) scheme.
+  await expect(found).toContainText("operations");
+
+  // The field stays typable throughout: a resolve in flight must never
+  // disable the input and eat the rest of the keystrokes.
+  await expect(locator).toBeEnabled();
+
+  // Editing invalidates the candidate and the verbs grey again.
+  await locator.fill("./local-file.json");
+  await expect(page.locator("#acquire-merge")).toBeDisabled();
+  await locator.blur();
+  await expect(problem).toContainText("local files go through Choose file");
 });
