@@ -79,7 +79,6 @@ main {
 .app-header,
 .target-bar,
 .app-messages,
-.connection-panel,
 .workbench-grid {
   --ob-color-background: var(--page-surface);
   --ob-color-surface: color-mix(
@@ -171,15 +170,6 @@ h2 {
 
 h3 {
   font-size: 0.9rem;
-}
-
-.header-actions,
-.field-actions,
-.connection-card-heading {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.65rem;
-  align-items: center;
 }
 
 .status-pill {
@@ -426,6 +416,25 @@ button.primary:hover:not(:disabled) {
   font-size: 1.05rem;
 }
 
+/* The standing door to this document's target credentials (rev 17.20):
+   icon-only, sized like the rail's other square controls. */
+#context-open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.8rem;
+  min-height: 1.8rem;
+  flex: none;
+  padding: 0.25rem;
+  color: var(--page-muted);
+}
+
+#context-open svg {
+  display: block;
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
 #document-name {
   max-width: 32rem;
   overflow: hidden;
@@ -510,68 +519,6 @@ textarea {
   margin: 0;
   color: var(--danger);
   font-size: 0.78rem;
-}
-
-.connection-panel {
-  flex: 0 0 auto;
-  padding: 1rem 1.5rem;
-  background: var(--page-surface);
-  border-bottom: 1px solid var(--page-border);
-}
-
-.connection-panel[hidden] {
-  display: none;
-}
-
-.connection-panel > header {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 1rem;
-}
-
-.connection-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.75rem;
-}
-
-.connection-grid article {
-  display: grid;
-  gap: 0.8rem;
-  align-content: start;
-  padding: 1rem;
-  background: var(--page-surface-raised);
-  border: 1px solid var(--page-border);
-  border-radius: 0.35rem;
-}
-
-.connection-grid article > p,
-.connection-card-heading p {
-  color: var(--page-muted);
-  font-size: 0.78rem;
-  line-height: 1.5;
-}
-
-.connection-card-heading {
-  justify-content: space-between;
-}
-
-.connection-card-heading > div {
-  display: grid;
-  gap: 0.18rem;
-}
-
-.connection-grid form {
-  display: grid;
-  gap: 0.4rem;
-}
-
-.connection-grid label {
-  color: var(--page-muted);
-  font-size: 0.72rem;
-  font-weight: 650;
 }
 
 .field-actions input {
@@ -675,36 +622,6 @@ textarea {
 #current-target-meta::before {
   content: "·";
   margin-right: 0.45rem;
-}
-
-.requirement-banner {
-  flex: 0 0 auto;
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.55rem 1.5rem;
-  margin: 0;
-  color: var(--warning);
-  background: var(--warning-soft);
-  border: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--warning) 28%, var(--page-border));
-  font-size: 0.78rem;
-}
-
-.requirement-banner[hidden] {
-  display: none;
-}
-
-.requirement-banner > div {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-}
-
-.requirement-banner button {
-  flex: 0 0 auto;
-  min-height: 2rem;
 }
 
 .workbench-grid {
@@ -926,14 +843,41 @@ textarea {
   margin-left: 0.1rem;
 }
 
+/* The strip's status line became a button in rev 17.20 so it can be the
+   moment-of-need door to target credentials. It must still READ as status:
+   no border, no fill, no min-height — the affordance appears only when the
+   button actually opens something (.actionable). */
 .sheet-status {
   min-width: 0;
   flex: 1 1 auto;
+  min-height: 0;
+  padding: 0;
   overflow: hidden;
   color: var(--page-muted);
+  background: none;
+  border: 0;
   font-size: 0.72rem;
+  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sheet-status:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.sheet-status.actionable {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 0.2em;
+}
+
+.sheet-status:hover:not(:disabled) {
+  background: none;
+  border: 0;
+  color: var(--page-text);
 }
 
 .sheet-status.danger {
@@ -1356,6 +1300,73 @@ dialog p {
   background: var(--page-surface-raised);
 }
 
+/* Credential and target-credential dialogs (rev 17.20). The full-width
+   "Connection and credentials" panel is gone; its two working halves moved
+   into modals reached from the surface each one belongs to — the pill for
+   the workbench's own credential, the document block for the document's
+   target credentials. */
+#credential-dialog,
+#context-dialog {
+  width: min(32rem, calc(100% - 2rem));
+}
+
+.credential-state {
+  display: flex;
+  gap: 0.65rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.credential-state p {
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.dialog-note {
+  color: var(--page-muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.context-body {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.85rem 1.1rem 1.1rem;
+}
+
+#target-context-status {
+  font-size: 0.82rem;
+}
+
+#credential-dialog label,
+.context-body label {
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+#credential-dialog input,
+.context-body input,
+.context-body select,
+.context-body textarea {
+  min-height: 2.1rem;
+  padding: 0.35rem 0.55rem;
+  background: var(--page-surface);
+  border: 1px solid var(--page-border-strong);
+  border-radius: 0.3rem;
+}
+
+.context-body textarea {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  resize: vertical;
+}
+
+#credential-dialog .field-actions input[type="password"] {
+  flex: 1 1 8rem;
+  min-width: 0;
+}
+
 /* Sessions (rev 17.18). Rows identify themselves by document name, version,
    origin, and recency — no rename, so no inputs. The dialog body is not a
    form; give it the form's padding rhythm by hand. */
@@ -1484,10 +1495,6 @@ ob-obi-explorer::part(container) {
     grid-column: 1 / -1;
   }
 
-  .connection-grid {
-    grid-template-columns: 1fr;
-  }
-
   .workbench-grid {
     display: grid;
     grid-template-columns: 1fr;
@@ -1570,9 +1577,7 @@ ob-obi-explorer::part(container) {
     width: 100%;
   }
 
-  .target-bar,
-  .connection-panel,
-  .requirement-banner {
+  .target-bar {
     padding-right: 0.8rem;
     padding-left: 0.8rem;
   }

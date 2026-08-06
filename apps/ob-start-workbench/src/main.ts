@@ -98,10 +98,13 @@ const acquireFound = requiredElement<HTMLElement>("#acquire-found");
 const acquireProblem = requiredElement<HTMLElement>("#acquire-problem");
 const acquireReplace = requiredElement<HTMLButtonElement>("#acquire-replace");
 const acquireMerge = requiredElement<HTMLButtonElement>("#acquire-merge");
-const connectionPanel =
-  requiredElement<HTMLElement>("#connection-panel");
-const connectionClose =
-  requiredElement<HTMLButtonElement>("#connection-close");
+const credentialDialog =
+  requiredElement<HTMLDialogElement>("#credential-dialog");
+const credentialClose =
+  requiredElement<HTMLButtonElement>("#credential-close");
+const contextDialog = requiredElement<HTMLDialogElement>("#context-dialog");
+const contextClose = requiredElement<HTMLButtonElement>("#context-close");
+const contextOpen = requiredElement<HTMLButtonElement>("#context-open");
 const tokenForm = requiredElement<HTMLFormElement>("#token-form");
 const tokenInput = requiredElement<HTMLInputElement>("#session-token");
 const clearSessionTokenButton = requiredElement<HTMLButtonElement>(
@@ -139,17 +142,6 @@ const requirementFields =
 const applyRequirementsButton = requiredElement<HTMLButtonElement>(
   "#apply-requirements",
 );
-const requirementBanner =
-  requiredElement<HTMLElement>("#requirement-banner");
-const requirementBannerTitle = requiredElement<HTMLElement>(
-  "#requirement-banner-title",
-);
-const requirementBannerCopy = requiredElement<HTMLElement>(
-  "#requirement-banner-copy",
-);
-const requirementBannerAction = requiredElement<HTMLButtonElement>(
-  "#requirement-banner-action",
-);
 const themeToggle = requiredElement<HTMLButtonElement>("#theme-toggle");
 const leftPanelToggle = requiredElement<HTMLButtonElement>("#toggle-left-panel");
 const rightPanelToggle = requiredElement<HTMLButtonElement>(
@@ -163,7 +155,7 @@ const railGutter = requiredElement<HTMLElement>("#rail-gutter");
 const sheetGutter = requiredElement<HTMLElement>("#sheet-gutter");
 const sourceGutter = requiredElement<HTMLElement>("#source-gutter");
 const tabContent = requiredElement<HTMLElement>("#tab-content");
-const sheetStatus = requiredElement<HTMLElement>("#sheet-status");
+const sheetStatus = requiredElement<HTMLButtonElement>("#sheet-status");
 const sheetDot = requiredElement<HTMLElement>("#sheet-dot");
 const sheetRun = requiredElement<HTMLButtonElement>("#sheet-run");
 const sheetToggle = requiredElement<HTMLButtonElement>("#sheet-toggle");
@@ -279,6 +271,7 @@ function workspaceSnapshot(): WorkspaceRecord | null {
     version: targetInterface.version?.trim() || "",
     origin: documentOrigin,
     sessionsJSON: currentSessionsJSON(),
+    context: targetContext,
     createdAt: workspaceCreatedAt,
     updatedAt: Date.now(),
   };
@@ -341,6 +334,15 @@ function adoptWorkspace(record: WorkspaceRecord, note: string): void {
     }
   }
   setTarget(obi, record.label, sessionID);
+  // setTarget clears context (a target switch must not carry one service's
+  // credentials to another), so the record's own context is restored after
+  // it — this is the document coming back, not a navigation.
+  if (record.context) {
+    targetContext = record.context;
+    targetContextInput.value = JSON.stringify(record.context, null, 2);
+    applyTargetContext();
+    renderTargetContextState();
+  }
   // The buffer is restored VERBATIM — an unparseable mid-edit state comes
   // back exactly as typed, not as the last-valid document reformatted.
   if (record.documentText && record.documentText !== interfaceEditor.text) {
@@ -934,6 +936,16 @@ function updateSheetStatus(): void {
   sheetDot.title = label;
   sheetStatus.textContent = text;
   sheetStatus.classList.toggle("danger", danger);
+  // The status line doubles as the moment-of-need door to target
+  // credentials, and ONLY then: a button that opens nothing would be a
+  // control lying about being one. Steady rails still hold — the element
+  // never appears or vanishes, it stops being actionable.
+  const opensContext = Boolean(contextAdvisory) || status.state === "failed";
+  sheetStatus.disabled = !opensContext;
+  sheetStatus.classList.toggle("actionable", opensContext);
+  sheetStatus.title = opensContext
+    ? "Open target credentials for this document"
+    : "";
   // Run is a fixture: present in both states, disabled when it cannot act.
   sheetRun.disabled = !capable || status.state === "running";
 }
@@ -1144,20 +1156,31 @@ async function commitRename(): Promise<void> {
   }
 }
 
-// The pill is the interim standing entry to connection settings (rev 17):
-// the Connection button died with the verb row (review/120 loss ledger).
+// The pill reports connection state and opens the one thing that can
+// change it (rev 17.20: the full-width panel it used to open is gone).
 connectionStatus.addEventListener("click", () => {
-  setConnectionPanel(connectionPanel.hidden);
+  if (credentialDialog.open) credentialDialog.close();
+  else credentialDialog.showModal();
 });
 
-connectionClose.addEventListener("click", () => {
-  setConnectionPanel(false);
+credentialClose.addEventListener("click", () => {
+  credentialDialog.close();
   connectionStatus.focus();
 });
 
-requirementBannerAction.addEventListener("click", () => {
-  setConnectionPanel(true);
-  focusFirstRequirement();
+// The standing door: context can always be set, so this control is a
+// fixture on the document block rather than something that appears when a
+// run happens to demand it.
+contextOpen.addEventListener("click", () => openContextDialog());
+
+contextClose.addEventListener("click", () => {
+  contextDialog.close();
+});
+
+// The moment-of-need shortcut. The strip's status line is a button only
+// while there is something to open — see updateSheetStatus.
+sheetStatus.addEventListener("click", () => {
+  if (!sheetStatus.disabled) openContextDialog();
 });
 
 requirementAlternative.addEventListener("change", renderRequirementFields);
@@ -1174,6 +1197,9 @@ requirementForm.addEventListener("submit", event => {
   targetContextInput.value = JSON.stringify(targetContext, null, 2);
   applyTargetContext();
   renderTargetContextState();
+  // Credentials are work: they ride the workspace so a reload does not
+  // silently throw them away (rev 17.20).
+  ensureWorkspace();
   hideContextChallenge();
   bootstrapMessage.textContent = retryAfterContext
     ? "Credentials applied. Retrying the operation…"
@@ -1247,6 +1273,7 @@ targetContextForm.addEventListener("submit", event => {
     targetContext = parsed as Record<string, unknown>;
     applyTargetContext();
     renderTargetContextState();
+    ensureWorkspace();
     hideContextChallenge();
     bootstrapMessage.textContent =
       "Target context applied to invocations for the selected interface.";
@@ -1555,7 +1582,7 @@ function applySessionProbe(result: SessionProbeResult): void {
   // whenever verification lands or lapses, or it reports a stale state.
   updateSheetStatus();
   if (result === "rejected") {
-    setConnectionPanel(true);
+    openCredentialDialog();
     tokenInput.focus();
   } else {
     // Preflight is deferred until the credential is proven; run the one that
@@ -1997,7 +2024,7 @@ function createOperationSession(seed: OperationSessionSeed): OperationSession {
   });
   invocation.addEventListener("ob-context-required", event => {
     if (activeSessionId !== id) focusSession(id);
-    setConnectionPanel(true);
+    openCredentialDialog();
     if (targetInterface === obInterface && !sessionToken) {
       bootstrapMessage.textContent =
         "This browser session needs the local ob start credential.";
@@ -3268,7 +3295,7 @@ function overwrittenSchemaKeys(
 
 function ensureWorkbenchSession(): boolean {
   if (obInterface && obInvoker && sessionToken) return true;
-  setConnectionPanel(true);
+  openCredentialDialog();
   bootstrapMessage.textContent =
     "Connect this browser session before asking ob to modify an interface.";
   tokenInput.focus();
@@ -3388,6 +3415,9 @@ function clearTargetContext(): void {
   targetContextInput.value = "";
   applyTargetContext();
   renderTargetContextState();
+  // Clearing is a change worth persisting, but never worth MINTING a
+  // workspace: erasing nothing on a pristine document is not work.
+  if (workspaceId) autosaveWorkspace();
   hideContextChallenge();
   bootstrapMessage.textContent =
     "Target context cleared. Public operations can still be invoked.";
@@ -3516,18 +3546,15 @@ function showContextChallenge(details: ContextRequiredDetails): void {
   targetRequirementsCopy.textContent = details.target
     ? `Choose how this operation may access ${displayTarget(details.target)}.`
     : "Choose how to satisfy this operation’s runtime requirements.";
-  requirementBanner.hidden = false;
-  requirementBannerTitle.textContent = "Target context needed";
-  requirementBannerCopy.textContent = details.target
-    ? `This operation needs context for ${displayTarget(details.target)}.`
-    : "This operation declares runtime requirements.";
   renderRequirementFields();
+  // A CONTEXT_REQUIRED failure IS the moment: open the repair surface
+  // rather than raising a banner that asks the user to go find it.
+  openContextDialog();
 }
 
 function hideContextChallenge(): void {
   contextChallenge = null;
   targetRequirements.hidden = true;
-  requirementBanner.hidden = true;
   requirementFields.replaceChildren();
 }
 
@@ -3761,9 +3788,18 @@ function renderConnectionPill(): void {
   }
 }
 
-function setConnectionPanel(open: boolean): void {
-  connectionPanel.hidden = !open;
-  connectionStatus.setAttribute("aria-expanded", String(open));
+/** Open the credential dialog (the only surface that can repair a bad or
+ * missing session credential). Idempotent — showModal on an open dialog
+ * throws. */
+function openCredentialDialog(): void {
+  if (!credentialDialog.open) credentialDialog.showModal();
+}
+
+/** Open the target-credentials dialog, focusing the typed requirement
+ * fields when ob has told us what the operation needs. */
+function openContextDialog(): void {
+  if (!contextDialog.open) contextDialog.showModal();
+  focusFirstRequirement();
 }
 
 function setConnectionStatus(

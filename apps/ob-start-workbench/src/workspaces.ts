@@ -45,6 +45,15 @@ export interface WorkspaceRecord {
   /** The tab-session sessionStorage payload, carried verbatim so the
    * existing restore path replays it without knowing workspaces exist. */
   sessionsJSON: string | null;
+  /**
+   * Target invocation context for THIS document (rev 17.20). It rides the
+   * workspace because it belongs to the document whose operations it
+   * authorizes — while it lived in app chrome it evaporated on every
+   * reload, which is exactly the loss 17.18 set out to end. It can carry
+   * secrets, so the honest statement is the one the dialog makes: held in
+   * this browser, alongside the session, sent only to the selected target.
+   */
+  context: Record<string, unknown> | null;
   createdAt: number;
   updatedAt: number;
 }

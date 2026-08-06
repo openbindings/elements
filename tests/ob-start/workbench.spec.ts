@@ -43,7 +43,7 @@ test("the embedded workbench invokes ob start through its published interface", 
         .every(entry => !entry.name.includes("test-token")),
     ),
   ).toBe(true);
-  await expect(page.locator("#connection-panel")).toBeHidden();
+  await expect(page.locator("#credential-dialog")).toBeHidden();
   await expect(page.locator("#document-name")).toHaveText("ob");
   const explorer = page.locator("ob-obi-explorer");
   const detail = page.locator("ob-operation-detail");
@@ -197,10 +197,11 @@ test("the operation dependency becomes available when session context changes", 
   );
   await expect(page.locator("#sheet-run")).toBeDisabled();
 
-  await expect(page.locator("#connection-panel")).toBeHidden();
-  // The status pill is the standing entry to connection settings (rev 17).
+  await expect(page.locator("#credential-dialog")).toBeHidden();
+  // The pill reports connection state and opens the one surface that can
+  // change it (rev 17.20: the full-width panel it used to open is gone).
   await page.locator("#connection-status").click();
-  await expect(page.locator("#connection-panel")).toBeVisible();
+  await expect(page.locator("#credential-dialog")).toBeVisible();
   await page.locator("#session-token").fill("test-token");
   await page.locator('#token-form button[type="submit"]').click();
 
@@ -223,7 +224,7 @@ test("a rejected session token is reported honestly instead of claiming Ready", 
   await expect(page.locator("#connection-status-text")).not.toHaveText(
     "Ready",
   );
-  await expect(page.locator("#connection-panel")).toBeVisible();
+  await expect(page.locator("#credential-dialog")).toBeVisible();
   await expect(page.locator("#session-status")).toContainText(
     "Credential rejected",
   );
@@ -663,14 +664,12 @@ test("target authentication is preflighted into focused fields", async ({
   await expect(page.locator("#sheet-status")).toHaveText(
     "needs target credentials",
   );
-  await expect(page.locator("#requirement-banner")).toBeHidden();
+  await expect(page.locator("#context-dialog")).toBeHidden();
+  // Rev 17.20: a CONTEXT_REQUIRED failure IS the moment, so the repair
+  // surface opens directly instead of raising a banner that asked the user
+  // to go find it.
   await page.locator("#sheet-run").click();
-  await expect(page.locator("#requirement-banner")).toBeVisible();
-  await expect(page.locator("#requirement-banner-copy")).toContainText(
-    "needs context",
-  );
-  await page.locator("#requirement-banner-action").click();
-  await expect(page.locator("#connection-panel")).toBeVisible();
+  await expect(page.locator("#context-dialog")).toBeVisible();
   await page.locator("#requirement-alternative").selectOption({
     label: "Bearer token",
   });
@@ -681,7 +680,7 @@ test("target authentication is preflighted into focused fields", async ({
   await bearer.fill("test-token");
   await page.locator("#apply-requirements").click();
 
-  await expect(page.locator("#requirement-banner")).toBeHidden();
+  await expect(page.locator("#context-dialog")).toBeHidden();
   const workbench = page.locator("ob-operation-workbench:not([hidden])");
   await page.locator("#sheet-run").click();
   await expect(workbench.locator('[part~="output"] .cm-content')).toContainText(
@@ -759,8 +758,8 @@ test("the complete primary flow remains usable without horizontal overflow on mo
   ).toBe(true);
 
   await page.locator("#connection-status").click();
-  await expect(page.locator("#connection-panel")).toBeVisible();
-  await expect(page.locator("#connection-close")).toBeVisible();
+  await expect(page.locator("#credential-dialog")).toBeVisible();
+  await expect(page.locator("#credential-close")).toBeVisible();
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -1251,4 +1250,63 @@ test("a stale cookie from a rotated token does not authenticate", async ({
   );
   // No console-error filter needed: the empty redemption window answers
   // 204, so an unauthed or stale-cookie boot is QUIET by design.
+});
+
+// Rev 17.20: the connection panel is retired. Its two halves moved to the
+// surfaces they belong to — the pill for this workbench's own credential,
+// the document block for the document's target credentials — and context
+// now rides the workspace, so it survives a reload it never used to.
+test("target credentials belong to the document and survive a reload", async ({
+  page,
+}) => {
+  await page.goto("/#token=test-token");
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+
+  // The retired regions are gone from the document entirely, not hidden.
+  expect(await page.locator("#connection-panel").count()).toBe(0);
+  expect(await page.locator("#requirement-banner").count()).toBe(0);
+
+  // The standing door is a fixture on the document block: always present,
+  // because context can always be set.
+  const door = page.locator("#context-open");
+  await expect(door).toBeVisible();
+  await expect(door).toBeEnabled();
+
+  await door.click();
+  const dialog = page.locator("#context-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(page.locator("#target-context-status")).toHaveText(
+    "No target credentials configured.",
+  );
+
+  await page.locator(".raw-context summary").click();
+  await page
+    .locator("#target-context")
+    .fill('{"bearerToken":"document-scoped-token"}');
+  await page.locator('#target-context-form button[type="submit"]').click();
+  await expect(page.locator("#target-context-status")).toHaveText(
+    "Context is configured for the selected target.",
+  );
+  await page.locator("#context-close").click();
+  await expect(dialog).toBeHidden();
+
+  // Applying context is work: it mints a workspace and rides the record.
+  await page.waitForTimeout(700);
+  await page.reload();
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+  await expect(page.locator("#target-context-status")).toHaveText(
+    "Context is configured for the selected target.",
+    { timeout: 15_000 },
+  );
+  await page.locator("#context-open").click();
+  await expect(page.locator("#target-context")).toHaveValue(
+    /document-scoped-token/,
+  );
+  await page.locator("#context-close").click();
+
+  // The strip's status line is a button only when it opens something. With
+  // a healthy session and no advisory it reports and nothing more.
+  const status = page.locator("#sheet-status");
+  await expect(status).toBeDisabled();
+  await expect(status).not.toHaveClass(/actionable/);
 });

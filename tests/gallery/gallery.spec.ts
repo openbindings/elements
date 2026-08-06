@@ -34,7 +34,8 @@ const PLAN: Record<string, string[]> = {
     "error-category-card",
   ],
   "document-editor": ["focused"],
-  "connection-panel": ["open"],
+  "credential-dialog": ["open"],
+  "context-dialog": ["open"],
   "workbench-full": ["default", "left-panel-hidden"],
 };
 
@@ -273,14 +274,23 @@ async function sweep(page: Page, theme: Theme, width: Width): Promise<void> {
     return documentEditor;
   });
 
-  // -- connection panel (rev 17: the status pill is the standing entry) -----
-  await shoot("connection-panel", "open", async () => {
+  // -- credentials (rev 17.20: the panel retired into two dialogs, each
+  //    reached from the surface it belongs to) ------------------------------
+  await shoot("credential-dialog", "open", async () => {
     await page.locator("#connection-status").click();
-    await expect(page.locator("#connection-panel")).toBeVisible();
-    return page.locator("#connection-panel");
+    await expect(page.locator("#credential-dialog")).toBeVisible();
+    return page.locator("#credential-dialog");
   });
-  await page.locator("#connection-close").click();
-  await expect(page.locator("#connection-panel")).toBeHidden();
+  await page.locator("#credential-close").click();
+  await expect(page.locator("#credential-dialog")).toBeHidden();
+
+  await shoot("context-dialog", "open", async () => {
+    await page.locator("#context-open").click();
+    await expect(page.locator("#context-dialog")).toBeVisible();
+    return page.locator("#context-dialog");
+  });
+  await page.locator("#context-close").click();
+  await expect(page.locator("#context-dialog")).toBeHidden();
 
   // -- rev 17 chrome: the left panel hides; the breadcrumb keeps wayfinding -
   await shoot("workbench-full", "left-panel-hidden", async () => {
