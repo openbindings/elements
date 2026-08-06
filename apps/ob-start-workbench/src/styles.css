@@ -1286,6 +1286,73 @@ dialog p {
   justify-content: flex-end;
 }
 
+/* Acquisition (rev 17.16). Dismissal is chrome and lives top-right; the
+   footer carries only answers to the dialog's question. The confirmation
+   dialog keeps its footer Cancel because there Cancel IS an answer. */
+.dialog-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1.1rem 1.1rem 0;
+}
+
+.dialog-heading h2,
+.dialog-heading p {
+  margin: 0;
+}
+
+.dialog-dismiss {
+  display: grid;
+  width: 1.75rem;
+  min-height: 1.75rem;
+  padding: 0;
+  place-items: center;
+  color: var(--page-muted);
+}
+
+.dialog-dismiss svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+#acquire-dialog form {
+  padding-top: 0.85rem;
+}
+
+/* One row: the field and its alternative lane read as one question. The
+   shared .field-actions basis (12rem) wraps inside a 30rem dialog. */
+#acquire-dialog .field-actions {
+  flex-wrap: nowrap;
+}
+
+#acquire-dialog .field-actions input[type="text"] {
+  flex: 1 1 8rem;
+  min-width: 0;
+}
+
+#acquire-dialog .field-actions button {
+  flex: none;
+}
+
+.acquire-found,
+.acquire-problem {
+  padding: 0.5rem 0.6rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  border-radius: 0.35rem;
+}
+
+.acquire-found {
+  color: var(--page-muted);
+  background: var(--page-surface-raised);
+}
+
+.acquire-problem {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
 ob-obi-explorer::part(container) {
   border-right: 0;
 }

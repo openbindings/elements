@@ -909,3 +909,108 @@ test("a failed resolve reports the server's diagnostic, not a bare status line",
   await expect(page.locator("#doc-open")).toBeEnabled();
   await expect(page.locator("#document-name")).toHaveText("ob");
 });
+
+// Rev 17.16: acquisition. An ephemeral process gets a modal, not a tab —
+// tabs are document data. The dialog asks one question and offers two
+// answers; dismissal is chrome at the top, not a third footer button.
+test("a document is acquired through one door, merged, and undone", async ({
+  page,
+}) => {
+  await page.goto("/#token=test-token");
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+
+  const dialog = page.locator("#acquire-dialog");
+  const replace = page.locator("#acquire-replace");
+  const merge = page.locator("#acquire-merge");
+
+  await page.locator("#acquire-open").click();
+  await expect(dialog).toBeVisible();
+
+  // Steady rails in a dialog: the verbs are present from the first frame and
+  // greyed, never absent. Merge is the primary because a document is open.
+  await expect(replace).toBeDisabled();
+  await expect(merge).toBeDisabled();
+  await expect(merge).toHaveClass(/primary/);
+  await expect(replace).not.toHaveClass(/primary/);
+
+  // Dismissal lives at the top; the footer carries only answers.
+  await expect(dialog.locator(".dialog-actions button")).toHaveCount(2);
+  await page.locator("#acquire-close").click();
+  await expect(dialog).toBeHidden();
+
+  // A bare local path can never reach ob's outbound resolve, so the field
+  // says so rather than failing at the server.
+  await page.locator("#acquire-open").click();
+  await page.locator("#acquire-locator").fill("./petstore.json");
+  await page.locator("#acquire-form").press("Enter");
+  await expect(page.locator("#acquire-problem")).toContainText(
+    "local files go through Choose file",
+  );
+  await expect(replace).toBeDisabled();
+
+  // A chosen OBI is read in the browser and never posted as a path.
+  await page.locator("#acquire-file").setInputFiles({
+    name: "extra.obi.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(
+      JSON.stringify({
+        openbindings: "0.1.0",
+        name: "extra",
+        version: "1.2.3",
+        operations: {
+          "example.acquired": {
+            description: "Arrived by acquisition.",
+          },
+        },
+      }),
+    ),
+  });
+
+  const found = page.locator("#acquire-found");
+  await expect(found).toContainText("extra · 1.2.3", { timeout: 30_000 });
+  await expect(found).toContainText("1 operation");
+  await expect(found).toContainText("native OpenBindings document");
+  await expect(replace).toBeEnabled();
+  await expect(merge).toBeEnabled();
+
+  const editor = page.locator("ob-obi-editor").locator("ob-json-editor");
+  const before = await editor.evaluate(
+    el => (el as HTMLElement & { text: string }).text,
+  );
+  expect(before).not.toContain("example.acquired");
+
+  await merge.click();
+  await expect(dialog).toBeHidden({ timeout: 30_000 });
+
+  // The whole report is one line, and it names the escape hatch.
+  const message = page.locator("#bootstrap-message");
+  await expect(message).toContainText("1 operation added");
+  await expect(message).toContainText("Undo restores");
+  // Scoped to what the incoming document defines. Unscoped, ob unbinds every
+  // target operation the source does not mention — a one-operation merge
+  // would strip bindings across the whole interface.
+  await expect(message).not.toContainText("bindings dropped");
+
+  await expect
+    .poll(
+      () =>
+        editor.evaluate(el => (el as HTMLElement & { text: string }).text),
+      { timeout: 15_000 },
+    )
+    .toContain("example.acquired");
+  await expect(page.locator("ob-obi-explorer")).toContainText(
+    "example.acquired",
+  );
+
+  // Undo is the whole reason there is no preview: the merge lands as one
+  // editor edit and one keystroke takes it back.
+  await editor.locator(".cm-content").click();
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect
+    .poll(
+      () =>
+        editor.evaluate(el => (el as HTMLElement & { text: string }).text),
+      { timeout: 15_000 },
+    )
+    .not.toContain("example.acquired");
+});

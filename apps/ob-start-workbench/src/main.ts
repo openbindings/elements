@@ -22,6 +22,7 @@ import {
   type OBInterface,
 } from "@openbindings/sdk";
 import { OperationEnvironment, debounce } from "@openbindings/ui-core";
+import { parse as parseYAML } from "yaml";
 import type { OBIEditorElement } from "@openbindings/obi-editor";
 import type { OBIExplorerElement } from "@openbindings/obi-explorer";
 import type { OperationDetailElement } from "@openbindings/operation-detail";
@@ -67,6 +68,19 @@ const renameDescription = requiredElement<HTMLTextAreaElement>(
   "#rename-description",
 );
 const renameCancel = requiredElement<HTMLButtonElement>("#rename-cancel");
+// Acquisition (rev 17.16): one door on the nav bar, one modal, two verbs.
+const acquireOpen = requiredElement<HTMLButtonElement>("#acquire-open");
+const acquireDialog = requiredElement<HTMLDialogElement>("#acquire-dialog");
+const acquireCloseButton =
+  requiredElement<HTMLButtonElement>("#acquire-close");
+const acquireForm = requiredElement<HTMLFormElement>("#acquire-form");
+const acquireLocator = requiredElement<HTMLInputElement>("#acquire-locator");
+const acquireBrowse = requiredElement<HTMLButtonElement>("#acquire-browse");
+const acquireFile = requiredElement<HTMLInputElement>("#acquire-file");
+const acquireFound = requiredElement<HTMLElement>("#acquire-found");
+const acquireProblem = requiredElement<HTMLElement>("#acquire-problem");
+const acquireReplace = requiredElement<HTMLButtonElement>("#acquire-replace");
+const acquireMerge = requiredElement<HTMLButtonElement>("#acquire-merge");
 const connectionPanel =
   requiredElement<HTMLElement>("#connection-panel");
 const connectionClose =
@@ -1579,6 +1593,9 @@ function updateCurrentTarget(
   else interfaceEditor.value = obi;
   pendingInterfaceDraft = null;
   renderDocumentBar(obi);
+  // Merge's availability is a fact about the workspace, not about the dialog:
+  // it greys the moment there is nothing to merge into.
+  renderAcquireVerbs();
 
   if (previousActiveId && sessionsById.has(previousActiveId)) {
     focusSession(previousActiveId);
@@ -2418,6 +2435,425 @@ async function removeBinding(
 function applyManagedInterface(next: OBInterface, message: string): void {
   updateCurrentTarget(next, targetLabel);
   bootstrapMessage.textContent = message;
+}
+
+/* ------------------------------------------------------------------ *
+ * Acquisition (rev 17.16)
+ *
+ * Getting a document into the workspace is an ephemeral process — a thing
+ * that happens TO the document, not a subject IN it. Tabs are document data,
+ * so this is a modal. It asks one question (where from) and offers two
+ * answers (Replace, Merge); dismissal is chrome, not a third answer.
+ *
+ * Deliberately absent: a diff preview and per-operation conflict resolution.
+ * ob has no conflict action at all — MergeAction is add|update|remove|skip|
+ * unbound — and the served merge hardcodes All:true with no target path, so
+ * the call is pure and the result lands as one undoable editor edit. Undo is
+ * the escape hatch; a review surface would be ceremony guarding an act that
+ * cannot hurt.
+ * ------------------------------------------------------------------ */
+
+interface AcquisitionCandidate {
+  obi: OBInterface;
+  summary: string;
+}
+
+interface MergeEntry {
+  operation: string;
+  action: string;
+  applied: boolean;
+  details?: string[];
+}
+
+interface MergeResult {
+  interface: OBInterface;
+  applied?: number;
+  skipped?: number;
+  warnings?: string[];
+  entries?: MergeEntry[];
+}
+
+let acquireCandidate: AcquisitionCandidate | null = null;
+let acquirePending: Promise<AcquisitionCandidate | null> | null = null;
+/** The locator the candidate was produced from, so we re-resolve on change. */
+let acquireResolvedFor = "";
+let acquireBusy = false;
+
+acquireOpen.addEventListener("click", () => {
+  acquireLocator.value = "";
+  acquireFile.value = "";
+  acquireCandidate = null;
+  acquirePending = null;
+  acquireResolvedFor = "";
+  acquireFound.hidden = true;
+  acquireProblem.hidden = true;
+  renderAcquireVerbs();
+  acquireDialog.showModal();
+  acquireLocator.focus();
+});
+
+acquireCloseButton.addEventListener("click", () => acquireDialog.close());
+
+// Enter in the locator field resolves rather than submitting: the verbs are
+// the only things that commit.
+acquireForm.addEventListener("submit", event => {
+  event.preventDefault();
+  void ensureAcquireCandidate();
+});
+
+acquireLocator.addEventListener("input", () => {
+  acquireFile.value = "";
+  acquireCandidate = null;
+  acquireResolvedFor = "";
+  acquireFound.hidden = true;
+  acquireProblem.hidden = true;
+  renderAcquireVerbs();
+});
+
+acquireBrowse.addEventListener("click", () => acquireFile.click());
+
+acquireFile.addEventListener("change", () => {
+  const file = acquireFile.files?.[0];
+  if (!file) return;
+  acquireLocator.value = file.name;
+  acquireCandidate = null;
+  acquireResolvedFor = "";
+  void ensureAcquireCandidate();
+});
+
+acquireReplace.addEventListener("click", () => void commitAcquisition("replace"));
+acquireMerge.addEventListener("click", () => void commitAcquisition("merge"));
+
+/**
+ * Steady rails in a dialog: the verbs never disappear, they grey. Merge greys
+ * with no document open because there is nothing to merge into; whichever
+ * verb applies to the situation carries the primary weight.
+ */
+function renderAcquireVerbs(): void {
+  const ready = Boolean(acquireCandidate) && !acquireBusy;
+  const haveDocument = Boolean(targetInterface);
+  acquireReplace.disabled = !ready;
+  acquireMerge.disabled = !ready || !haveDocument;
+  acquireReplace.classList.toggle("primary", !haveDocument);
+  acquireMerge.classList.toggle("primary", haveDocument);
+  acquireMerge.title = haveDocument
+    ? "Merge into the open document"
+    : "No document open to merge into";
+}
+
+function setAcquireBusy(busy: boolean, note?: string): void {
+  acquireBusy = busy;
+  acquireBrowse.disabled = busy;
+  acquireLocator.disabled = busy;
+  if (note) {
+    acquireFound.textContent = note;
+    acquireFound.hidden = false;
+    acquireProblem.hidden = true;
+  }
+  renderAcquireVerbs();
+}
+
+function showAcquireProblem(message: string): void {
+  acquireProblem.textContent = message;
+  acquireProblem.hidden = false;
+  acquireFound.hidden = true;
+}
+
+/**
+ * Resolve the locator if it has not been resolved already. Both verbs call
+ * this first, so clicking Merge on a freshly typed URL does the right thing
+ * without a separate Load step.
+ */
+async function ensureAcquireCandidate(): Promise<AcquisitionCandidate | null> {
+  const locator = acquireLocator.value.trim();
+  if (!locator) return null;
+  if (acquireCandidate && acquireResolvedFor === locator) {
+    return acquireCandidate;
+  }
+  if (acquirePending) return acquirePending;
+
+  const file = acquireFile.files?.[0];
+  const run = (
+    file && file.name === locator ? acquireFromFile(file) : acquireFromAddress(locator)
+  )
+    .then(candidate => {
+      acquireCandidate = candidate;
+      acquireResolvedFor = locator;
+      acquireFound.textContent = candidate.summary;
+      acquireFound.hidden = false;
+      acquireProblem.hidden = true;
+      return candidate;
+    })
+    .catch((error: unknown) => {
+      acquireCandidate = null;
+      acquireResolvedFor = "";
+      showAcquireProblem(errorText(error));
+      return null;
+    })
+    .finally(() => {
+      acquirePending = null;
+      setAcquireBusy(false);
+    });
+
+  acquirePending = run;
+  setAcquireBusy(true, `Reading ${locator}…`);
+  return run;
+}
+
+/**
+ * An address goes through ob: resolveInterface does well-known discovery and
+ * synthesizes from a raw binding spec when the target is not already an OBI.
+ * ob's outbound guard allows loopback but blocks other private ranges and any
+ * non-HTTP scheme, so a bare local path never reaches it — that is what the
+ * file picker is for.
+ */
+async function acquireFromAddress(
+  address: string,
+): Promise<AcquisitionCandidate> {
+  if (!looksLikeAddress(address)) {
+    throw new Error(
+      "Enter a URL or host — local files go through Choose file.",
+    );
+  }
+  if (!obInterface || !ensureWorkbenchSession()) {
+    throw new Error("Connect this browser session first.");
+  }
+  const output = await invokeThroughOB<
+    { address: string },
+    { interface: OBInterface; synthesizedFrom?: string; resolvedUrl?: string }
+  >(obInterface, "openbindings.ob.resolveInterface", { address });
+  return {
+    obi: output.interface,
+    summary: describeAcquired(
+      output.interface,
+      output.synthesizedFrom
+        ? `synthesized from ${output.synthesizedFrom}`
+        : "a native OpenBindings document",
+      output.resolvedUrl,
+    ),
+  };
+}
+
+/**
+ * A chosen file is read HERE and posted as content. ob never opens a path on
+ * the browser's say-so, so the file lane adds no read-any-file capability to
+ * the served surface — SynthesizeInterfaceSource.content is the seam that
+ * makes that possible.
+ */
+async function acquireFromFile(file: File): Promise<AcquisitionCandidate> {
+  const text = await file.text();
+  const document = parseInterfaceText(text, file.name);
+  if (isRecord(document) && typeof document.openbindings === "string") {
+    return {
+      obi: document as unknown as OBInterface,
+      summary: describeAcquired(
+        document as unknown as OBInterface,
+        `a native OpenBindings document from ${file.name}`,
+      ),
+    };
+  }
+  const bindingSpec = detectBindingSpec(document);
+  if (!bindingSpec) {
+    throw new Error(
+      `${file.name} is not an OpenBindings interface or a binding spec ob can synthesize from.`,
+    );
+  }
+  if (!obInterface || !ensureWorkbenchSession()) {
+    throw new Error("Connect this browser session first.");
+  }
+  const output = await invokeThroughOB<
+    {
+      sources: {
+        bindingSpec: string;
+        name: string;
+        content: unknown;
+      }[];
+    },
+    OBInterface
+  >(obInterface, "openbindings.ob.synthesizeInterface", {
+    sources: [
+      { bindingSpec, name: sourceKeyFor(file.name), content: document },
+    ],
+  });
+  return {
+    obi: output,
+    summary: describeAcquired(
+      output,
+      `synthesized from ${bindingSpec} in ${file.name}`,
+    ),
+  };
+}
+
+/**
+ * ob's outbound guard rejects every non-HTTP scheme, so a path posted to
+ * resolveInterface comes back as a bare 403. The field says the useful thing
+ * instead of relaying the server's refusal: a path is not an address, and the
+ * file picker is the lane that handles it.
+ */
+function looksLikeAddress(value: string): boolean {
+  if (/^https?:\/\//i.test(value)) return true;
+  // Any other scheme (file:, exec:, ftp:) never survives the guard.
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return false;
+  // Relative, absolute, and home-relative paths.
+  if (/^[./~\\]/.test(value) || value.includes("\\")) return false;
+  const host = value.split("/")[0] ?? "";
+  if (/\.(json|yaml|yml|obi)$/i.test(host)) return false;
+  return /^(localhost|[a-z0-9-]+(\.[a-z0-9-]+)+)(:\d+)?$/i.test(host);
+}
+
+function parseInterfaceText(text: string, name: string): unknown {
+  const trimmed = text.trim();
+  if (!trimmed) throw new Error(`${name} is empty.`);
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      return JSON.parse(trimmed);
+    } catch (error) {
+      throw new Error(`${name} is not valid JSON: ${errorText(error)}`);
+    }
+  }
+  try {
+    return parseYAML(trimmed);
+  } catch (error) {
+    throw new Error(`${name} is not valid YAML: ${errorText(error)}`);
+  }
+}
+
+function detectBindingSpec(document: unknown): string | null {
+  if (!isRecord(document)) return null;
+  if (typeof document.openapi === "string") return "openapi";
+  if (typeof document.swagger === "string") return "openapi";
+  if (typeof document.asyncapi === "string") return "asyncapi";
+  return null;
+}
+
+/** A source key from a filename: the stem, slugified, never empty. */
+function sourceKeyFor(filename: string): string {
+  const stem = filename.replace(/\.[^.]+$/, "");
+  const slug = stem.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return slug || "source";
+}
+
+function describeAcquired(
+  obi: OBInterface,
+  provenance: string,
+  resolvedUrl?: string,
+): string {
+  const operations = Object.keys(obi.operations ?? {}).length;
+  const identity = [obi.name?.trim(), obi.version?.trim()]
+    .filter(Boolean)
+    .join(" · ");
+  const parts = [
+    identity || "Untitled interface",
+    `${operations} operation${operations === 1 ? "" : "s"}`,
+    provenance,
+  ];
+  if (resolvedUrl) parts.push(resolvedUrl);
+  return parts.join(" · ");
+}
+
+async function commitAcquisition(mode: "replace" | "merge"): Promise<void> {
+  const candidate = await ensureAcquireCandidate();
+  if (!candidate) return;
+
+  if (mode === "replace") {
+    acquireDialog.close();
+    applyManagedInterface(
+      candidate.obi,
+      `Replaced the working document with ${candidate.obi.name?.trim() || "the acquired interface"}. Undo restores the previous one. No interface file was saved.`,
+    );
+    return;
+  }
+
+  const target = targetInterface;
+  if (!target || !obInterface || !ensureWorkbenchSession()) return;
+  setAcquireBusy(true, "Merging through ob…");
+  try {
+    // Scoped to what the incoming document actually defines. Unscoped, ob
+    // emits a `remove` (unbind) entry for every TARGET operation absent from
+    // the source and All:true applies them all — so merging a one-operation
+    // document into a fifty-operation interface strips bindings from the
+    // other forty-nine. Scoping bounds the merge to the operations the source
+    // brought, which is what acquiring a document means; unbind still fires
+    // for a source operation that genuinely lost its binding upstream.
+    const result = await invokeThroughOB<
+      {
+        target: OBInterface;
+        source: OBInterface;
+        operations: string[];
+      },
+      MergeResult
+    >(obInterface, "openbindings.ob.mergeInterfaces", {
+      target,
+      source: candidate.obi,
+      operations: Object.keys(candidate.obi.operations ?? {}),
+    });
+    acquireDialog.close();
+    applyManagedInterface(result.interface, mergeOutcomeText(target, result));
+  } catch (error) {
+    showAcquireProblem(errorText(error));
+  } finally {
+    setAcquireBusy(false);
+  }
+}
+
+/**
+ * The whole report, in one line. Adds are a count; what earns words is LOSS —
+ * schemas replaced, bindings dropped — plus the one hazard ob does not report
+ * at all (below).
+ */
+function mergeOutcomeText(before: OBInterface, result: MergeResult): string {
+  const entries = result.entries ?? [];
+  const counted = (action: string): number =>
+    entries.filter(entry => entry.action === action && entry.applied).length;
+  const added = counted("add");
+  const updated = counted("update");
+  const unbound = counted("remove");
+
+  const parts: string[] = [];
+  if (added) parts.push(`${added} operation${added === 1 ? "" : "s"} added`);
+  if (updated) {
+    parts.push(
+      `${updated} operation${updated === 1 ? "" : "s"} had input/output replaced`,
+    );
+  }
+  if (unbound) {
+    parts.push(
+      `bindings dropped for ${unbound} operation${unbound === 1 ? "" : "s"}`,
+    );
+  }
+  if (!parts.length) parts.push("nothing changed");
+
+  const clobbered = overwrittenSchemaKeys(before, result.interface);
+  if (clobbered.length) {
+    parts.push(
+      `shared schema${clobbered.length === 1 ? "" : "s"} overwritten: ${clobbered.join(", ")}`,
+    );
+  }
+  for (const warning of result.warnings ?? []) parts.push(warning);
+
+  return `Merged in the local workspace — ${parts.join("; ")}. Undo restores the previous document. No interface file was saved.`;
+}
+
+/**
+ * ob's migrateSchemaRefs copies every #/schemas key a merged operation
+ * references into the target pool and lets the source win on collision, so a
+ * merge scoped to one operation can still rewrite a schema another operation
+ * shares. Nothing in MergeResult reports it, so we diff the pool ourselves.
+ */
+function overwrittenSchemaKeys(
+  before: OBInterface,
+  after: OBInterface,
+): string[] {
+  const previous = before.schemas ?? {};
+  const next = after.schemas ?? {};
+  const changed: string[] = [];
+  for (const [key, value] of Object.entries(previous)) {
+    if (!(key in next)) continue;
+    if (JSON.stringify(next[key]) !== JSON.stringify(value)) {
+      changed.push(`#/schemas/${key}`);
+    }
+  }
+  return changed.slice(0, 4);
 }
 
 function ensureWorkbenchSession(): boolean {

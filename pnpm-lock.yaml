@@ -74,6 +74,9 @@ importers:
       '@openbindings/ui-core':
         specifier: workspace:^
         version: link:../../packages/ui-core
+      yaml:
+        specifier: ^2.8.1
+        version: 2.9.0
 
   apps/vanilla:
     dependencies:

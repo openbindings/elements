@@ -19,6 +19,7 @@
     "@openbindings/schema-split": "workspace:^",
     "@openbindings/sdk": "link:../../../openbindings-ts/packages/sdk",
     "@openbindings/source-detail": "workspace:^",
-    "@openbindings/ui-core": "workspace:^"
+    "@openbindings/ui-core": "workspace:^",
+    "yaml": "^2.8.1"
   }
 }
