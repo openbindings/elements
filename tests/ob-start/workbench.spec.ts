@@ -1342,6 +1342,13 @@ test("the nav bar groups its controls by category with status last", async ({
     "connection-status",
   ]);
 
+  // The brand links out to the project, in a NEW tab: a logo click must
+  // never cost you the working session you are standing in (rev 17.20.3).
+  const brand = page.locator("a.brand");
+  await expect(brand).toHaveAttribute("href", "https://openbindings.com");
+  await expect(brand).toHaveAttribute("target", "_blank");
+  await expect(brand).toHaveAttribute("rel", /noopener/);
+
   // Grouped, not merely ordered — and laid out by flex, which a rev-17.20
   // selector-list deletion had silently taken away.
   // Three groups, including a wrapper for status: the divider is drawn by
