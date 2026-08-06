@@ -209,8 +209,12 @@ h3 {
   align-items: center;
 }
 
-.header-group + .header-group::before,
-.header-group + .status-pill::before {
+/* The divider is drawn by the FOLLOWING group, never by the control it
+   precedes: a pseudo-element lives inside its host's box, so hanging it on
+   the pill drew the line inside the pill's own rounded border (rev
+   17.20.2). Every group — including the one holding status — draws it the
+   same way, which is why status gets a wrapper of its own. */
+.header-group + .header-group::before {
   width: 1px;
   height: 1.35rem;
   margin-right: 1.1rem;

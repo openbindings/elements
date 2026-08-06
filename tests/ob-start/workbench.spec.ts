@@ -1344,7 +1344,17 @@ test("the nav bar groups its controls by category with status last", async ({
 
   // Grouped, not merely ordered — and laid out by flex, which a rev-17.20
   // selector-list deletion had silently taken away.
-  await expect(page.locator(".header-group")).toHaveCount(2);
+  // Three groups, including a wrapper for status: the divider is drawn by
+  // the FOLLOWING group, so hanging it on the pill drew the line inside the
+  // pill's own rounded border (rev 17.20.2).
+  await expect(page.locator(".header-group")).toHaveCount(3);
+  expect(
+    await page.evaluate(
+      () =>
+        getComputedStyle(document.querySelector("#connection-status"), "::before")
+          .content,
+    ),
+  ).toBe("none");
   expect(
     await page.evaluate(
       () => getComputedStyle(document.querySelector(".header-actions")).display,
