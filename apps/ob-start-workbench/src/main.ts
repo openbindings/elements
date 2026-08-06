@@ -23,6 +23,16 @@ import {
 } from "@openbindings/sdk";
 import { OperationEnvironment, debounce } from "@openbindings/ui-core";
 import { parse as parseYAML } from "yaml";
+import {
+  WorkspaceLeases,
+  type WorkspaceRecord,
+  deleteWorkspace,
+  evictBeyondCap,
+  getWorkspace,
+  listWorkspaces,
+  putWorkspace,
+  relativeTime,
+} from "./workspaces.js";
 import type { OBIEditorElement } from "@openbindings/obi-editor";
 import type { OBIExplorerElement } from "@openbindings/obi-explorer";
 import type { OperationDetailElement } from "@openbindings/operation-detail";
@@ -68,6 +78,13 @@ const renameDescription = requiredElement<HTMLTextAreaElement>(
   "#rename-description",
 );
 const renameCancel = requiredElement<HTMLButtonElement>("#rename-cancel");
+// Sessions (rev 17.18): the door back.
+const sessionsOpen = requiredElement<HTMLButtonElement>("#sessions-open");
+const sessionsDialog = requiredElement<HTMLDialogElement>("#sessions-dialog");
+const sessionsCloseButton =
+  requiredElement<HTMLButtonElement>("#sessions-close");
+const sessionsList = requiredElement<HTMLElement>("#sessions-list");
+const sessionsEmpty = requiredElement<HTMLElement>("#sessions-empty");
 // Acquisition (rev 17.16): one door on the nav bar, one modal, two verbs.
 const acquireOpen = requiredElement<HTMLButtonElement>("#acquire-open");
 const acquireDialog = requiredElement<HTMLDialogElement>("#acquire-dialog");
@@ -221,6 +238,116 @@ function restoreTheme(): ThemeMode {
 }
 
 const tabsStoragePrefix = "openbindings.ob-start.operation-tabs.v1.";
+
+// --- Workspaces (rev 17.18) -------------------------------------------------
+//
+// Files are truth; ob is stateless; the browser holds drafts. A workspace is
+// the swap file for one working copy: minted on FIRST MUTATION (an untouched
+// boot leaves no residue), autosaved on every mutation and keystroke, and
+// resumed silently when the user returns. The per-tab pointer lives in
+// sessionStorage — browsers restore it with the tab, so reload and
+// crash-restore resume the same session while a genuinely fresh tab decides
+// between RETURNING (no other live tabs → adopt most recent) and
+// OPENING-BESIDE (another tab is live → plain default, the sessions door is
+// one click away).
+
+const workspacePointerKey = "openbindings.ob-start.workspace-pointer.v1";
+const workspaceLeases = new WorkspaceLeases();
+let workspaceId: string | null = null;
+let workspaceCreatedAt = 0;
+/** Provenance as the user would say it — set by acquisition, defaulted at
+ * boot. Rides the workspace record so the sessions list can answer "which
+ * petstore is this?". */
+let documentOrigin = "this ob";
+
+function currentSessionsJSON(): string | null {
+  try {
+    return globalThis.sessionStorage.getItem(operationTabsStorageKey());
+  } catch {
+    return null;
+  }
+}
+
+function workspaceSnapshot(): WorkspaceRecord | null {
+  if (!workspaceId || !targetInterface) return null;
+  return {
+    id: workspaceId,
+    documentText: interfaceEditor.text,
+    document: targetInterface,
+    label: targetLabel,
+    name: targetInterface.name?.trim() || "Untitled interface",
+    version: targetInterface.version?.trim() || "",
+    origin: documentOrigin,
+    sessionsJSON: currentSessionsJSON(),
+    createdAt: workspaceCreatedAt,
+    updatedAt: Date.now(),
+  };
+}
+
+const autosaveWorkspace = debounce(() => {
+  const record = workspaceSnapshot();
+  if (!record) return;
+  // Best-effort by doctrine: a failed autosave must never break the task.
+  void putWorkspace(record).catch(() => undefined);
+}, 400);
+
+/** Mint on first mutation. Idempotent; called from every mutation seam. */
+function ensureWorkspace(): void {
+  if (workspaceId) {
+    autosaveWorkspace();
+    return;
+  }
+  workspaceId = crypto.randomUUID();
+  workspaceCreatedAt = Date.now();
+  try {
+    globalThis.sessionStorage.setItem(workspacePointerKey, workspaceId);
+  } catch {
+    // sessionStorage full or denied: the workspace still autosaves; only
+    // reload-resume of this tab degrades.
+  }
+  workspaceLeases.claim(workspaceId);
+  autosaveWorkspace();
+  void workspaceLeases
+    .query()
+    .then(leased => evictBeyondCap(new Set([...leased, workspaceId ?? ""])))
+    .catch(() => undefined);
+}
+
+/** Load a stored session into THIS tab. The one being left is autosaved by
+ * definition, so switching is lossless. */
+function adoptWorkspace(record: WorkspaceRecord, note: string): void {
+  workspaceId = record.id;
+  workspaceCreatedAt = record.createdAt;
+  documentOrigin = record.origin;
+  try {
+    globalThis.sessionStorage.setItem(workspacePointerKey, record.id);
+  } catch {
+    // Degrades to no reload-resume; the lease below still protects it.
+  }
+  workspaceLeases.claim(record.id);
+  const obi = record.document as OBInterface;
+  // Seed the tab-session payload under the workspace's key BEFORE setTarget:
+  // restoreSessions then replays it without knowing workspaces exist.
+  const sessionID = `workspace:${record.id}`;
+  targetSessionID = sessionID;
+  if (record.sessionsJSON) {
+    try {
+      globalThis.sessionStorage.setItem(
+        operationTabsStorageKey(),
+        record.sessionsJSON,
+      );
+    } catch {
+      // Tabs simply restore empty.
+    }
+  }
+  setTarget(obi, record.label, sessionID);
+  // The buffer is restored VERBATIM — an unparseable mid-edit state comes
+  // back exactly as typed, not as the last-valid document reformatted.
+  if (record.documentText && record.documentText !== interfaceEditor.text) {
+    interfaceEditor.text = record.documentText;
+  }
+  bootstrapMessage.textContent = note;
+}
 const defaultWorkspaceLayout: WorkspaceLayout = {
   explorer: true,
   operation: true,
@@ -830,6 +957,10 @@ const commitInterfaceEdit = debounce(() => {
 }, 80);
 
 interfaceEditor.addEventListener("ob-interface-edit", event => {
+  // Crash safety covers the keystroke, not just the commit: a dirty buffer
+  // mints/saves even while INVALID, so a crash mid-edit restores exactly
+  // what was typed rather than the last parseable document.
+  if (event.detail.dirty) ensureWorkspace();
   if (event.detail.valid && event.detail.dirty) {
     pendingInterfaceDraft = event.detail.value;
     commitInterfaceEdit();
@@ -1258,18 +1389,30 @@ async function bootstrap(): Promise<void> {
     ]);
     publishOBImplementation();
 
-    // The server's own OBI is a useful zero-configuration target and proves
-    // that the workbench can invoke ob through ob's published interface.
-    setTarget(
-      obInterface,
-      "This ob start instance",
-      `local:${globalThis.location.origin}`,
-    );
-    const preferred =
-      obInterface.operations["openbindings.ob.describe"]
-        ? "openbindings.ob.describe"
-        : Object.keys(obInterface.operations)[0];
-    if (!activeSession() && preferred) activateOperation(preferred);
+    // Resume before default (rev 17.18). Order of preference:
+    //  1. This tab's own workspace (pointer in sessionStorage — reload and
+    //     crash-restore come back to exactly where the tab was).
+    //  2. RETURNING: a fresh tab with no other live tabs adopts the most
+    //     recent unleased session, silently, with a message-strip note.
+    //  3. OPENING-BESIDE or first run: the server's own OBI — a
+    //     self-describing tool opening on its own interface is the demo —
+    //     with NO workspace minted until the first mutation.
+    const resumed = await resumeWorkspace();
+    if (!resumed) {
+      // The server's own OBI is a useful zero-configuration target and
+      // proves the workbench can invoke ob through ob's published interface.
+      setTarget(
+        obInterface,
+        "This ob start instance",
+        `local:${globalThis.location.origin}`,
+      );
+      documentOrigin = "this ob";
+      const preferred =
+        obInterface.operations["openbindings.ob.describe"]
+          ? "openbindings.ob.describe"
+          : Object.keys(obInterface.operations)[0];
+      if (!activeSession() && preferred) activateOperation(preferred);
+    }
 
     // Public discovery only proves the server answers anonymous requests.
     // The pill claims Ready when — and only when — the authenticated probe
@@ -1282,6 +1425,55 @@ async function bootstrap(): Promise<void> {
     setConnectionStatus("Connection failed", "failed");
     bootstrapMessage.textContent = errorText(error);
   }
+}
+
+/** The resume decision, in boot order. Returns whether a session loaded. */
+async function resumeWorkspace(): Promise<boolean> {
+  // 1. This tab already had a workspace: reload / crash-restore.
+  let pointer: string | null = null;
+  try {
+    pointer = globalThis.sessionStorage.getItem(workspacePointerKey);
+  } catch {
+    pointer = null;
+  }
+  if (pointer) {
+    const record = await getWorkspace(pointer).catch(() => null);
+    if (record) {
+      adoptWorkspace(record, "");
+      return true;
+    }
+    // Deleted from another tab while this one was closed: fall through.
+    try {
+      globalThis.sessionStorage.removeItem(workspacePointerKey);
+    } catch {
+      // Nothing to clean.
+    }
+  }
+  // A tab that previously worked unminted (browsing tabs open on the
+  // default document) is not a fresh tab — adopting an old session over it
+  // would yank the user somewhere they didn't ask to go.
+  try {
+    if (
+      globalThis.sessionStorage.getItem(
+        `${tabsStoragePrefix}${stableHash(`local:${globalThis.location.origin}`)}`,
+      ) !== null
+    ) {
+      return false;
+    }
+  } catch {
+    // Storage denied: treat as fresh.
+  }
+  // 2/3. Fresh tab: returning vs opening-beside.
+  const leased = await workspaceLeases.query().catch(() => new Set<string>());
+  if (leased.size > 0) return false;
+  const all = await listWorkspaces().catch(() => []);
+  const recent = all.find(record => !leased.has(record.id));
+  if (!recent) return false;
+  adoptWorkspace(
+    recent,
+    `Restored your session on ${recent.name} from ${relativeTime(recent.updatedAt)}.`,
+  );
+  return true;
 }
 
 // --- Session credential verification and liveness -------------------------
@@ -1596,6 +1788,10 @@ function updateCurrentTarget(
   // Merge's availability is a fact about the workspace, not about the dialog:
   // it greys the moment there is nothing to merge into.
   renderAcquireVerbs();
+  // Every caller of this function is a real document mutation (edits, pulls,
+  // merges, renames) — navigation goes through setTarget — so this is THE
+  // mint-and-autosave seam.
+  ensureWorkspace();
 
   if (previousActiveId && sessionsById.has(previousActiveId)) {
     focusSession(previousActiveId);
@@ -2168,6 +2364,9 @@ function persistSessions(): void {
   } catch {
     // Tabs remain functional when persistence is unavailable.
   }
+  // Tab-session changes ride the workspace record too, but never mint one:
+  // opening tabs on an untouched document is browsing, not work.
+  if (workspaceId) autosaveWorkspace();
 }
 
 function operationTabsStorageKey(): string {
@@ -2438,6 +2637,134 @@ function applyManagedInterface(next: OBInterface, message: string): void {
 }
 
 /* ------------------------------------------------------------------ *
+ * Sessions (rev 17.18)
+ *
+ * The list is a view over autosaved working copies. Open loads into THIS
+ * tab (the one being left is autosaved — switching is lossless). A row
+ * held by another tab greys its Open and Delete but keeps Duplicate: a
+ * fork copies the record under a new id and opens it here, trampling
+ * nothing. Delete rides the existing confirmation dialog because a
+ * session may be the only copy of unexported work.
+ * ------------------------------------------------------------------ */
+
+sessionsOpen.addEventListener("click", () => {
+  sessionsDialog.showModal();
+  void renderSessionsList();
+});
+
+sessionsCloseButton.addEventListener("click", () => sessionsDialog.close());
+
+workspaceLeases.onChange = () => {
+  if (sessionsDialog.open) void renderSessionsList();
+};
+
+async function renderSessionsList(): Promise<void> {
+  const [all, leased] = await Promise.all([
+    listWorkspaces().catch(() => []),
+    workspaceLeases.query().catch(() => new Set<string>()),
+  ]);
+  sessionsList.replaceChildren();
+  sessionsEmpty.hidden = all.length > 0;
+  for (const record of all) {
+    const here = record.id === workspaceId;
+    const elsewhere = !here && leased.has(record.id);
+
+    const row = document.createElement("div");
+    row.className = "session-row";
+    if (here) row.dataset.state = "here";
+    if (elsewhere) row.dataset.state = "elsewhere";
+
+    const identity = document.createElement("div");
+    identity.className = "session-identity";
+    const title = document.createElement("p");
+    title.className = "session-name";
+    title.textContent = record.version
+      ? `${record.name} · ${record.version}`
+      : record.name;
+    const meta = document.createElement("p");
+    meta.className = "session-meta";
+    meta.textContent = `${record.origin} · ${relativeTime(record.updatedAt)}`;
+    identity.append(title, meta);
+
+    const chip = document.createElement("span");
+    chip.className = "session-chip";
+    if (here) chip.textContent = "this tab";
+    else if (elsewhere) chip.textContent = "another tab";
+    else chip.hidden = true;
+
+    const actions = document.createElement("div");
+    actions.className = "session-actions";
+
+    const open = document.createElement("button");
+    open.type = "button";
+    open.textContent = "Open";
+    open.disabled = here || elsewhere;
+    open.title = here
+      ? "Already open in this tab"
+      : elsewhere
+        ? "Open in another tab"
+        : "Open in this tab";
+    open.addEventListener("click", () => {
+      sessionsDialog.close();
+      adoptWorkspace(
+        record,
+        `Opened your session on ${record.name} from ${relativeTime(record.updatedAt)}.`,
+      );
+    });
+
+    const duplicate = document.createElement("button");
+    duplicate.type = "button";
+    duplicate.textContent = "Duplicate";
+    duplicate.title = "Fork a copy and open it in this tab";
+    duplicate.addEventListener("click", () => {
+      const fork: WorkspaceRecord = {
+        ...record,
+        id: crypto.randomUUID(),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      sessionsDialog.close();
+      void putWorkspace(fork)
+        .catch(() => undefined)
+        .then(() =>
+          adoptWorkspace(fork, `Opened a copy of your session on ${record.name}.`),
+        );
+    });
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "Delete";
+    remove.disabled = here || elsewhere;
+    remove.title = here
+      ? "This tab's session cannot delete itself"
+      : elsewhere
+        ? "Open in another tab"
+        : "Delete this session";
+    remove.addEventListener("click", () => {
+      void (async () => {
+        const accepted = await confirmChange(
+          "Delete session",
+          `Delete the session on ${record.name} (${record.origin}, ${relativeTime(record.updatedAt)})? If it was never exported, this is the only copy.`,
+          "Delete",
+        );
+        if (!accepted) return;
+        await deleteWorkspace(record.id).catch(() => undefined);
+        await renderSessionsList();
+      })();
+    });
+
+    actions.append(open, duplicate, remove);
+    row.append(identity, chip, actions);
+    sessionsList.append(row);
+  }
+}
+
+// The debounced autosave flushes on the way out so the last keystrokes
+// survive tab close; the lease releases in the WorkspaceLeases pagehide
+// handler.
+globalThis.addEventListener("pagehide", () => autosaveWorkspace.flush());
+
+/* ------------------------------------------------------------------ *
  * Acquisition (rev 17.16)
  *
  * Getting a document into the workspace is an ephemeral process — a thing
@@ -2456,6 +2783,8 @@ function applyManagedInterface(next: OBInterface, message: string): void {
 interface AcquisitionCandidate {
   obi: OBInterface;
   summary: string;
+  /** Provenance as the user would say it — rides the workspace record. */
+  origin: string;
 }
 
 interface MergeEntry {
@@ -2667,6 +2996,7 @@ async function acquireFromAddress(
   >(obInterface, "openbindings.ob.resolveInterface", { address: url });
   return {
     obi: output.interface,
+    origin: output.resolvedUrl ?? url,
     summary: describeAcquired(
       output.interface,
       output.synthesizedFrom
@@ -2709,6 +3039,7 @@ async function acquireFromFile(file: File): Promise<AcquisitionCandidate> {
   if (isRecord(document) && typeof document.openbindings === "string") {
     return {
       obi: document as unknown as OBInterface,
+      origin: file.name,
       summary: describeAcquired(
         document as unknown as OBInterface,
         `a native OpenBindings document from ${file.name}`,
@@ -2740,6 +3071,7 @@ async function acquireFromFile(file: File): Promise<AcquisitionCandidate> {
   });
   return {
     obi: output,
+    origin: file.name,
     summary: describeAcquired(
       output,
       `synthesized from ${bindingSpec} in ${file.name}`,
@@ -2820,6 +3152,9 @@ async function commitAcquisition(mode: "replace" | "merge"): Promise<void> {
 
   if (mode === "replace") {
     acquireDialog.close();
+    // Replace changes what the document IS, so provenance follows; a merge
+    // grafts into the document you already had, so provenance stays.
+    documentOrigin = candidate.origin;
     applyManagedInterface(
       candidate.obi,
       `Replaced the working document with ${candidate.obi.name?.trim() || "the acquired interface"}. Undo restores the previous one. No interface file was saved.`,

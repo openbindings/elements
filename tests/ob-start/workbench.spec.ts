@@ -1057,3 +1057,139 @@ test("the acquire locator resolves as it is typed, without a submit", async ({
   await locator.blur();
   await expect(problem).toContainText("local files go through Choose file");
 });
+
+// Rev 17.18: workspaces. Files are truth; ob is stateless; the browser
+// holds drafts. A workspace is minted on FIRST MUTATION, autosaved, and
+// resumed silently. The sessions dialog is the door back.
+test("a mutated document survives reload and is listed as a session", async ({
+  page,
+}) => {
+  await page.goto("/#token=test-token");
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+
+  // Untouched boot mints nothing: idle opens leave no residue.
+  await page.locator("#sessions-open").click();
+  await expect(page.locator("#sessions-empty")).toBeVisible();
+  await page.locator("#sessions-close").click();
+
+  // Mutate the document through the editor.
+  const editor = page.locator("ob-obi-editor").locator("ob-json-editor");
+  const source = await editor.evaluate(
+    el => (el as HTMLElement & { text: string }).text,
+  );
+  const draft = JSON.parse(source) as { operations: Record<string, unknown> };
+  draft.operations.workspaceProof = { description: "Minted by mutation." };
+  await editor.evaluate((el, text) => {
+    const editorElement = el as HTMLElement & { text: string };
+    editorElement.text = text;
+    editorElement.dispatchEvent(
+      new CustomEvent("ob-json-input", {
+        detail: { text, structured: false },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }, JSON.stringify(draft, null, 2));
+  await expect(page.locator("ob-obi-explorer")).toContainText(
+    "workspaceProof",
+  );
+
+  // Reload: the pointer survives with the tab, the session resumes.
+  await page.waitForTimeout(600); // let the debounced autosave land
+  await page.reload();
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+  await expect
+    .poll(
+      () => editor.evaluate(el => (el as HTMLElement & { text: string }).text),
+      { timeout: 15_000 },
+    )
+    .toContain("workspaceProof");
+
+  // And the dialog lists it, marked as this tab's session.
+  await page.locator("#sessions-open").click();
+  const row = page.locator(".session-row");
+  await expect(row).toHaveCount(1);
+  await expect(row).toContainText("this ob");
+  await expect(row.locator(".session-chip")).toHaveText("this tab");
+  await expect(row.locator("button", { hasText: "Open" })).toBeDisabled();
+  await expect(row.locator("button", { hasText: "Delete" })).toBeDisabled();
+  await expect(
+    row.locator("button", { hasText: "Duplicate" }),
+  ).toBeEnabled();
+  await page.locator("#sessions-close").click();
+});
+
+test("a second tab boots the default beside a live session and can fork it", async ({
+  page,
+  context,
+}) => {
+  await page.goto("/#token=test-token");
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+
+  // Mint a workspace in tab one.
+  const editor = page.locator("ob-obi-editor").locator("ob-json-editor");
+  const source = await editor.evaluate(
+    el => (el as HTMLElement & { text: string }).text,
+  );
+  const draft = JSON.parse(source) as { operations: Record<string, unknown> };
+  draft.operations.besideProof = { description: "Held by tab one." };
+  await editor.evaluate((el, text) => {
+    const editorElement = el as HTMLElement & { text: string };
+    editorElement.text = text;
+    editorElement.dispatchEvent(
+      new CustomEvent("ob-json-input", {
+        detail: { text, structured: false },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }, JSON.stringify(draft, null, 2));
+  await page.waitForTimeout(600);
+
+  // Tab two: another tab is live, so this is OPENING-BESIDE — the default
+  // boots, no adoption, and the dialog shows tab one's session chipped.
+  const beside = await context.newPage();
+  await beside.goto("/#token=test-token");
+  await expect(beside.locator("#connection-status-text")).toHaveText("Ready", {
+    timeout: 15_000,
+  });
+  const besideEditor = beside
+    .locator("ob-obi-editor")
+    .locator("ob-json-editor");
+  expect(
+    await besideEditor.evaluate(
+      el => (el as HTMLElement & { text: string }).text,
+    ),
+  ).not.toContain("besideProof");
+
+  await beside.locator("#sessions-open").click();
+  const row = beside.locator(".session-row");
+  await expect(row).toHaveCount(1);
+  await expect(row.locator(".session-chip")).toHaveText("another tab");
+  await expect(row.locator("button", { hasText: "Open" })).toBeDisabled();
+
+  // But a fork is always allowed: it copies the record and opens it here.
+  await beside
+    .locator("#sessions-dialog button", { hasText: "Duplicate" })
+    .click();
+  await expect
+    .poll(
+      () =>
+        besideEditor.evaluate(
+          el => (el as HTMLElement & { text: string }).text,
+        ),
+      { timeout: 15_000 },
+    )
+    .toContain("besideProof");
+  await expect(beside.locator("#bootstrap-message")).toContainText(
+    "a copy of your session",
+  );
+
+  // Two sessions now exist; the fork can be deleted after confirmation
+  // once it is no longer this tab's own (switch away first via tab one's
+  // record being unavailable — instead just verify the count).
+  await beside.locator("#sessions-open").click();
+  await expect(beside.locator(".session-row")).toHaveCount(2);
+  await beside.locator("#sessions-close").click();
+  await beside.close();
+});

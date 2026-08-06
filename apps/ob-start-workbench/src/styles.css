@@ -1356,6 +1356,83 @@ dialog p {
   background: var(--page-surface-raised);
 }
 
+/* Sessions (rev 17.18). Rows identify themselves by document name, version,
+   origin, and recency — no rename, so no inputs. The dialog body is not a
+   form; give it the form's padding rhythm by hand. */
+#sessions-dialog {
+  width: min(34rem, calc(100% - 2rem));
+}
+
+.sessions-list {
+  display: grid;
+  gap: 0.4rem;
+  max-height: 22rem;
+  padding: 0.85rem 1.1rem 1.1rem;
+  overflow-y: auto;
+}
+
+.sessions-empty {
+  padding: 0.85rem 1.1rem 1.1rem;
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--page-muted);
+}
+
+.session-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--page-border);
+  border-radius: 0.4rem;
+}
+
+.session-row[data-state="here"] {
+  background: var(--page-surface-raised);
+}
+
+.session-identity {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.session-name,
+.session-meta {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-name {
+  font-size: 0.85rem;
+}
+
+.session-meta {
+  font-size: 0.75rem;
+  color: var(--page-muted);
+}
+
+.session-chip {
+  flex: none;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.7rem;
+  color: var(--page-muted);
+  background: var(--page-surface-raised);
+  border-radius: 999px;
+}
+
+.session-actions {
+  display: flex;
+  flex: none;
+  gap: 0.35rem;
+}
+
+.session-actions button {
+  padding: 0.25rem 0.55rem;
+  font-size: 0.75rem;
+}
+
 .acquire-problem {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 12%, transparent);
