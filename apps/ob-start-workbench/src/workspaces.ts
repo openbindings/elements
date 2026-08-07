@@ -202,8 +202,14 @@ export class WorkspaceLeases {
     this.#held = null;
   }
 
-  /** Collect the set of workspace ids currently held by OTHER tabs. */
-  query(windowMs = 300): Promise<Set<string>> {
+  /**
+   * Collect workspace ids held by OTHER tabs. Browsers may defer a hidden
+   * tab's BroadcastChannel handler beyond a short animation-frame-scale
+   * window, so absence needs a full second before it is treated as proof
+   * that this is a returning tab. Positive replies still accumulate during
+   * that window; correctness matters more than a speculative fast resume.
+   */
+  query(windowMs = 1_000): Promise<Set<string>> {
     return new Promise(resolve => {
       const held = new Set<string>();
       if (!this.#channel) {
