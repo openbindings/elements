@@ -1,7 +1,10 @@
 /* Official application adapters for openbindings/design:
    color-theme revision 1 at ed8a409 and machine-material revision 1 at
-   dc46aff. The machine aliases below follow the Workbench's explicit
-   data-dark toggle, then map into Elements' neutral public contract. */
+   dc46aff, plus foundations revision 1 at 3ef2505. Foundation references are
+   open conventions: this application profile intentionally keeps compact
+   type, local chrome radii, and zero-radius embedded content planes. The
+   machine aliases below follow the Workbench's explicit data-dark toggle,
+   then map into Elements' neutral public contract. */
 :root {
   color-scheme: light;
   --page-background: #ffffff;

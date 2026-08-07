@@ -78,6 +78,16 @@ export const baseStyles = `
     }
   }
 
+  /* OpenBindings Design foundations revision 1 requires reduced-motion
+     behavior, not one visual tempo. Collapse the private duration so every
+     standalone element honors the user preference without changing the
+     public --ob-duration contract or the host's ordinary-motion expression. */
+  @media (prefers-reduced-motion: reduce) {
+    :host {
+      --_ob-duration: 0.01ms;
+    }
+  }
+
   summary {
     cursor: pointer;
     list-style: none;

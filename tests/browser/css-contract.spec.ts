@@ -53,3 +53,14 @@ test("element-level token override still beats ancestor and default", async ({ p
     });
   expect(runColor).toBe("rgb(0, 128, 0)");
 });
+
+test("standalone elements collapse motion when the user requests it", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/css-contract.html");
+  await page.waitForFunction(() => (window as any).fixtureReady === true);
+
+  const duration = await page.locator("#themed-workbench").evaluate((el) =>
+    getComputedStyle(el).getPropertyValue("--_ob-duration").trim(),
+  );
+  expect(duration).toBe("0.01ms");
+});

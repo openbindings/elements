@@ -264,6 +264,15 @@ roles into the same `--ob-*` API; they do not create a second component theme
 contract. Raw JSON/YAML serialization remains outside this presentation
 layer.
 
+Design foundations revision 1 at `3ef2505` is intentionally looser. Its
+generated `--ob-foundation-reference-*` values are optional conventions, not
+a second public Elements contract. Hosts can map the reference fonts, corner
+anchors, or tempos into the public tokens when useful, interpolate between
+them, or use their own expression. Elements itself enforces the behavioral
+part by honoring reduced motion in `baseStyles`; focus geometry and component
+density remain host-controlled as long as the resulting interface stays
+accessible.
+
 ## Server rendering and edge deployment
 
 Class entry points are import-safe when `HTMLElement` and
