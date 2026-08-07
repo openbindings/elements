@@ -254,6 +254,13 @@ with the palette:
 }
 ```
 
+The neutral defaults are the contract for independent consumers. Official
+OpenBindings products instead vendor the reviewed adapter from
+[`openbindings/design`](https://github.com/openbindings/design), currently
+`tokens/generated/openbindings-theme.css` at revision `ed8a409`. That adapter
+maps official semantic roles into the same `--ob-*` API; it does not create a
+second component theme contract.
+
 ## Server rendering and edge deployment
 
 Class entry points are import-safe when `HTMLElement` and

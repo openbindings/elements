@@ -40,6 +40,14 @@ public tokens listed here.
 | `--ob-shadow` | `0 1px 2px color-mix(in srgb, var(--_ob-color-text) 12%, transparent)` | Elevation box-shadow for raised surfaces (text-derived, so it holds in both themes) |
 | `--ob-duration` | `120ms` | Base motion duration for transitions and animations |
 
+These defaults are deliberately neutral and remain suitable for third-party
+hosts; `@openbindings/ui-core` does not own OpenBindings product branding.
+Official OpenBindings applications adapt the candidate theme from
+[`openbindings/design`](https://github.com/openbindings/design), whose
+`tokens/generated/openbindings-theme.css` maps the official semantic roles
+into this existing public contract. Hosts should pin the exact reviewed Design
+revision rather than copying values into a second palette.
+
 `@openbindings/json-editor` additionally exposes `--ob-editor-*` tokens for
 its own typography and token colours; see that package's README.
 
