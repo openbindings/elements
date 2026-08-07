@@ -1,19 +1,23 @@
+/* Official application adapter for openbindings/design@ed8a409,
+   color-theme revision 1. Syntax and code surfaces remain owned by the
+   machine-material slice. */
 :root {
   color-scheme: light;
   --page-background: #ffffff;
   --page-text: #000000;
   --page-muted: #666666;
-  --page-faint: #999999;
+  --page-faint: #737373;
   --page-border: #ededed;
-  --page-border-strong: #d8d8d8;
+  --page-border-strong: #8a8a8a;
   --page-surface: #ffffff;
-  --page-surface-raised: #f4f4f4;
+  --page-surface-raised: #f0f0f0;
   --page-code-surface: #f7f7f5;
   --page-token-key: #2456c4;
   --page-token-string: #0d7050;
   --page-token-number: #94510a;
   --page-token-keyword: #7c2fb8;
   --accent: #111111;
+  --accent-contrast: #ffffff;
   --accent-hover: #2a2a2a;
   --accent-soft: #f0f0f0;
   --success: #17734b;
@@ -32,11 +36,11 @@
 :root[data-dark] {
   color-scheme: dark;
   --page-background: #0a0a0a;
-  --page-text: #f3f3ed;
-  --page-muted: #aaa9a1;
-  --page-faint: #85857d;
-  --page-border: #1d1d1d;
-  --page-border-strong: #343434;
+  --page-text: #e5e5e5;
+  --page-muted: #a3a3a3;
+  --page-faint: #8a8a8a;
+  --page-border: #262626;
+  --page-border-strong: #737373;
   --page-surface: #0a0a0a;
   --page-surface-raised: #171717;
   --page-code-surface: #101010;
@@ -44,7 +48,8 @@
   --page-token-string: #6bd6a4;
   --page-token-number: #f0b45f;
   --page-token-keyword: #d3a2ff;
-  --accent: #f1f1ec;
+  --accent: #e5e5e5;
+  --accent-contrast: #0a0a0a;
   --accent-hover: #d7d7d1;
   --accent-soft: #171717;
   --success: #73d5a6;
@@ -53,6 +58,35 @@
   --warning-soft: #3a311c;
   --danger: #ff9187;
   --shadow: 0 1px 2px rgb(0 0 0 / 24%), 0 18px 42px rgb(0 0 0 / 16%);
+}
+
+@media (forced-colors: active) {
+  :root,
+  :root[data-dark] {
+    --page-background: Canvas;
+    --page-text: CanvasText;
+    --page-muted: GrayText;
+    --page-faint: GrayText;
+    --page-border: GrayText;
+    --page-border-strong: CanvasText;
+    --page-surface: Canvas;
+    --page-surface-raised: ButtonFace;
+    --page-code-surface: Canvas;
+    --page-token-key: CanvasText;
+    --page-token-string: CanvasText;
+    --page-token-number: CanvasText;
+    --page-token-keyword: CanvasText;
+    --accent: Highlight;
+    --accent-contrast: HighlightText;
+    --accent-hover: Highlight;
+    --accent-soft: ButtonFace;
+    --success: CanvasText;
+    --success-soft: Canvas;
+    --warning: CanvasText;
+    --warning-soft: Canvas;
+    --danger: CanvasText;
+    --shadow: none;
+  }
 }
 
 * {
@@ -93,9 +127,9 @@ main {
   );
   --ob-color-text: var(--page-text);
   --ob-color-text-muted: var(--page-muted);
-  --ob-color-border: var(--page-border);
+  --ob-color-border: var(--page-border-strong);
   --ob-color-accent: var(--accent);
-  --ob-color-accent-contrast: var(--page-background);
+  --ob-color-accent-contrast: var(--accent-contrast);
   --ob-color-success: var(--success);
   --ob-color-danger: var(--danger);
   --ob-code-surface: var(--page-code-surface);
