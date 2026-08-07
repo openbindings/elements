@@ -42,11 +42,30 @@ public tokens listed here.
 
 These defaults are deliberately neutral and remain suitable for third-party
 hosts; `@openbindings/ui-core` does not own OpenBindings product branding.
-Official OpenBindings applications adapt the candidate theme from
+Official OpenBindings applications adapt the stable theme from
 [`openbindings/design`](https://github.com/openbindings/design), whose
 `tokens/generated/openbindings-theme.css` maps the official semantic roles
 into this existing public contract. Hosts should pin the exact reviewed Design
 revision rather than copying values into a second palette.
+
+### Interface foundations
+
+Design foundations revision 1 at `openbindings/design@3ef2505` separates
+behavioral requirements from optional visual references. Elements meets that
+boundary in two different ways:
+
+- `baseStyles` collapses its private transition duration when
+  `prefers-reduced-motion: reduce` is active. This requirement applies even
+  when an Element is used outside an official OpenBindings host.
+- Public typography, spacing, radius, focus, and ordinary motion remain the
+  neutral, host-controlled tokens above. The Design
+  `tokens/generated/openbindings-foundations.css` file contains useful
+  `--ob-foundation-reference-*` starting points, but it does not replace these
+  public tokens and is not required for third-party hosts.
+
+An official application may map reference values into `--ob-*` when they fit
+its expression. It may also use a denser or more editorial profile. Exact
+reference-value matching is not component conformance.
 
 `@openbindings/json-editor` additionally exposes `--ob-editor-*` tokens for
 its own typography and token colours; see that package's README.

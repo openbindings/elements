@@ -48,6 +48,8 @@ const requiredThemeFragments = [
   "--ob-color-border: var(--page-border-strong)",
   "machine-material revision 1 at",
   "dc46aff",
+  "foundations revision 1 at 3ef2505",
+  "zero-radius embedded content planes",
   "--ob-machine-color-primary: #2456c4",
   "--ob-machine-color-primary: #8fb4ff",
   "--ob-editor-token-key: var(--ob-machine-role-name)",
@@ -61,13 +63,27 @@ for (const fragment of requiredThemeFragments) {
 }
 if (
   !uiCoreGuide.includes("tokens/generated/openbindings-theme.css") ||
+  !uiCoreGuide.includes("tokens/generated/openbindings-foundations.css") ||
   !uiCoreGuide.includes("tokens/generated/openbindings-machine-material.css") ||
   !uiCoreGuide.includes("deliberately neutral") ||
+  !uiCoreGuide.includes("openbindings/design@3ef2505") ||
   !uiCoreGuide.includes("openbindings/design@dc46aff")
 ) {
   throw new Error(
     "ui-core must document the official adapter and neutral fallback boundary",
   );
+}
+
+for (const reducedMotionFragment of [
+  "@media (prefers-reduced-motion: reduce)",
+  "--_ob-duration: 0.01ms",
+  "public --ob-duration contract",
+]) {
+  if (!uiCoreStyles.includes(reducedMotionFragment)) {
+    throw new Error(
+      `ui-core reduced-motion contract changed: ${reducedMotionFragment}`,
+    );
+  }
 }
 
 for (const neutralToken of [
@@ -90,5 +106,5 @@ if (
 }
 
 console.log(
-  "design assets: identity, color-theme, and machine-material revision 1 current",
+  "design assets: identity, color-theme, foundations, and machine-material revision 1 current",
 );
