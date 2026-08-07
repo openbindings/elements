@@ -141,6 +141,52 @@ test("the embedded workbench invokes ob start through its published interface", 
   await expect(page.locator("#sheet-run")).toBeEnabled();
 });
 
+test("an operation with no input contract still opens the input editor", async ({
+  page,
+}) => {
+  // C3 conformance evidence, UI side. `describe` declares no `input`, which
+  // per core §6.2 means "the document makes no portable claim at that
+  // boundary" — NOT that the interaction carries zero values. The workbench
+  // used to read absence as a cardinality signal and withdraw the editor,
+  // making a hand-authored OBI's operation uninvocable from the cockpit. The
+  // caller may always speak; the artifact adjudicates what they said.
+  await page.setViewportSize({ width: 1760, height: 900 });
+  await page.goto("/#token=test-token");
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+
+  const workbench = page.locator("ob-operation-workbench:not([hidden])");
+  await expect(workbench.locator("h2")).toContainText("describe");
+
+  // The editor is present and writable — the contract's absence withdraws no
+  // ability to write.
+  const editor = workbench.locator(".input-editor");
+  await expect(editor).toBeVisible();
+  await expect(workbench.locator(".input-editor .cm-content")).toBeVisible();
+
+  // A note, not a wall: it sits ABOVE the editor rather than replacing it.
+  const note = workbench.locator(".input-empty");
+  await expect(note).toBeVisible();
+  await expect(note).toHaveText(
+    "No input contract declared — the binding decides what this operation accepts.",
+  );
+  const noteBox = await note.boundingBox();
+  const editorBox = await editor.boundingBox();
+  expect(noteBox!.y + noteBox!.height).toBeLessThanOrEqual(editorBox!.y + 1);
+
+  // Steady rails: JSON view and the cardinality toggle stay actionable; only
+  // the form — which is BUILT from a schema — withdraws, and says why.
+  await expect(workbench.locator(".view-json")).toBeEnabled();
+  await expect(workbench.locator(".input-mode")).toBeEnabled();
+  await expect(workbench.locator(".view-form")).toBeDisabled();
+  await expect(workbench.locator(".view-form")).toHaveAttribute(
+    "title",
+    "This operation declares no input contract to build a form from",
+  );
+
+  // And Run is still a live control: a bare close is a legitimate call.
+  await expect(page.locator("#sheet-run")).toBeEnabled();
+});
+
 test("the schemas strip shows the contract over the cockpit on one shared axis", async ({
   page,
 }) => {
@@ -376,8 +422,8 @@ test("the exec split is adjustable from the session gutter and persists", async 
   await page.setViewportSize({ width: 1760, height: 900 });
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
-  // Pick an operation WITH an input schema so the input editor renders —
-  // the default describe session declares no input and hides it.
+  // Pick an operation WITH an input schema: the split cockpit's gutter is
+  // what this spec measures, and a contracted operation exercises both panes.
   await page
     .locator('ob-obi-explorer [part~="operation"]')
     .filter({ hasText: "validateInterface" })

@@ -608,13 +608,15 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     if (!targetInterface || !targetOperationKey || !operation) return;
     if (this.#dependency.status !== "available") return;
 
+    // What the caller writes is the caller's to decide, and an empty editor is
+    // a legitimate statement: "nothing from me." The ARTIFACT adjudicates what
+    // a bare close means — an openapi operation with a required parameter
+    // refuses loudly and names it, which teaches more than a client-side
+    // "enter something" ever could. `operation.input` governs the
+    // schema-driven affordances above (form view, starter, shape bar); it is
+    // NOT a cardinality declaration (core §6.2) and does not gate writing.
     let inputValues: unknown[] = [];
-    if (operation.input !== undefined && operation.input !== null) {
-      if (!this.#inputText.trim()) {
-        this.#runtimeError = new Error("Enter one JSON input value.");
-        this.requestRender();
-        return;
-      }
+    if (this.#inputText.trim()) {
       try {
         const parsed = JSON.parse(this.#inputText) as unknown;
         if (this.#inputMode === "sequence") {
@@ -737,10 +739,8 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
         },
       };
       await call.write(open);
-      if (operation.input !== undefined && operation.input !== null) {
-        for (const value of inputValues) {
-          await call.write({ kind: "input", value });
-        }
+      for (const value of inputValues) {
+        await call.write({ kind: "input", value });
       }
       await call.write({ kind: "close" });
       await call.close();
@@ -1061,20 +1061,25 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
         String(Math.round(this.#splitRatio * 100)),
       );
     }
-    const hasInput =
+    // `input` present is a CONTRACT on each value, not permission to write and
+    // not a claim that values exist (core §6.2). It governs the schema-driven
+    // affordances — form view, starter, shape bar, conformance banner — and
+    // nothing else. The JSON editor is always open: a caller may always speak,
+    // and a caller with nothing to say says so by leaving it empty.
+    const hasContract =
       operation.input !== undefined && operation.input !== null;
-    const analysis = hasInput ? this.#analyzeInput(operation) : null;
-    const form = hasInput
+    const analysis = hasContract ? this.#analyzeInput(operation) : null;
+    const form = hasContract
       ? createSchemaFormModel(analysis?.effective)
       : { capability: { supported: false as const }, model: null };
     this.#formModel = form.capability.supported ? form.model : null;
-    const starterAvailable = hasInput
+    const starterAvailable = hasContract
       ? sampleFromSchema(analysis?.effective, this.#obi).available
       : false;
-    const showForm = hasInput && this.#inputView === "form";
-    this.#syncInputPanel(refs, analysis, form, hasInput, showForm, starterAvailable);
+    const showForm = hasContract && this.#inputView === "form";
+    this.#syncInputPanel(refs, analysis, form, hasContract, showForm, starterAvailable);
     if (editor) {
-      editor.hidden = !hasInput || showForm;
+      editor.hidden = showForm;
       editor.readOnly = this.#running;
       editor.text = this.#inputText;
       editor.label = `Input for ${this.#operationKey ?? "operation"} as JSON`;
@@ -1088,7 +1093,9 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     // user nothing. Everything stays visible; what is not useful right now
     // is disabled.
     if (inputMode) {
-      inputMode.disabled = this.#running || !hasInput;
+      // Cardinality is the caller's choice about their own writes, not a
+      // schema fact: available with or without a contract.
+      inputMode.disabled = this.#running;
       const sequence = this.#inputMode === "sequence";
       inputMode.setAttribute("aria-pressed", String(sequence));
       const cardinality = sequence
@@ -1101,13 +1108,16 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       inputMode.title = cardinality;
     }
     if (formatInput) {
-      formatInput.disabled =
-        !hasInput || this.#running || !this.#inputText.trim();
+      // Pretty-printing JSON needs no schema — only JSON.
+      formatInput.disabled = this.#running || !this.#inputText.trim();
     }
     if (resetInput) {
-      resetInput.disabled = !hasInput || this.#running || !starterAvailable;
+      // Reset-to-starter is genuinely schema-derived; starterAvailable already
+      // implies a contract.
+      resetInput.disabled = this.#running || !starterAvailable;
     }
-    if (inputEmpty) inputEmpty.hidden = hasInput;
+    // A note, not a wall: the editor stays open beneath it.
+    if (inputEmpty) inputEmpty.hidden = hasContract;
 
     const available = this.#dependency.status === "available";
     if (runButton) {
@@ -1354,7 +1364,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     refs: Refs,
     analysis: InputSchemaAnalysis | null,
     form: { capability: { supported: boolean; reason?: string }; model: SchemaFormModel | null },
-    hasInput: boolean,
+    hasContract: boolean,
     showForm: boolean,
     starterAvailable: boolean,
   ): void {
@@ -1377,20 +1387,23 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
         : null;
 
     if (viewJson) {
+      // JSON is the uncontracted view: always reachable, contract or not.
       viewJson.setAttribute("aria-pressed", String(!showForm));
-      viewJson.disabled = this.#running || !hasInput;
+      viewJson.disabled = this.#running;
     }
     if (viewForm) {
+      // The form is built FROM the schema, so it is the one affordance a
+      // missing contract genuinely withdraws.
       viewForm.setAttribute("aria-pressed", String(showForm));
-      viewForm.disabled = this.#running || !hasInput || blockedReason !== null;
-      viewForm.title = !hasInput
-        ? "This operation declares no input"
+      viewForm.disabled = this.#running || !hasContract || blockedReason !== null;
+      viewForm.title = !hasContract
+        ? "This operation declares no input contract to build a form from"
         : (blockedReason ?? "Edit as a schema-driven form");
     }
 
     if (shapeBar && shape) {
       const branches = analysis?.oneOfBranches ?? null;
-      shapeBar.hidden = !hasInput || !branches;
+      shapeBar.hidden = !hasContract || !branches;
       if (branches) {
         const signature = branches.map(branch => branch.label).join("");
         if (signature !== this.#shapeOptionsSignature) {
@@ -2448,6 +2461,7 @@ const CONTENT_SHELL = `
                    <select class="input-shape" part="input-shape"></select>
                  </label>
                </div>
+               <p class="input-empty" hidden>No input contract declared — the binding decides what this operation accepts.</p>
                <ob-json-editor part="input" class="input-editor"></ob-json-editor>
                <div class="form-view" hidden>
                  <div class="form-status" hidden>
@@ -2459,7 +2473,6 @@ const CONTENT_SHELL = `
                  </div>
                  <fieldset class="form-fields"></fieldset>
                </div>
-               <p class="input-empty" hidden>This operation declares no input.</p>
              </div>
            </section>
            <div class="layout-gutter" part="layout-gutter" role="separator" aria-orientation="vertical" aria-label="Resize input and output" aria-valuemin="20" aria-valuemax="80" tabindex="0" hidden>
@@ -2566,14 +2579,12 @@ const styles = `
 
   :host([flush]) .workspace.split .input-editor,
   :host([flush]) .workspace.split .form-view,
-  :host([flush]) .workspace.split .output-view,
-  :host([flush]) .workspace.split .input-empty {
+  :host([flush]) .workspace.split .output-view {
     min-height: 0;
   }
 
   /* Panes are full-bleed fields, not boxed cards. */
   :host([flush]) .output-view,
-  :host([flush]) .input-empty,
   :host([flush]) .form-view {
     border: 0;
     border-radius: 0;
@@ -2700,11 +2711,6 @@ const styles = `
     flex: 1 1 0;
     min-height: 13rem;
     max-height: none;
-  }
-
-  .workspace.split .input-empty {
-    flex: 1 1 0;
-    min-height: 13rem;
   }
 
   /* Rail geometry comes from ui-core railStyles (the alignment contract);
@@ -3095,12 +3101,12 @@ const styles = `
     color: var(--_ob-color-success);
   }
 
+  /* A note above the editor, never a wall in place of it: absence of a
+     contract withdraws the schema-driven affordances, not the ability to
+     write. */
   .input-empty {
-    display: grid;
-    min-height: 6rem;
-    margin: 0;
-    padding: var(--_ob-space);
-    place-items: center;
+    margin: 0 0 var(--_ob-space);
+    padding: 0.35rem 0.5rem;
     color: var(--_ob-color-text-muted);
     font-size: 0.72rem;
     background: var(--_ob-code-surface);
