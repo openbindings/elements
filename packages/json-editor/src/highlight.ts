@@ -96,5 +96,7 @@ export const CODE_BLOCK_STYLES = `
 
   .tok-invalid {
     color: var(--_ob-editor-token-invalid);
+    text-decoration: underline wavy;
+    text-underline-offset: 0.15em;
   }
 `;

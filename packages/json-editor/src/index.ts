@@ -508,7 +508,11 @@ const tokenColors = HighlightStyle.define([
     color: "var(--_ob-editor-token-punct)",
   },
   { tag: tags.comment, color: "var(--_ob-editor-token-comment)" },
-  { tag: tags.invalid, color: "var(--_ob-editor-token-invalid)" },
+  {
+    tag: tags.invalid,
+    color: "var(--_ob-editor-token-invalid)",
+    textDecoration: "underline wavy",
+  },
 ]);
 
 const SHELL = `

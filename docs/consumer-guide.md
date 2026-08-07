@@ -255,11 +255,14 @@ with the palette:
 ```
 
 The neutral defaults are the contract for independent consumers. Official
-OpenBindings products instead vendor the reviewed adapter from
-[`openbindings/design`](https://github.com/openbindings/design), currently
-`tokens/generated/openbindings-theme.css` at revision `ed8a409`. That adapter
-maps official semantic roles into the same `--ob-*` API; it does not create a
-second component theme contract.
+OpenBindings products instead vendor reviewed adapters from
+[`openbindings/design`](https://github.com/openbindings/design):
+`tokens/generated/openbindings-theme.css` at revision `ed8a409` for the
+general semantic theme, and the machine-material revision 1 artifacts at
+`dc46aff` for code surfaces and syntax roles. Those adapters map official
+roles into the same `--ob-*` API; they do not create a second component theme
+contract. Raw JSON/YAML serialization remains outside this presentation
+layer.
 
 ## Server rendering and edge deployment
 

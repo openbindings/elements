@@ -22,6 +22,60 @@ test.afterEach(async ({ page }) => {
   expect(browserErrors.get(page) ?? []).toEqual([]);
 });
 
+test("machine material follows the app theme and forced-colors fallback", async ({
+  page,
+}) => {
+  await page.goto("/#token=test-token");
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+
+  const roles = () =>
+    page.evaluate(() => {
+      const style = getComputedStyle(document.documentElement);
+      return {
+        surface: style.getPropertyValue("--ob-machine-role-surface").trim(),
+        plain: style.getPropertyValue("--ob-machine-role-plain").trim(),
+        name: style.getPropertyValue("--ob-machine-role-name").trim(),
+        string: style.getPropertyValue("--ob-machine-role-string").trim(),
+        number: style.getPropertyValue("--ob-machine-role-number").trim(),
+        keyword: style.getPropertyValue("--ob-machine-role-keyword").trim(),
+        invalid: style.getPropertyValue("--ob-machine-role-invalid").trim(),
+      };
+    });
+
+  await page.locator("#theme-toggle").click();
+  expect(await roles()).toEqual({
+    surface: "#f7f7f5",
+    plain: "#000",
+    name: "#2456c4",
+    string: "#0d7050",
+    number: "#94510a",
+    keyword: "#7c2fb8",
+    invalid: "#b83b32",
+  });
+
+  await page.locator("#theme-toggle").click();
+  expect(await roles()).toEqual({
+    surface: "#101010",
+    plain: "#e5e5e5",
+    name: "#8fb4ff",
+    string: "#6bd6a4",
+    number: "#f0b45f",
+    keyword: "#d3a2ff",
+    invalid: "#ff9187",
+  });
+
+  await page.emulateMedia({ forcedColors: "active" });
+  expect(await roles()).toEqual({
+    surface: "Canvas",
+    plain: "CanvasText",
+    name: "CanvasText",
+    string: "CanvasText",
+    number: "CanvasText",
+    keyword: "CanvasText",
+    invalid: "CanvasText",
+  });
+});
+
 test("the embedded workbench invokes ob start through its published interface", async ({
   page,
 }) => {

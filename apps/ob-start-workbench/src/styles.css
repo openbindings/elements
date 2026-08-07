@@ -1,6 +1,7 @@
-/* Official application adapter for openbindings/design@ed8a409,
-   color-theme revision 1. Syntax and code surfaces remain owned by the
-   machine-material slice. */
+/* Official application adapters for openbindings/design:
+   color-theme revision 1 at ed8a409 and machine-material revision 1 at
+   dc46aff. The machine aliases below follow the Workbench's explicit
+   data-dark toggle, then map into Elements' neutral public contract. */
 :root {
   color-scheme: light;
   --page-background: #ffffff;
@@ -11,11 +12,23 @@
   --page-border-strong: #8a8a8a;
   --page-surface: #ffffff;
   --page-surface-raised: #f0f0f0;
-  --page-code-surface: #f7f7f5;
-  --page-token-key: #2456c4;
-  --page-token-string: #0d7050;
-  --page-token-number: #94510a;
-  --page-token-keyword: #7c2fb8;
+  --ob-machine-color-surface: #f7f7f5;
+  --ob-machine-color-plain: #000000;
+  --ob-machine-color-primary: #2456c4;
+  --ob-machine-color-secondary: #0d7050;
+  --ob-machine-color-tertiary: #94510a;
+  --ob-machine-color-quaternary: #7c2fb8;
+  --ob-machine-color-muted: #666666;
+  --ob-machine-color-invalid: #b83b32;
+  --ob-machine-role-surface: var(--ob-machine-color-surface);
+  --ob-machine-role-plain: var(--ob-machine-color-plain);
+  --ob-machine-role-name: var(--ob-machine-color-primary);
+  --ob-machine-role-string: var(--ob-machine-color-secondary);
+  --ob-machine-role-number: var(--ob-machine-color-tertiary);
+  --ob-machine-role-keyword: var(--ob-machine-color-quaternary);
+  --ob-machine-role-punctuation: var(--ob-machine-color-muted);
+  --ob-machine-role-comment: var(--ob-machine-color-muted);
+  --ob-machine-role-invalid: var(--ob-machine-color-invalid);
   --accent: #111111;
   --accent-contrast: #ffffff;
   --accent-hover: #2a2a2a;
@@ -43,11 +56,14 @@
   --page-border-strong: #737373;
   --page-surface: #0a0a0a;
   --page-surface-raised: #171717;
-  --page-code-surface: #101010;
-  --page-token-key: #8fb4ff;
-  --page-token-string: #6bd6a4;
-  --page-token-number: #f0b45f;
-  --page-token-keyword: #d3a2ff;
+  --ob-machine-color-surface: #101010;
+  --ob-machine-color-plain: #e5e5e5;
+  --ob-machine-color-primary: #8fb4ff;
+  --ob-machine-color-secondary: #6bd6a4;
+  --ob-machine-color-tertiary: #f0b45f;
+  --ob-machine-color-quaternary: #d3a2ff;
+  --ob-machine-color-muted: #a3a3a3;
+  --ob-machine-color-invalid: #ff9187;
   --accent: #e5e5e5;
   --accent-contrast: #0a0a0a;
   --accent-hover: #d7d7d1;
@@ -71,11 +87,15 @@
     --page-border-strong: CanvasText;
     --page-surface: Canvas;
     --page-surface-raised: ButtonFace;
-    --page-code-surface: Canvas;
-    --page-token-key: CanvasText;
-    --page-token-string: CanvasText;
-    --page-token-number: CanvasText;
-    --page-token-keyword: CanvasText;
+    --ob-machine-role-surface: Canvas;
+    --ob-machine-role-plain: CanvasText;
+    --ob-machine-role-name: CanvasText;
+    --ob-machine-role-string: CanvasText;
+    --ob-machine-role-number: CanvasText;
+    --ob-machine-role-keyword: CanvasText;
+    --ob-machine-role-punctuation: CanvasText;
+    --ob-machine-role-comment: GrayText;
+    --ob-machine-role-invalid: CanvasText;
     --accent: Highlight;
     --accent-contrast: HighlightText;
     --accent-hover: Highlight;
@@ -132,14 +152,17 @@ main {
   --ob-color-accent-contrast: var(--accent-contrast);
   --ob-color-success: var(--success);
   --ob-color-danger: var(--danger);
-  --ob-code-surface: var(--page-code-surface);
-  /* One token palette app-wide (rev 17.6), keyed to the APP theme — the
-     element defaults follow the OS scheme, which desyncs from the in-app
-     toggle. */
-  --ob-editor-token-key: var(--page-token-key);
-  --ob-editor-token-string: var(--page-token-string);
-  --ob-editor-token-number: var(--page-token-number);
-  --ob-editor-token-keyword: var(--page-token-keyword);
+  /* Machine-material revision 1 adapter. Elements owns this neutral public
+     API; Design owns the official role values. Plain machine text follows
+     --page-text, which is identical to the official plain role. */
+  --ob-code-surface: var(--ob-machine-role-surface);
+  --ob-editor-token-key: var(--ob-machine-role-name);
+  --ob-editor-token-string: var(--ob-machine-role-string);
+  --ob-editor-token-number: var(--ob-machine-role-number);
+  --ob-editor-token-keyword: var(--ob-machine-role-keyword);
+  --ob-editor-token-punct: var(--ob-machine-role-punctuation);
+  --ob-editor-token-comment: var(--ob-machine-role-comment);
+  --ob-editor-token-invalid: var(--ob-machine-role-invalid);
   --ob-radius: 0;
 }
 
