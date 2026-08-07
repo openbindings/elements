@@ -25,6 +25,7 @@
 const DB_NAME = "openbindings.ob-start.workspaces.v1";
 const STORE = "workspaces";
 const CHANNEL = "openbindings.ob-start.workspace-leases.v1";
+const LOCK_PREFIX = `${CHANNEL}:`;
 
 /** Oldest-unleased eviction beyond this many sessions. Eviction is delete
  * wearing gloves — a session can be the only copy of unexported work — so
@@ -148,16 +149,18 @@ interface LeaseMessage {
 }
 
 /**
- * One lease holder per browser tab. The protocol is query/response over a
- * BroadcastChannel: holders answer "held" for the workspace they own, and
- * claim/release broadcasts keep any open sessions dialog live. No storage
- * backs the leases — a crashed tab's lease simply stops answering, which
- * is exactly the semantics wanted.
+ * One lease holder per browser tab. Web Locks are the source of truth when
+ * available: the browser can report held locks even when their owning tab is
+ * background-throttled. BroadcastChannel remains the compatibility fallback
+ * and carries claim/release notifications that keep an open sessions dialog
+ * live. Neither mechanism leaves durable lease state, so a crashed tab's
+ * lease disappears with its browsing context.
  */
 export class WorkspaceLeases {
   #channel: BroadcastChannel | null = null;
   #tabId = Math.random().toString(36).slice(2);
   #held: string | null = null;
+  #releaseLock: (() => void) | null = null;
   #onChange: (() => void) | null = null;
 
   constructor() {
@@ -193,17 +196,48 @@ export class WorkspaceLeases {
     if (this.#held === id) return;
     this.release();
     this.#held = id;
+    const locks = globalThis.navigator?.locks;
+    if (locks) {
+      void locks
+        .request(`${LOCK_PREFIX}${id}`, async () => {
+          if (this.#held !== id) return;
+          await new Promise<void>((resolve) => {
+            this.#releaseLock = resolve;
+            if (this.#held !== id) resolve();
+          });
+          this.#releaseLock = null;
+        })
+        .catch(() => undefined);
+    }
     this.#post({ t: "claim", id, from: this.#tabId });
   }
 
   release(): void {
     if (!this.#held) return;
-    this.#post({ t: "release", id: this.#held, from: this.#tabId });
+    const id = this.#held;
     this.#held = null;
+    this.#releaseLock?.();
+    this.#releaseLock = null;
+    this.#post({ t: "release", id, from: this.#tabId });
   }
 
-  /** Collect the set of workspace ids currently held by OTHER tabs. */
-  query(windowMs = 300): Promise<Set<string>> {
+  /**
+   * Collect workspace ids held by OTHER tabs. Web Locks make this a browser
+   * registry query rather than a response from the hidden tab's event loop.
+   * The timed BroadcastChannel exchange is retained for older browsers.
+   */
+  async query(windowMs = 1_000): Promise<Set<string>> {
+    const locks = globalThis.navigator?.locks;
+    if (locks) {
+      const snapshot = await locks.query();
+      const held = new Set<string>();
+      for (const lock of snapshot.held ?? []) {
+        if (!lock.name?.startsWith(LOCK_PREFIX)) continue;
+        const id = lock.name.slice(LOCK_PREFIX.length);
+        if (id && id !== this.#held) held.add(id);
+      }
+      return held;
+    }
     return new Promise(resolve => {
       const held = new Set<string>();
       if (!this.#channel) {
