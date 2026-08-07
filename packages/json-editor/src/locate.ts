@@ -42,7 +42,7 @@ export function locatePath(
   let located: LocatedRange | null = null;
   for (const step of path) {
     if (!node) return null;
-    const found =
+    const found: FoundStep | null =
       typeof step === "number"
         ? indexIn(node, step, language)
         : propertyIn(node, step, state, language);
