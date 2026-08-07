@@ -91,5 +91,12 @@ ob-json-editor {
 
 Parts: `frame`, `source`, `input`.
 
+The token API is a renderer adapter, not a second language taxonomy. Its
+default mapping is key/name, string, number, keyword, punctuation, comment,
+and invalid. A host may collapse distinctions, but invalid material retains a
+wavy underline so error meaning never depends on color alone. Official
+OpenBindings applications map these tokens from machine-material revision 1
+in [`openbindings/design`](https://github.com/openbindings/design/blob/main/experience/machine-material.md).
+
 Styles are attached with `adoptedStyleSheets`, so the element emits no inline
 `<style>` and works under a `style-src` policy that forbids inline styles.

@@ -21,9 +21,21 @@ const uiCoreGuide = await readFile(
   new URL("../packages/ui-core/README.md", import.meta.url),
   "utf8",
 );
+const uiCoreStyles = await readFile(
+  new URL("../packages/ui-core/src/styles.ts", import.meta.url),
+  "utf8",
+);
+const editorSource = await readFile(
+  new URL("../packages/json-editor/src/index.ts", import.meta.url),
+  "utf8",
+);
+const codeBlockSource = await readFile(
+  new URL("../packages/json-editor/src/highlight.ts", import.meta.url),
+  "utf8",
+);
 
 const requiredThemeFragments = [
-  "openbindings/design@ed8a409",
+  "color-theme revision 1 at ed8a409",
   "--page-faint: #737373",
   "--page-border-strong: #8a8a8a",
   "--page-text: #e5e5e5",
@@ -34,6 +46,13 @@ const requiredThemeFragments = [
   "--accent: Highlight",
   "--accent-contrast: HighlightText",
   "--ob-color-border: var(--page-border-strong)",
+  "machine-material revision 1 at",
+  "dc46aff",
+  "--ob-machine-color-primary: #2456c4",
+  "--ob-machine-color-primary: #8fb4ff",
+  "--ob-editor-token-key: var(--ob-machine-role-name)",
+  "--ob-editor-token-invalid: var(--ob-machine-role-invalid)",
+  "--ob-machine-role-comment: GrayText",
 ];
 for (const fragment of requiredThemeFragments) {
   if (!workbenchTheme.includes(fragment)) {
@@ -42,13 +61,34 @@ for (const fragment of requiredThemeFragments) {
 }
 if (
   !uiCoreGuide.includes("tokens/generated/openbindings-theme.css") ||
-  !uiCoreGuide.includes("deliberately neutral")
+  !uiCoreGuide.includes("tokens/generated/openbindings-machine-material.css") ||
+  !uiCoreGuide.includes("deliberately neutral") ||
+  !uiCoreGuide.includes("openbindings/design@dc46aff")
 ) {
   throw new Error(
     "ui-core must document the official adapter and neutral fallback boundary",
   );
 }
 
+for (const neutralToken of [
+  "--_ob-editor-token-key: var(--ob-editor-token-key, #1a4fd6)",
+  "--_ob-editor-token-string: var(--ob-editor-token-string, #0b7a52)",
+  "--_ob-editor-token-invalid: var(--ob-editor-token-invalid, var(--_ob-color-danger))",
+]) {
+  if (!uiCoreStyles.includes(neutralToken)) {
+    throw new Error(
+      `ui-core neutral machine-material contract changed: ${neutralToken}`,
+    );
+  }
+}
+
+if (
+  !editorSource.includes('textDecoration: "underline wavy"') ||
+  !codeBlockSource.includes("text-decoration: underline wavy")
+) {
+  throw new Error("invalid machine material must retain a non-color cue");
+}
+
 console.log(
-  "design assets: identity revision 1 and color-theme revision 1 current",
+  "design assets: identity, color-theme, and machine-material revision 1 current",
 );

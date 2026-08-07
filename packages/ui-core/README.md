@@ -51,6 +51,30 @@ revision rather than copying values into a second palette.
 `@openbindings/json-editor` additionally exposes `--ob-editor-*` tokens for
 its own typography and token colours; see that package's README.
 
+### Machine-material adapter
+
+Machine-text renderers share this small, stable public contract. The names
+describe the renderer-facing meaning; they do not require every language to
+use every distinction.
+
+| Token                       | Functional role                                      |
+| --------------------------- | ---------------------------------------------------- |
+| `--ob-code-surface`         | Machine-material surface                             |
+| `--ob-editor-token-key`     | Name/key/property                                    |
+| `--ob-editor-token-string`  | String-like literal                                  |
+| `--ob-editor-token-number`  | Numeric literal                                      |
+| `--ob-editor-token-keyword` | Keyword, boolean, null, or comparable built-in       |
+| `--ob-editor-token-punct`   | Punctuation and separators                           |
+| `--ob-editor-token-comment` | Comment or subordinate annotation                    |
+| `--ob-editor-token-invalid` | Actually invalid material; pair with a non-color cue |
+
+The public fallbacks in `baseStyles` remain deliberately neutral for
+third-party hosts. Official applications use
+`tokens/generated/openbindings-machine-material.css` from
+`openbindings/design@dc46aff`, which maps the closed official palette and
+functional roles into this contract. Shiki and other renderers use their own
+adapters to reach the same roles.
+
 ## Authoring an element
 
 `OpenBindingsElement` is an import-safe `HTMLElement` base with a small
