@@ -2066,27 +2066,11 @@ const CONNECT_FAILED_SUMMARY =
   "invoker connection and its credentials.";
 
 /**
- * Copy keyed by the contract's classification axis — `category` on
- * InvocationError (see requirements/operation-invoker.json), which consumers
- * branch on before any error code. The contract spells the caller-ended
- * category "cancelled"; the American spelling is accepted defensively, as is
- * the conventional "unsupported". `context` is deliberately absent here: it
- * is the resolve-and-retry hinge and reads best through its normative code,
- * CONTEXT_REQUIRED, in the code map below.
+ * Non-normative presentation for interface-owned and SDK-local codes the
+ * workbench understands. Unknown binding and future-family codes remain
+ * usable through their message; this map is a UI convenience, not a closed
+ * failure classification.
  */
-const CATEGORY_SUMMARIES: Record<string, string> = {
-  auth: "The target rejected the supplied credentials.",
-  service: "The target returned an error.",
-  transient: "The target or invoker could not be reached — retrying may help.",
-  validation: "A value did not match the operation contract.",
-  protocol: "The invocation violated the invoker protocol contract.",
-  permanent: "The operation failed permanently — retrying will not help.",
-  unsupported: "The invoker does not support this operation.",
-  cancelled: "The operation was cancelled.",
-  canceled: "The operation was cancelled.",
-};
-
-/** Fallback copy for well-known codes when the category does not decide. */
 const CODE_SUMMARIES: Record<string, string> = {
   CONTEXT_REQUIRED:
     "This operation needs credentials or other invocation context.",
@@ -2102,24 +2086,21 @@ export function presentInvocationError(
 ): { summary: string; detail: string } {
   const frame = error as Partial<OperationFrameError>;
   const code = typeof frame.code === "string" ? frame.code : "";
-  const category = typeof frame.category === "string" ? frame.category : "";
   const message = typeof frame.message === "string" ? frame.message.trim() : "";
 
-  if (!code && !category) {
+  if (!code) {
     // Plain runtime Errors and malformed frame errors alike: the message is
     // all there is, and an empty one must never leave the summary blank.
     return { summary: message || UNDESCRIBED_ERROR_SUMMARY, detail: "" };
   }
 
-  const classification =
+  const introduction =
     code === "ERR_CONNECT_FAILED"
       ? CONNECT_FAILED_SUMMARY
-      : (CATEGORY_SUMMARIES[category] ??
-        CODE_SUMMARIES[code] ??
-        "The operation could not be completed.");
+      : (CODE_SUMMARIES[code] ?? "The operation could not be completed.");
   // The server's human-readable message is part of the visible summary, not
   // something buried behind the details disclosure.
-  const summary = message ? `${classification} ${message}` : classification;
+  const summary = message ? `${introduction} ${message}` : introduction;
   return {
     summary,
     detail: `${code || "(no code)"}: ${message || "(no message)"}`,

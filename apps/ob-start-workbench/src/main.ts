@@ -4123,8 +4123,9 @@ function errorText(error: unknown): string {
 }
 
 /**
- * A terminal error frame surfaced as a throwable, keeping the whole wire
- * shape — code, category, and details — instead of flattening to a string.
+ * An unsuccessful-completion frame surfaced as a throwable, keeping the
+ * whole wire shape — including optional application details and diagnostics
+ * — instead of flattening it to a string.
  * The message stays `CODE: text` so existing string-based presentation is
  * unchanged for callers that never look deeper.
  */
@@ -4136,38 +4137,10 @@ class WireCallError extends Error {
 
 const CALL_FAILURE_TEXT_CAP = 800;
 
-/**
- * The text a failed call through ob should present. HTTP-transported
- * failures carry the service's own diagnostic in details.body (the invoker
- * contract: status line in message, response body in details) — that
- * diagnostic always beats the bare status line the transport saw, which is
- * how "HTTP 502 Bad Gateway" once hid an entire resolution trail explaining
- * exactly why a target didn't resolve.
- */
+/** The bounded ordinary message for a failed call through ob. */
 function callFailureText(error: unknown): string {
-  if (error instanceof WireCallError) {
-    const details = error.wire.details as { body?: unknown } | null | undefined;
-    const body = typeof details?.body === "string" ? details.body.trim() : "";
-    if (body) {
-      let message = "";
-      try {
-        const parsed = JSON.parse(body) as Record<string, unknown>;
-        for (const key of ["error", "message", "detail"]) {
-          if (typeof parsed[key] === "string" && parsed[key]) {
-            message = parsed[key] as string;
-            break;
-          }
-        }
-      } catch {
-        // Not JSON — a short prose body is still better than a status line.
-        if (!body.startsWith("<")) message = body;
-      }
-      if (message) {
-        return message.length > CALL_FAILURE_TEXT_CAP
-          ? `${message.slice(0, CALL_FAILURE_TEXT_CAP)}…`
-          : message;
-      }
-    }
-  }
-  return errorText(error);
+  const message = errorText(error);
+  return message.length > CALL_FAILURE_TEXT_CAP
+    ? `${message.slice(0, CALL_FAILURE_TEXT_CAP)}…`
+    : message;
 }

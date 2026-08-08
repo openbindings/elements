@@ -15,9 +15,8 @@ export type OperationInvokerInputFrame =
 export interface OperationFrameError {
   code: string;
   message: string;
-  category: string;
   details?: unknown;
-  effects?: "none" | "possible" | "definite";
+  diagnostics?: unknown;
 }
 
 export type OperationInvokerOutputFrame =

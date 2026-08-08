@@ -1082,24 +1082,24 @@ test("form input mode drives placeOrder through schema fields", async ({
   await expect(workbench.locator(".error")).toBeHidden();
 });
 
-test("a failed resolve reports the server's diagnostic, not a bare status line", async ({
+test("a failed resolve stays recoverable without requiring protocol diagnostics", async ({
   page,
 }) => {
   test.skip(true, OPEN_FLOW_SUSPENDED);
-  // Dogfood report (rev 13.2): resolving a URL that serves no interface
-  // surfaced as "ERR_UNAVAILABLE: HTTP 502 Bad Gateway" — the transport's
-  // view of the resolve endpoint's failure status, while the endpoint's own
-  // diagnostic (the full resolution trail) rode an ignored response body.
+  // The ordinary workbench surface consumes structural unsuccessful
+  // completion. Raw HTTP status/body evidence may exist diagnostically, but
+  // correct recovery and useful presentation cannot depend on parsing it.
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
 
   await openTargetUrl(page, "http://127.0.0.1:20392/definitely-not-here.json");
 
   const message = page.locator("#bootstrap-message");
-  await expect(message).toContainText("could not resolve an OBI", {
+  await expect(message).toContainText("Invocation completed unsuccessfully", {
     timeout: 30_000,
   });
   await expect(message).not.toContainText("Bad Gateway");
+  await expect(message).not.toContainText("HTTP 502");
   // Recoverable: the control returns and the current target is untouched.
   await expect(page.locator("#doc-open")).toBeEnabled();
   await expect(page.locator("#document-name")).toHaveText("ob");

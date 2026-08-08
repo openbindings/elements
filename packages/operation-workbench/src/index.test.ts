@@ -38,7 +38,6 @@ class LocalOperationInvokerBinding implements BindingInvoker {
     private readonly mode: "complete" | "hang" | "many" | "error" = "complete",
     private readonly errorFrame: OperationFrameError = {
       code: "ERR_VALIDATION_FAILED",
-      category: "validation",
       message: "output validation failed at /name",
     },
   ) {}
@@ -553,14 +552,13 @@ describe("OperationWorkbenchElement", () => {
     ).toContain("ERR_VALIDATION_FAILED:");
   });
 
-  it("renders the category-first summary with the server message visible", async () => {
+  it("renders an open extension code without inventing a classification", async () => {
     const environment = new OperationEnvironment([
       {
         interface: operationInvokerCandidate(),
         invoker: new OperationInvoker([
           new LocalOperationInvokerBinding("error", {
             code: "ERR_AUTH_REJECTED",
-            category: "auth",
             message: "upstream returned 401",
           }),
         ]),
@@ -583,7 +581,7 @@ describe("OperationWorkbenchElement", () => {
 
     expect(
       element.shadowRoot?.querySelector(".error-summary")?.textContent,
-    ).toBe("The target rejected the supplied credentials. upstream returned 401");
+    ).toBe("The operation could not be completed. upstream returned 401");
   });
 
   it("un-hides the workspace when the operation arrives after mount", async () => {
@@ -620,99 +618,63 @@ describe("OperationWorkbenchElement", () => {
 });
 
 describe("presentInvocationError", () => {
-  const categoryCases: Array<{
-    category: string;
+  const codeCases: Array<{
     code: string;
     copy: string;
   }> = [
     {
-      category: "auth",
-      code: "ERR_AUTH_REJECTED",
-      copy: "The target rejected the supplied credentials.",
-    },
-    {
-      category: "service",
-      code: "ERR_SERVICE_ERROR",
-      copy: "The target returned an error.",
-    },
-    {
-      category: "transient",
-      code: "ERR_UNAVAILABLE",
-      copy: "The target or invoker could not be reached — retrying may help.",
-    },
-    {
-      category: "protocol",
-      code: "ERR_PROTOCOL",
-      copy: "The invocation violated the invoker protocol contract.",
-    },
-    {
-      category: "permanent",
-      code: "ERR_BINDING_NOT_FOUND",
-      copy: "The operation failed permanently — retrying will not help.",
-    },
-    {
-      category: "validation",
       code: "ERR_VALIDATION_FAILED",
       copy: "A value did not match the operation contract.",
     },
     {
-      category: "unsupported",
-      code: "ERR_UNSUPPORTED",
-      copy: "The invoker does not support this operation.",
-    },
-    {
-      category: "cancelled",
       code: "ERR_CANCELLED",
       copy: "The operation was cancelled.",
     },
     {
-      category: "canceled",
-      code: "ERR_CANCELLED",
-      copy: "The operation was cancelled.",
-    },
-    {
-      category: "context",
       code: "CONTEXT_REQUIRED",
       copy: "This operation needs credentials or other invocation context.",
     },
+    {
+      code: "ERR_TIMEOUT",
+      copy: "The operation timed out.",
+    },
+    {
+      code: "ERR_UNAVAILABLE",
+      copy: "The target could not be reached.",
+    },
   ];
 
-  for (const { category, code, copy } of categoryCases) {
-    it(`classifies the "${category}" category ahead of the code and appends the server message`, () => {
+  for (const { code, copy } of codeCases) {
+    it(`uses non-normative presentation for understood code ${code}`, () => {
       const presented = presentInvocationError({
         code,
-        category,
         message: "upstream detail",
       });
       expect(presented.summary).toBe(`${copy} upstream detail`);
     });
   }
 
-  it("keeps category summaries distinguishable and non-empty", () => {
-    const summaries = categoryCases
-      .filter(entry => entry.category !== "canceled")
-      .map(
-        entry =>
-          presentInvocationError({
-            code: entry.code,
-            category: entry.category,
-            message: "",
-          }).summary,
-      );
+  it("keeps understood code summaries distinguishable and non-empty", () => {
+    const summaries = codeCases.map(
+      entry =>
+        presentInvocationError({
+          code: entry.code,
+          message: "",
+        }).summary,
+    );
     for (const summary of summaries) {
       expect(summary.trim().length).toBeGreaterThan(0);
     }
     expect(new Set(summaries).size).toBe(summaries.length);
   });
 
-  it("presents the category copy alone when the server message is empty", () => {
+  it("uses a generic introduction for an open extension code", () => {
     expect(
       presentInvocationError({
         code: "ERR_SERVICE_ERROR",
-        category: "service",
         message: "",
       }).summary,
-    ).toBe("The target returned an error.");
+    ).toBe("The operation could not be completed.");
   });
 
   it("never renders an empty summary for an error it cannot describe", () => {
@@ -724,7 +686,6 @@ describe("presentInvocationError", () => {
     expect(
       presentInvocationError({
         code: "ERR_MYSTERY",
-        category: "",
         message: "",
       }).summary,
     ).toBe("The operation could not be completed.");
@@ -733,7 +694,6 @@ describe("presentInvocationError", () => {
   it("attributes ERR_CONNECT_FAILED to the invoker transport, not the target", () => {
     const presented = presentInvocationError({
       code: "ERR_CONNECT_FAILED",
-      category: "transient",
       message: "fetch failed",
     });
     expect(presented.summary).toContain(
