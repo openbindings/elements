@@ -141,6 +141,93 @@ test("the embedded workbench invokes ob start through its published interface", 
   await expect(page.locator("#sheet-run")).toBeEnabled();
 });
 
+test("a drag owns the cursor until it is released", async ({ page }) => {
+  // Pointer capture keeps the EVENTS flowing to the gutter, but it does not
+  // redirect hit-testing, and hit-testing is what decides the cursor. The
+  // moment a drag outran its gutter — past a clamp, or just faster than
+  // layout follows — the pointer sat over foreign content and the arrow came
+  // back mid-drag, which reads as "the drag dropped". Measured before the
+  // fix: dragging the cockpit gutter across CodeMirror landed on
+  // `.cm-gutterElement`, whose own `cursor: auto` beat the inherited one.
+  await page.setViewportSize({ width: 1760, height: 900 });
+  await page.goto("/#token=test-token");
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+
+  // The deepest hit-tested element at a point, piercing shadow roots, plus
+  // the cursor it resolves to — the same question the browser asks.
+  const cursorAt = (x: number, y: number) =>
+    page.evaluate(([px, py]: [number, number]) => {
+      let node = document.elementFromPoint(px, py) as Element | null;
+      let deepest = node;
+      while (node) {
+        const inner = (node as HTMLElement).shadowRoot?.elementFromPoint(
+          px,
+          py,
+        ) as Element | null;
+        if (!inner || inner === node) break;
+        deepest = inner;
+        node = inner;
+      }
+      return {
+        cursor: deepest ? getComputedStyle(deepest).cursor : "(none)",
+        layers: document.querySelectorAll("[data-ob-drag-cursor]").length,
+      };
+    }, [x, y]);
+
+  // The app-level rail gutter, dragged well past its clamp.
+  const rail = await page.locator("#rail-gutter").boundingBox();
+  expect(rail).not.toBeNull();
+  const rx = rail!.x + rail!.width / 2;
+  const ry = rail!.y + rail!.height / 2;
+  await page.mouse.move(rx, ry);
+  await page.mouse.down();
+  for (const dx of [500, 1400]) {
+    await page.mouse.move(rx + dx, ry);
+    expect(await cursorAt(rx + dx, ry)).toEqual({
+      cursor: "col-resize",
+      layers: 1,
+    });
+  }
+  await page.mouse.up();
+  // Released: the layer is gone and the page answers for itself again.
+  expect((await cursorAt(rx, ry)).layers).toBe(0);
+
+  // The element-level cockpit gutter — shadow DOM, pointer capture, and the
+  // path that had no cursor override at all.
+  const workbench = page.locator("ob-operation-workbench:not([hidden])");
+  const layout = await workbench
+    .locator('[part~="layout-gutter"]')
+    .boundingBox();
+  expect(layout).not.toBeNull();
+  const lx = layout!.x + layout!.width / 2;
+  const ly = layout!.y + layout!.height / 2;
+  await page.mouse.move(lx, ly);
+  await page.mouse.down();
+  await page.mouse.move(lx + 400, ly + 60);
+  expect(await cursorAt(lx + 400, ly + 60)).toEqual({
+    cursor: "col-resize",
+    layers: 1,
+  });
+  await page.mouse.up();
+  expect((await cursorAt(lx, ly)).layers).toBe(0);
+
+  // The horizontal axis asks for its own cursor, read from the CSS rather
+  // than hardcoded by the drag.
+  const sheet = await page.locator("#sheet-gutter").boundingBox();
+  expect(sheet).not.toBeNull();
+  const shx = sheet!.x + sheet!.width / 2;
+  const shy = sheet!.y + sheet!.height / 2;
+  await page.mouse.move(shx, shy);
+  await page.mouse.down();
+  await page.mouse.move(shx + 300, shy - 200);
+  expect(await cursorAt(shx + 300, shy - 200)).toEqual({
+    cursor: "row-resize",
+    layers: 1,
+  });
+  await page.mouse.up();
+  expect((await cursorAt(shx, shy)).layers).toBe(0);
+});
+
 test("an operation with no input contract still opens the input editor", async ({
   page,
 }) => {

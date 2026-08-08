@@ -27,7 +27,7 @@ export default defineConfig({
     launchOptions,
   },
   webServer: {
-    command: `env GOCACHE=/tmp/ob-journeys-go-cache GOTOOLCHAIN=local GOPROXY=direct go -C ../ob run ./cmd/ob start --port ${port} --token ${token}`,
+    command: `env GOCACHE=/tmp/ob-journeys-go-cache GOPROXY=direct go -C ../ob run ./cmd/ob start --port ${port} --token ${token}`,
     url: `${origin}/healthz`,
     reuseExistingServer: true,
     timeout: 300_000,

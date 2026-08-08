@@ -67,6 +67,60 @@ export function observeSplitWidth(
 }
 
 /**
+ * A drag owns the cursor for its whole duration, not just while the pointer
+ * is over the handle. The moment a drag outpaces its gutter — past a clamp,
+ * or simply faster than layout follows — the pointer sits over foreign
+ * content, and the cursor is decided by hit-testing, which pointer capture
+ * does not redirect. The arrow comes back mid-drag and the user reads it as
+ * "the drag dropped."
+ *
+ * Setting `cursor` on `<body>` is the usual reach and it is not enough: it
+ * inherits, so any element declaring its own cursor beats it. Measured
+ * against the live workbench, a drag crossing CodeMirror's `.cm-gutterElement`
+ * (`cursor: auto`) loses the resize cursor exactly there.
+ *
+ * So the drag raises a transparent full-viewport layer instead. It is the
+ * topmost hit target, which makes its cursor the only answer hit-testing can
+ * give, and it incidentally stops foreign hover states from flashing past
+ * under the pointer. Ref-counted: nested or overlapping drags cannot leave a
+ * layer stranded over the app.
+ */
+let dragLayer: HTMLElement | null = null;
+let dragLayerDepth = 0;
+
+export function beginDragCursor(cursor: string): () => void {
+  if (typeof document === "undefined") return () => {};
+  dragLayerDepth += 1;
+  if (!dragLayer) {
+    dragLayer = document.createElement("div");
+    dragLayer.dataset.obDragCursor = "";
+    dragLayer.style.cssText =
+      "position:fixed;inset:0;z-index:2147483647;touch-action:none;background:transparent";
+    document.body.append(dragLayer);
+  }
+  dragLayer.style.cursor = cursor;
+
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    dragLayerDepth = Math.max(0, dragLayerDepth - 1);
+    if (dragLayerDepth === 0 && dragLayer) {
+      dragLayer.remove();
+      dragLayer = null;
+    }
+  };
+}
+
+/** The cursor a gutter asks for, read from the element itself so the CSS
+ * stays the single source of truth (col-resize / row-resize). */
+function gutterCursor(gutter: HTMLElement): string {
+  if (typeof getComputedStyle !== "function") return "col-resize";
+  const declared = getComputedStyle(gutter).cursor;
+  return declared && declared !== "auto" ? declared : "col-resize";
+}
+
+/**
  * The element half of a gutter binding. `resize` mutates silently (drag
  * movement, keyboard step); `commit` is USER INTENT — emitted once at drag
  * end and per effective keyboard step — so programmatic assignment never
@@ -91,10 +145,13 @@ export function bindSplitGutter(
 ): void {
   let dragBounds: { left: number; width: number } | null = null;
   let dragChanged = false;
+  let releaseCursor: (() => void) | null = null;
 
   const endDrag = (event: Event): void => {
     if (dragBounds === null) return;
     dragBounds = null;
+    releaseCursor?.();
+    releaseCursor = null;
     gutter.classList.remove("dragging");
     const pointerID = (event as PointerEvent).pointerId;
     try {
@@ -115,6 +172,7 @@ export function bindSplitGutter(
     if (!bounds || bounds.width <= 0) return;
     dragBounds = bounds;
     dragChanged = false;
+    releaseCursor = beginDragCursor(gutterCursor(gutter));
     gutter.classList.add("dragging");
     try {
       gutter.setPointerCapture?.(pointer.pointerId);

@@ -21,7 +21,11 @@ import {
   type ContextRequirement,
   type OBInterface,
 } from "@openbindings/sdk";
-import { OperationEnvironment, debounce } from "@openbindings/ui-core";
+import {
+  OperationEnvironment,
+  beginDragCursor,
+  debounce,
+} from "@openbindings/ui-core";
 import { parse as parseYAML } from "yaml";
 import {
   WorkspaceLeases,
@@ -3975,7 +3979,11 @@ function startPointerResize(
 ): void {
   start.preventDefault();
   handle.classList.add("dragging");
-  document.body.style.cursor = getComputedStyle(handle).cursor;
+  // A cursor on <body> inherits, so any element declaring its own beats it —
+  // CodeMirror's gutter did, and the resize cursor died exactly there. The
+  // shared drag layer is the topmost hit target instead, so nothing under it
+  // can answer differently (ui-core/split).
+  const releaseCursor = beginDragCursor(getComputedStyle(handle).cursor);
   document.body.style.userSelect = "none";
 
   const move = (event: PointerEvent) => onMove(event);
@@ -3984,7 +3992,7 @@ function startPointerResize(
     globalThis.removeEventListener("pointerup", finish);
     globalThis.removeEventListener("pointercancel", finish);
     handle.classList.remove("dragging");
-    document.body.style.removeProperty("cursor");
+    releaseCursor();
     document.body.style.removeProperty("user-select");
     persistWorkspaceLayout();
   };

@@ -11,6 +11,7 @@ export {
   SPLIT_RATIO_MAX,
   SPLIT_RATIO_MIN,
   SPLIT_RATIO_STEP,
+  beginDragCursor,
   bindSplitGutter,
   clampSplitRatio,
   observeSplitWidth,
