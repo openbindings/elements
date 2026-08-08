@@ -23,7 +23,7 @@ jobs:
           repository: openbindings/openbindings-ts
           # Elements main currently consumes the pre-release operation API.
           # Keep this aligned with openbindings/project repositories.json.
-          ref: experiment/obi-first
+          ref: release/0.2
           path: openbindings-ts
 
       - name: Check out shared interfaces
@@ -38,7 +38,7 @@ jobs:
           repository: openbindings/ob
           # The embedded workbench exercises the pre-release `ob start` command.
           # Keep this aligned with openbindings/project repositories.json.
-          ref: experiment/obi-first
+          ref: release/0.2
           path: ob
 
       - name: Check out Go SDK
@@ -47,7 +47,7 @@ jobs:
           repository: openbindings/openbindings-go
           # ob's integration branch consumes the matching untagged SDK modules.
           # Keep this aligned with openbindings/project repositories.json.
-          ref: experiment/obi-first
+          ref: release/0.2
           path: openbindings-go
 
       - uses: pnpm/action-setup@v4
