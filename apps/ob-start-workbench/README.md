@@ -29,9 +29,11 @@ binding-family implementation. It:
 Protocol processing stays in `ob`. A raw API artifact can therefore be
 resolved and invoked without shipping its binding family to the browser.
 
-The private carrier is not labeled `openbindings.asyncapi@1`: that published
-binding specification intentionally refuses reply-bearing WebSocket
-`receive` operations. See [`../../docs/design.md`](../../docs/design.md).
+The private carrier is not labeled `openbindings.asyncapi@1`: it is an
+application-local transport contract, not an AsyncAPI source governed by that
+unreleased candidate. The candidate delegates reply-bearing WebSocket sessions
+to a driver capable of preserving them. See
+[`../../docs/design.md`](../../docs/design.md).
 
 The session token authenticates the local `ob start` carrier. It is removed
 from the URL fragment immediately, retained in tab-scoped session storage, and
