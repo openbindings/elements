@@ -78,6 +78,13 @@ jobs:
           go-version-file: ob/go.mod
           cache-dependency-path: ob/go.sum
 
+      - name: Build standalone artifact clients
+        run: |
+          pnpm --dir openapi-client install --frozen-lockfile
+          pnpm --dir openapi-client build
+          pnpm --dir asyncapi-client install --frozen-lockfile
+          pnpm --dir asyncapi-client build
+
       - name: Resolve untagged Go SDK modules from the sibling checkout
         working-directory: ob
         run: |
