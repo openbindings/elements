@@ -51,6 +51,12 @@ The element owns:
 The SDK owns operation compatibility, binding selection, invocation lifecycle,
 and the protocol implementations the application explicitly installs.
 
+The exact binding specification named by a selected source—not an element, the
+SDK, or an installed invoker—governs the portable meaning of that binding. An
+invoker may complete a case the specification leaves open, but that behavior is
+implementation-defined and must not be inferred or presented by an element as
+portable meaning under the identifier.
+
 ## Graph viewer and graph editor
 
 The operation graph viewer and editor should be separate public elements over
