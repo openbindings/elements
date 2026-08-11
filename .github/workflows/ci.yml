@@ -26,6 +26,17 @@ jobs:
           ref: release/0.2
           path: openbindings-ts
 
+      - name: Check out standalone artifact clients
+        uses: actions/checkout@v4
+        with:
+          repository: openbindings/openapi-client
+          path: openapi-client
+
+      - uses: actions/checkout@v4
+        with:
+          repository: openbindings/asyncapi-client
+          path: asyncapi-client
+
       - name: Check out shared interfaces
         uses: actions/checkout@v4
         with:
@@ -75,6 +86,8 @@ jobs:
             rel="../openbindings-go${mod#github.com/openbindings/openbindings-go}"
             go work edit -replace "$mod=$rel"
           done
+          go work edit -replace "github.com/openbindings/openapi-client/go=../openapi-client/go"
+          go work edit -replace "github.com/openbindings/asyncapi-client/go=../asyncapi-client/go"
 
       - name: Build SDK dependencies
         working-directory: openbindings-ts
