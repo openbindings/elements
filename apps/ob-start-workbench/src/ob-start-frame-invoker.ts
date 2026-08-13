@@ -1,8 +1,7 @@
 import {
   ERR_CONNECT_FAILED,
-  ERR_PROTOCOL,
+  ERR_FRAME_PROTOCOL,
   ERR_STREAM_ERROR,
-  ERR_VALIDATION_FAILED,
   InvocationError,
   InvocationImpl,
   type BindingInvocationArgs,
@@ -102,7 +101,7 @@ export class OBStartFrameInvoker implements BindingInvoker {
         invocation.fireError(
           error instanceof InvocationError
             ? error
-            : new InvocationError(ERR_STREAM_ERROR, errorText(error)),
+            : new InvocationError(ERR_STREAM_ERROR),
         );
       });
     });
@@ -116,10 +115,7 @@ export class OBStartFrameInvoker implements BindingInvoker {
     const token = this.#token();
     if (!token) {
       invocation.fireError(
-        new InvocationError(
-          ERR_CONNECT_FAILED,
-          "the ob start session token has not been supplied",
-        ),
+        new InvocationError(ERR_CONNECT_FAILED),
       );
       return;
     }
@@ -138,10 +134,7 @@ export class OBStartFrameInvoker implements BindingInvoker {
         "error",
         () =>
           reject(
-            new InvocationError(
-              ERR_CONNECT_FAILED,
-              `could not connect to ${endpoint.origin}`,
-            ),
+            new InvocationError(ERR_CONNECT_FAILED),
           ),
         { once: true },
       );
@@ -173,10 +166,7 @@ export class OBStartFrameInvoker implements BindingInvoker {
           } catch (error) {
             transportFailed = true;
             invocation.fireError(
-              new InvocationError(
-                ERR_VALIDATION_FAILED,
-                `ob start returned invalid JSON: ${errorText(error)}`,
-              ),
+              new InvocationError(ERR_FRAME_PROTOCOL),
             );
             socket.close(1002, "invalid JSON");
             return;
@@ -198,7 +188,7 @@ export class OBStartFrameInvoker implements BindingInvoker {
             invocation.fireError(
               error instanceof InvocationError
                 ? error
-                : new InvocationError(ERR_STREAM_ERROR, errorText(error)),
+                : new InvocationError(ERR_STREAM_ERROR),
             );
           }
         });
@@ -216,12 +206,7 @@ export class OBStartFrameInvoker implements BindingInvoker {
             invocation.closeOutput();
           } else {
             invocation.fireError(
-              new InvocationError(
-                ERR_STREAM_ERROR,
-                `ob start WebSocket closed with code ${event.code}${
-                  event.reason ? `: ${event.reason}` : ""
-                }`,
-              ),
+              new InvocationError(ERR_STREAM_ERROR),
             );
           }
         }
@@ -244,10 +229,7 @@ export class OBStartFrameInvoker implements BindingInvoker {
       const send = async () => {
         for await (const frame of invocation.inputs()) {
           if (socket.readyState !== WebSocket.OPEN) {
-            throw new InvocationError(
-              ERR_STREAM_ERROR,
-              "ob start WebSocket closed while input was being sent",
-            );
+            throw new InvocationError(ERR_STREAM_ERROR);
           }
           socket.send(JSON.stringify(frame));
         }
@@ -272,16 +254,9 @@ export class OBStartFrameInvoker implements BindingInvoker {
       case "#/operations/invokeBinding":
         return "/bindings/invoke";
       default:
-        throw new InvocationError(
-          ERR_PROTOCOL,
-          `unsupported ob start frame operation ref ${JSON.stringify(ref)}`,
-        );
+        throw new InvocationError(ERR_FRAME_PROTOCOL);
     }
   }
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function encodeBase64Url(value: string): string {

@@ -14,6 +14,7 @@ import "@openbindings/schema-split/define";
 import type { SchemaSplitElement } from "@openbindings/schema-split";
 import {
   fetchInterface,
+  isContextRequiredDetails,
   OperationInvoker,
   operationSignature,
   type ContextAlternative,
@@ -50,6 +51,12 @@ import {
   adaptOBStartFrameBindings,
   OBStartFrameInvoker,
 } from "./ob-start-frame-invoker.js";
+import {
+  configurationContext,
+  mergeContext,
+  partitionResolvedContext,
+  type ResolvedContextEntry,
+} from "./context-resolution.js";
 import "./styles.css";
 
 const explorer = requiredElement<OBIExplorerElement>("ob-obi-explorer");
@@ -1215,13 +1222,14 @@ requirementForm.addEventListener("submit", event => {
   if (!alternative) return;
   const resolved = contextFromRequirementFields(alternative);
   if (!resolved) return;
-  targetContext = mergeContext(targetContext, resolved);
-  targetContextInput.value = JSON.stringify(targetContext, null, 2);
+  if (resolved.durable) {
+    targetContext = mergeContext(targetContext, resolved.durable);
+    targetContextInput.value = JSON.stringify(targetContext, null, 2);
+  }
   applyTargetContext();
   renderTargetContextState();
-  // Credentials are work: they ride the workspace so a reload does not
-  // silently throw them away (rev 17.20).
-  ensureWorkspace();
+  // Only requirements that explicitly permit reuse may ride the workspace.
+  if (resolved.durable) ensureWorkspace();
   hideContextChallenge();
   bootstrapMessage.textContent = retryAfterContext
     ? "Credentials applied. Retrying the operation…"
@@ -1229,7 +1237,16 @@ requirementForm.addEventListener("submit", event => {
   const shouldRetry = retryAfterContext;
   retryAfterContext = false;
   const invocation = activeInvocation();
-  if (shouldRetry && invocation) void invocation.run();
+  if (shouldRetry && invocation) {
+    // One-shot context belongs to this exact invocation attempt. It never
+    // enters target-global state, so another open or concurrent session
+    // cannot observe it while the retry is running.
+    invocation.context = effectiveTargetContext(resolved.transient);
+    void invocation.run().finally(() => {
+      invocation.context = effectiveTargetContext();
+      renderTargetContextState();
+    });
+  }
   else schedulePreflight();
 });
 
@@ -2061,7 +2078,7 @@ function createOperationSession(seed: OperationSessionSeed): OperationSession {
       tokenInput.focus();
       return;
     }
-    const details = parseContextRequiredDetails(event.detail.details);
+    const details = parseContextRequiredDetails(event.detail.data);
     if (details) {
       retryAfterContext = true;
       showContextChallenge(details);
@@ -2069,7 +2086,7 @@ function createOperationSession(seed: OperationSessionSeed): OperationSession {
       focusFirstRequirement();
     } else {
       bootstrapMessage.textContent = contextRequiredMessage(
-        event.detail.details,
+        event.detail.data,
       );
       targetContextInput.focus();
     }
@@ -3443,11 +3460,14 @@ function applyTargetContext(): void {
   }
 }
 
-function effectiveTargetContext(): Record<string, unknown> | null {
+function effectiveTargetContext(
+  oneShot: Record<string, unknown> | null = null,
+): Record<string, unknown> | null {
+  const selected = oneShot ? mergeContext(targetContext, oneShot) : targetContext;
   const base =
     targetInterface === obInterface && sessionToken
-      ? { ...(targetContext ?? {}), bearerToken: sessionToken }
-      : targetContext;
+      ? { ...(selected ?? {}), bearerToken: sessionToken }
+      : selected;
   return withPreferenceSelection(base);
 }
 
@@ -3616,7 +3636,7 @@ function renderRequirementFields(): void {
       notice.className = "requirement-unsupported";
       notice.textContent =
         requirement.description?.trim() ||
-        `${requirement.type} requires protocol-specific context. Use Advanced JSON context.`;
+        `${requirement.type} requires specialized invocation context. Use Advanced JSON context.`;
       requirementFields.append(notice);
       continue;
     }
@@ -3674,20 +3694,23 @@ function requirementControls(
         requirement.description || "OAuth access token",
       );
       break;
+    case "config.value":
+      addInput("config.value", requirement.description || "Configuration value", "text");
+      break;
   }
   return controls;
 }
 
 function contextFromRequirementFields(
   alternative: ContextAlternative,
-): Record<string, unknown> | null {
-  const result: Record<string, unknown> = {};
+): { durable: Record<string, unknown> | null; transient: Record<string, unknown> | null } | null {
+  const entries: ResolvedContextEntry[] = [];
   for (const [index, requirement] of alternative.requirements.entries()) {
     const value = requirementFieldValue(index, requirement);
     if (!value) return null;
-    Object.assign(result, value);
+    entries.push({ durable: requirement.durable, value });
   }
-  return result;
+  return partitionResolvedContext(entries);
 }
 
 function requirementFieldValue(
@@ -3703,38 +3726,44 @@ function requirementFieldValue(
   switch (requirement.type) {
     case "auth.bearer": {
       const token = read("bearerToken");
-      return token ? { bearerToken: token } : null;
+      if (!token) return null;
+      return typeof requirement.name === "string" && requirement.name
+        ? { credentials: { [requirement.name]: token } }
+        : { bearerToken: token };
     }
     case "auth.apiKey": {
       const key = read("apiKey");
       if (!key) return null;
       return typeof requirement.name === "string" && requirement.name
-        ? { apiKeys: { [requirement.name]: key } }
+        ? { credentials: { [requirement.name]: key } }
         : { apiKey: key };
     }
     case "auth.basic": {
       const username = read("basic.username");
       const password = read("basic.password");
-      return username && password ? { basic: { username, password } } : null;
+      if (!username || !password) return null;
+      const basic = { username, password };
+      return typeof requirement.name === "string" && requirement.name
+        ? { credentials: { [requirement.name]: basic } }
+        : { basic };
     }
     case "auth.oauth2": {
       const accessToken = read("accessToken");
-      return accessToken ? { accessToken } : null;
+      if (!accessToken) return null;
+      return typeof requirement.name === "string" && requirement.name
+        ? { credentials: { [requirement.name]: { accessToken } } }
+        : { accessToken };
+    }
+    case "config.value": {
+      const value = read("config.value");
+      if (!value) return null;
+      const point = typeof requirement.point === "string" ? requirement.point : "";
+      const path = typeof requirement.path === "string" ? requirement.path : "";
+      return configurationContext(point, path, value);
     }
     default:
       return null;
   }
-}
-
-function mergeContext(
-  current: Record<string, unknown> | null,
-  addition: Record<string, unknown>,
-): Record<string, unknown> {
-  const merged = { ...(current ?? {}), ...addition };
-  if (isRecord(current?.apiKeys) && isRecord(addition.apiKeys)) {
-    merged.apiKeys = { ...current.apiKeys, ...addition.apiKeys };
-  }
-  return merged;
 }
 
 function alternativeLabel(alternative: ContextAlternative): string {
@@ -4073,30 +4102,7 @@ function contextRequiredMessage(details: unknown): string {
 function parseContextRequiredDetails(
   value: unknown,
 ): ContextRequiredDetails | null {
-  if (
-    !isRecord(value) ||
-    typeof value.target !== "string" ||
-    !Array.isArray(value.alternatives)
-  ) {
-    return null;
-  }
-  const alternatives: ContextAlternative[] = [];
-  for (const candidate of value.alternatives) {
-    if (!isRecord(candidate) || !Array.isArray(candidate.requirements)) {
-      return null;
-    }
-    const requirements: ContextRequirement[] = [];
-    for (const requirement of candidate.requirements) {
-      if (!isRecord(requirement) || typeof requirement.type !== "string") {
-        return null;
-      }
-      requirements.push(requirement as ContextRequirement);
-    }
-    if (requirements.length > 0) alternatives.push({ requirements });
-  }
-  return alternatives.length > 0
-    ? { target: value.target, alternatives }
-    : null;
+  return isContextRequiredDetails(value) ? value : null;
 }
 
 function displayTarget(target: string): string {
@@ -4124,14 +4130,12 @@ function errorText(error: unknown): string {
 
 /**
  * An unsuccessful-completion frame surfaced as a throwable, keeping the
- * whole wire shape — including optional application details and diagnostics
- * — instead of flattening it to a string.
- * The message stays `CODE: text` so existing string-based presentation is
- * unchanged for callers that never look deeper.
+ * whole abstract wire shape — code plus optional application-authored data —
+ * instead of flattening it to protocol or implementation prose.
  */
 class WireCallError extends Error {
   constructor(readonly wire: OperationFrameError) {
-    super(`${wire.code}: ${wire.message}`);
+    super(wire.code);
   }
 }
 

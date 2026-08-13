@@ -38,7 +38,6 @@ class LocalOperationInvokerBinding implements BindingInvoker {
     private readonly mode: "complete" | "hang" | "many" | "error" = "complete",
     private readonly errorFrame: OperationFrameError = {
       code: "ERR_VALIDATION_FAILED",
-      message: "output validation failed at /name",
     },
   ) {}
 
@@ -518,7 +517,7 @@ describe("OperationWorkbenchElement", () => {
     ]);
   });
 
-  it("summarizes contract failures while retaining exact technical evidence", async () => {
+  it("summarizes contract failures while retaining the exact abstract record", async () => {
     const environment = new OperationEnvironment([
       {
         interface: operationInvokerCandidate(),
@@ -544,12 +543,10 @@ describe("OperationWorkbenchElement", () => {
 
     expect(
       element.shadowRoot?.querySelector(".error-summary")?.textContent,
-    ).toBe(
-      "A value did not match the operation contract. output validation failed at /name",
-    );
+    ).toBe("A value did not match the operation contract.");
     expect(
       element.shadowRoot?.querySelector(".error-detail")?.textContent,
-    ).toContain("ERR_VALIDATION_FAILED:");
+    ).toContain('"code": "ERR_VALIDATION_FAILED"');
   });
 
   it("renders an open extension code without inventing a classification", async () => {
@@ -559,7 +556,6 @@ describe("OperationWorkbenchElement", () => {
         invoker: new OperationInvoker([
           new LocalOperationInvokerBinding("error", {
             code: "ERR_AUTH_REJECTED",
-            message: "upstream returned 401",
           }),
         ]),
       },
@@ -581,7 +577,7 @@ describe("OperationWorkbenchElement", () => {
 
     expect(
       element.shadowRoot?.querySelector(".error-summary")?.textContent,
-    ).toBe("The operation could not be completed. upstream returned 401");
+    ).toBe("The operation could not be completed.");
   });
 
   it("un-hides the workspace when the operation arrives after mount", async () => {
@@ -646,11 +642,8 @@ describe("presentInvocationError", () => {
 
   for (const { code, copy } of codeCases) {
     it(`uses non-normative presentation for understood code ${code}`, () => {
-      const presented = presentInvocationError({
-        code,
-        message: "upstream detail",
-      });
-      expect(presented.summary).toBe(`${copy} upstream detail`);
+      const presented = presentInvocationError({ code });
+      expect(presented.summary).toBe(copy);
     });
   }
 
@@ -659,7 +652,6 @@ describe("presentInvocationError", () => {
       entry =>
         presentInvocationError({
           code: entry.code,
-          message: "",
         }).summary,
     );
     for (const summary of summaries) {
@@ -672,7 +664,6 @@ describe("presentInvocationError", () => {
     expect(
       presentInvocationError({
         code: "ERR_SERVICE_ERROR",
-        message: "",
       }).summary,
     ).toBe("The operation could not be completed.");
   });
@@ -686,7 +677,6 @@ describe("presentInvocationError", () => {
     expect(
       presentInvocationError({
         code: "ERR_MYSTERY",
-        message: "",
       }).summary,
     ).toBe("The operation could not be completed.");
   });
@@ -694,14 +684,33 @@ describe("presentInvocationError", () => {
   it("attributes ERR_CONNECT_FAILED to the invoker transport, not the target", () => {
     const presented = presentInvocationError({
       code: "ERR_CONNECT_FAILED",
-      message: "fetch failed",
     });
     expect(presented.summary).toContain(
       "Could not reach the operation invoker.",
     );
     expect(presented.summary).toContain("session credential");
-    expect(presented.summary).toContain("fetch failed");
     expect(presented.summary.toLowerCase()).not.toContain("the target");
+  });
+
+  it("presents only abstract code and application-authored data", () => {
+    const presented = presentInvocationError({
+      code: "ERR_SERVICE_ERROR",
+      data: { reason: "declined" },
+    });
+    expect(JSON.parse(presented.detail)).toEqual({
+      code: "ERR_SERVICE_ERROR",
+      data: { reason: "declined" },
+    });
+    expect(presented.detail).not.toContain("status");
+    expect(presented.detail).not.toContain("headers");
+  });
+
+  it("preserves explicit-null data distinctly from absent data", () => {
+    expect(JSON.parse(presentInvocationError({ code: "E", data: null }).detail))
+      .toEqual({ code: "E", data: null });
+    expect(JSON.parse(presentInvocationError({ code: "E" }).detail)).toEqual({
+      code: "E",
+    });
   });
 });
 

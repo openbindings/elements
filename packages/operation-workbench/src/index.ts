@@ -147,7 +147,7 @@ export interface InvocationInputChangeDetail {
 
 export interface InvocationContextRequiredDetail {
   operationKey: string;
-  details?: unknown;
+  data?: unknown;
   error: OperationFrameError;
 }
 
@@ -716,7 +716,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
                 "ob-context-required",
                 {
                   operationKey: targetOperationKey,
-                  details: frame.error.details,
+                  data: frame.error.data,
                   error: frame.error,
                 },
               );
@@ -2068,12 +2068,13 @@ const CONNECT_FAILED_SUMMARY =
 /**
  * Non-normative presentation for interface-owned and SDK-local codes the
  * workbench understands. Unknown binding and future-family codes remain
- * usable through their message; this map is a UI convenience, not a closed
+ * usable through their code; this map is a UI convenience, not a closed
  * failure classification.
  */
 const CODE_SUMMARIES: Record<string, string> = {
   CONTEXT_REQUIRED:
     "This operation needs credentials or other invocation context.",
+  ERR_OPERATION_VALIDATION_FAILED: "A value did not match the operation contract.",
   ERR_VALIDATION_FAILED: "A value did not match the operation contract.",
   ERR_TIMEOUT: "The operation timed out.",
   ERR_CANCELLED: "The operation was cancelled.",
@@ -2086,11 +2087,11 @@ export function presentInvocationError(
 ): { summary: string; detail: string } {
   const frame = error as Partial<OperationFrameError>;
   const code = typeof frame.code === "string" ? frame.code : "";
-  const message = typeof frame.message === "string" ? frame.message.trim() : "";
 
   if (!code) {
-    // Plain runtime Errors and malformed frame errors alike: the message is
-    // all there is, and an empty one must never leave the summary blank.
+    // Local runtime errors are outside the invocation frame contract. Their
+    // process-local message can still help the host application.
+    const message = error instanceof Error ? error.message.trim() : "";
     return { summary: message || UNDESCRIBED_ERROR_SUMMARY, detail: "" };
   }
 
@@ -2098,12 +2099,14 @@ export function presentInvocationError(
     code === "ERR_CONNECT_FAILED"
       ? CONNECT_FAILED_SUMMARY
       : (CODE_SUMMARIES[code] ?? "The operation could not be completed.");
-  // The server's human-readable message is part of the visible summary, not
-  // something buried behind the details disclosure.
-  const summary = message ? `${introduction} ${message}` : introduction;
+  const hasData = Object.hasOwn(frame, "data");
   return {
-    summary,
-    detail: `${code || "(no code)"}: ${message || "(no message)"}`,
+    summary: introduction,
+    detail: JSON.stringify(
+      hasData ? { code, data: frame.data } : { code },
+      null,
+      2,
+    ),
   };
 }
 
@@ -2469,7 +2472,7 @@ const CONTENT_SHELL = `
                <div class="error" part="error" role="alert">
                  <p class="error-summary"></p>
                  <details>
-                   <summary>Technical details</summary>
+                   <summary>Invocation error</summary>
                    <pre class="error-detail"></pre>
                  </details>
                </div>

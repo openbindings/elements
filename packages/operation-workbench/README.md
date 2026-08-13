@@ -86,7 +86,7 @@ requirement against that source.
 - `ob-output` — `{ operationKey, value, index }`
 - `ob-input-change` — `{ operationKey, text, mode }`
 - `ob-input-closed` — `{ operationKey }`
-- `ob-context-required` — `{ operationKey, details?, error }`
+- `ob-context-required` — `{ operationKey, data?, error }`
 - `ob-invocation-complete` —
   `{ operationKey, outputs, outputCount, truncated, durationMs }`; `outputs` is
   the retained display window and `durationMs` the wall-clock milliseconds from
@@ -183,5 +183,7 @@ array value remains distinguishable from several input values: one array input
 is entered in single mode; several values are entered as the members of an
 outer array in sequence mode.
 
-Invocation failures have a concise user-facing summary and retain the exact
-code and message under “Technical details.”
+Invocation failures have a concise, non-normative user-facing summary and
+retain the exact abstract record—`code` plus optional `data`—under “Technical
+details.” The label refers to the abstract record only; native protocol
+evidence is neither part of that record nor exposed through the component.
