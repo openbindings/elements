@@ -140,7 +140,7 @@ function operationInvokerCandidate(): OBInterface {
       invoke: {
         operation: "openbindings.operation-invoker.invokeOperation",
         source: "local",
-        ref: "invoke",
+        selector: "invoke",
       },
     },
   };
@@ -714,7 +714,7 @@ describe("presentInvocationError", () => {
   });
 });
 
-describe("binding selector", () => {
+describe("binding picker", () => {
   const multiBindingOBI: OBInterface = {
     openbindings: "0.2.0",
     name: "Target",

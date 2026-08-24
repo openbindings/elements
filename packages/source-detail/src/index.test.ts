@@ -27,12 +27,12 @@ const obi: OBInterface = {
     createPetHTTP: {
       operation: "createPet",
       source: "api",
-      ref: "#/paths/~1pets/post",
+      selector: "#/paths/~1pets/post",
     },
     listPetsHTTP: {
       operation: "listPets",
       source: "api",
-      ref: "#/paths/~1pets/get",
+      selector: "#/paths/~1pets/get",
     },
   },
 };
@@ -152,8 +152,8 @@ describe("SourceDetailElement", () => {
     element.sourceKey = "api";
     element.inspection = {
       targets: [
-        { ref: "#/paths/~1pets/post", operationKey: "createPet" },
-        { ref: "#/paths/~1pets/get" },
+        { selector: "#/paths/~1pets/post", operationKey: "createPet" },
+        { selector: "#/paths/~1pets/get" },
       ],
       exhaustive: false,
       limitation: { code: "sampled", message: "only sampled paths listed" },

@@ -42,7 +42,7 @@ const obi: OBInterface = {
     createPetHTTP: {
       operation: "createPet",
       source: "api",
-      ref: "#/paths/~1pets/post",
+      selector: "#/paths/~1pets/post",
     },
   },
 };
@@ -177,10 +177,10 @@ describe("OperationDetailElement bindings disclosure", () => {
       },
     },
     bindings: {
-      listPetsCLI: { operation: "listPets", source: "cli", ref: "#/commands/list" },
-      listPetsHTTP: { operation: "listPets", source: "api", ref: "#/paths/~1pets/get" },
-      listPetsQueue: { operation: "listPets", source: "queue", ref: "#/channels/pets" },
-      getPetHTTP: { operation: "getPet", source: "api", ref: "#/paths/~1pets~1{id}/get" },
+      listPetsCLI: { operation: "listPets", source: "cli", selector: "#/commands/list" },
+      listPetsHTTP: { operation: "listPets", source: "api", selector: "#/paths/~1pets/get" },
+      listPetsQueue: { operation: "listPets", source: "queue", selector: "#/channels/pets" },
+      getPetHTTP: { operation: "getPet", source: "api", selector: "#/paths/~1pets~1{id}/get" },
     },
   };
 

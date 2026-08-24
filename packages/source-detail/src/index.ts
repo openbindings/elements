@@ -27,7 +27,7 @@ export interface SourceBindingDetail {
  */
 export interface SourceInspection {
   targets?: Array<{
-    ref?: string;
+    selector?: string;
     operationKey?: string;
     operation?: { description?: string };
   }>;
@@ -243,17 +243,17 @@ export class SourceDetailElement extends OpenBindingsElement {
     );
 
     reconcile(refs.require(".target-list"), targets, {
-      key: (target, index) => `${index}:${target.ref ?? ""}`,
+      key: (target, index) => `${index}:${target.selector ?? ""}`,
       create: () => {
         const item = document.createElement("li");
-        const ref = document.createElement("code");
+        const selector = document.createElement("code");
         const operation = document.createElement("span");
-        item.append(ref, operation);
+        item.append(selector, operation);
         return item;
       },
       update: (node, target) => {
-        const ref = node.querySelector("code");
-        if (ref) setTextIfChanged(ref, target.ref ?? "whole source");
+        const selector = node.querySelector("code");
+        if (selector) setTextIfChanged(selector, target.selector ?? "whole source");
         const operation = node.querySelector("span");
         if (operation) {
           setTextIfChanged(
@@ -280,8 +280,8 @@ export class SourceDetailElement extends OpenBindingsElement {
         select.className = "binding-select";
         const key = document.createElement("strong");
         const operation = document.createElement("span");
-        const ref = document.createElement("code");
-        select.append(key, operation, ref);
+        const selector = document.createElement("code");
+        select.append(key, operation, selector);
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "binding-remove danger";
@@ -297,8 +297,8 @@ export class SourceDetailElement extends OpenBindingsElement {
         if (strong) setTextIfChanged(strong, key);
         const operation = row.querySelector("span");
         if (operation) setTextIfChanged(operation, binding.operation);
-        const ref = row.querySelector("code");
-        if (ref) setTextIfChanged(ref, binding.ref ?? "whole source");
+        const selector = row.querySelector("code");
+        if (selector) setTextIfChanged(selector, binding.selector ?? "whole source");
         const remove = row.querySelector<HTMLButtonElement>(".binding-remove");
         if (remove) {
           remove.setAttribute("aria-label", `Remove binding ${key}`);
