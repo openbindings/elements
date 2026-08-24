@@ -12,7 +12,7 @@ Read-only detail view for one operation in an OBI.
 ## Events
 
 None. The bindings disclosure is informational (rev 15, binding roles): the
-invocation cockpit's binding selector is the single surface where a binding
+invocation cockpit's binding picker is the single surface where a binding
 is chosen, so this element emits no selection events.
 
 The package augments `HTMLElementTagNameMap`.

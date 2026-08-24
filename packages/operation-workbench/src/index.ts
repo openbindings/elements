@@ -164,7 +164,7 @@ export interface InvocationCompleteDetail {
 /**
  * Same detail family as `operation-detail`'s `ob-binding-select`: the chosen
  * binding key and its interface entry. Emitted only for a user selection in
- * the binding selector — programmatic `bindingKey` assignment never echoes.
+ * the binding picker — programmatic `bindingKey` assignment never echoes.
  */
 export interface BindingSelectDetail {
   bindingKey: string;
@@ -1256,7 +1256,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
   }
 
   /**
-   * Mutates the binding selector to mirror the contract: one option per
+   * Mutates the binding picker to mirror the contract: one option per
    * binding of the current operation, shown only when there is a real choice
    * (two or more). Ordering is presentation only — descending declared
    * preference, entries without one last, ties lexicographic — and never

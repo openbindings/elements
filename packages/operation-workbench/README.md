@@ -29,8 +29,8 @@ requirement against that source.
 - `bindingKey: string | null` — optional explicit implementation route. When
   set, the invocation names this binding instead of asking the provider to
   select among bindings for the operation. When the assigned operation has two
-  or more bindings, a compact "via" selector in the header reflects this
-  property bidirectionally: assignment updates the selector without emitting,
+  or more bindings, a compact "via" picker in the header reflects this
+  property bidirectionally: assignment updates the picker without emitting,
   an unknown or stale key falls back to the "choose a binding…" placeholder,
   and a user selection sets the property and emits `ob-binding-select`. The
   element applies no selection policy of its own — it never auto-selects a
@@ -81,7 +81,7 @@ requirement against that source.
   ratio (and where) is the host application's policy.
 - `ob-binding-select` — `{ bindingKey, binding }`; the same detail family as
   `@openbindings/operation-detail`. Emitted only when the user chooses a
-  binding in the selector; programmatic `bindingKey` assignment never echoes.
+  binding in the picker; programmatic `bindingKey` assignment never echoes.
 - `ob-invocation-start` — `{ interface, operationKey }`
 - `ob-output` — `{ operationKey, value, index }`
 - `ob-input-change` — `{ operationKey, text, mode }`
@@ -153,7 +153,7 @@ one decimal under a minute, then `1m 23s`. `Copy` writes the retained window
 as WYSIWYG-valid JSON (bare value or JSON array, never timing labels), and the
 retention window (`maxDisplayedOutputs`) applies to blocks and copy alike.
 
-The binding selector (`binding-bar` wrapping `binding-select`) appears only
+The binding picker (`binding-bar` wrapping `binding-select`) appears only
 when the operation has two or more bindings and is disabled while an
 invocation is running. Its option order is display only — descending numeric
 `preference`, entries without a preference last, ties lexicographic by binding
