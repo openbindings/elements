@@ -26,7 +26,10 @@ const OB_START_FRAME_BINDING = "openbindings.ob-start-frame@local";
 export interface OBStartFrameInvokerOptions {
   origin: string;
   token: () => string;
+  diagnostics?: (input: unknown) => ((records: WorkbenchDiagnostic[]) => void) | undefined;
 }
+
+export interface WorkbenchDiagnostic { phase: "input" | "output"; pointer: string; keyword: string }
 
 /**
  * Returns an application-local implementation OBI whose operation contracts
@@ -65,10 +68,12 @@ export function adaptOBStartFrameBindings(iface: OBInterface): OBInterface {
 export class OBStartFrameInvoker implements BindingInvoker {
   readonly #origin: string;
   readonly #token: () => string;
+  readonly #diagnostics: OBStartFrameInvokerOptions["diagnostics"];
 
   constructor(options: OBStartFrameInvokerOptions) {
     this.#origin = options.origin;
     this.#token = options.token;
+    this.#diagnostics = options.diagnostics;
   }
 
   bindingSpecs() {
@@ -128,6 +133,10 @@ export class OBStartFrameInvoker implements BindingInvoker {
     }
 
     const endpoint = new URL(this.#route(args.selector), this.#origin);
+    const diagnosticID = this.#diagnostics && args.selector === "#/operations/invokeOperation"
+      ? crypto.randomUUID() : null;
+    if (diagnosticID) endpoint.searchParams.set("diagnostics", diagnosticID);
+    let diagnosticObserver: ((records: WorkbenchDiagnostic[]) => void) | undefined;
     endpoint.protocol = endpoint.protocol === "https:" ? "wss:" : "ws:";
 
     const encodedToken = encodeBase64Url(token);
@@ -187,6 +196,19 @@ export class OBStartFrameInvoker implements BindingInvoker {
           ) {
             terminalFrameSeen = true;
           }
+          if (diagnosticID && diagnosticObserver && frame && typeof frame === "object" &&
+              "kind" in frame && frame.kind === "error") {
+            try {
+              const response = await fetch(new URL(`/workbench/diagnostics/${diagnosticID}`, this.#origin), {
+                headers: { Authorization: `Bearer ${token}` },
+                cache: "no-store", signal: AbortSignal.timeout(1500), redirect: "error",
+              });
+              if (response.ok) {
+                const records: unknown = await response.json();
+                if (Array.isArray(records)) diagnosticObserver(records.filter(isWorkbenchDiagnostic).slice(0, 8));
+              }
+            } catch { /* Diagnostics never change the portable outcome. */ }
+          }
           await invocation.emitOutput(frame);
         })
         .catch(error => {
@@ -238,6 +260,9 @@ export class OBStartFrameInvoker implements BindingInvoker {
           if (socket.readyState !== WebSocket.OPEN) {
             throw new InvocationError(ERR_STREAM_ERROR);
           }
+          if (this.#diagnostics && frame && typeof frame === "object" && "kind" in frame && frame.kind === "open" && "input" in frame) {
+            try { diagnosticObserver = this.#diagnostics(frame.input); } catch { /* Presentation is optional. */ }
+          }
           socket.send(JSON.stringify(frame));
         }
       };
@@ -264,6 +289,14 @@ export class OBStartFrameInvoker implements BindingInvoker {
         throw new InvocationError(ERR_FRAME_PROTOCOL);
     }
   }
+}
+
+function isWorkbenchDiagnostic(value: unknown): value is WorkbenchDiagnostic {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Partial<WorkbenchDiagnostic>;
+  return (item.phase === "input" || item.phase === "output") &&
+    typeof item.pointer === "string" && item.pointer.length <= 1024 &&
+    typeof item.keyword === "string" && item.keyword.length <= 64;
 }
 
 function encodeBase64Url(value: string): string {

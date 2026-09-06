@@ -2235,6 +2235,8 @@ const CODE_SUMMARIES: Record<string, string> = {
   ERR_CANCELLED: "The operation was cancelled.",
   ERR_CONNECT_FAILED: CONNECT_FAILED_SUMMARY,
   ERR_UNAVAILABLE: "The target could not be reached.",
+  ERR_REFUSED: "The binding refused this invocation. Check the selected binding, declared input requirements, and supplied configuration before retrying.",
+  ERR_EXECUTION_FAILED: "The binding reported an unsuccessful execution. Check the service and its protocol-specific diagnostics before deciding whether a retry is safe.",
 };
 
 export function presentInvocationError(

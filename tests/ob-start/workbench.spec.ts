@@ -1452,7 +1452,7 @@ test("a stale cookie from a rotated token does not authenticate", async ({
 // surfaces they belong to — the pill for this workbench's own credential,
 // the document block for the document's target credentials — and context
 // now rides the workspace, so it survives a reload it never used to.
-test("target credentials belong to the document and survive a reload", async ({
+test("manual context belongs to one attempt and is not restored as document-wide authority", async ({
   page,
 }) => {
   await page.goto("/#token=test-token");
@@ -1471,8 +1471,8 @@ test("target credentials belong to the document and survive a reload", async ({
   await door.click();
   const dialog = page.locator("#context-dialog");
   await expect(dialog).toBeVisible();
-  await expect(page.locator("#target-context-status")).toHaveText(
-    "No target credentials configured.",
+  await expect(page.locator("#target-context-status")).toContainText(
+    "No context will be sent automatically.",
   );
 
   await page.locator(".raw-context summary").click();
@@ -1481,23 +1481,22 @@ test("target credentials belong to the document and survive a reload", async ({
     .fill('{"bearerToken":"document-scoped-token"}');
   await page.locator('#target-context-form button[type="submit"]').click();
   await expect(page.locator("#target-context-status")).toHaveText(
-    "Context is configured for the selected target.",
+    "Context is configured for one selected invocation attempt.",
   );
   await page.locator("#context-close").click();
   await expect(dialog).toBeHidden();
 
-  // Applying context is work: it mints a workspace and rides the record.
+  // Applying context may mint a working document, but not an unscoped
+  // credential profile. A restored workspace must require fresh authorization.
   await page.waitForTimeout(700);
   await page.reload();
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
-  await expect(page.locator("#target-context-status")).toHaveText(
-    "Context is configured for the selected target.",
+  await expect(page.locator("#target-context-status")).toContainText(
+    "No context will be sent automatically.",
     { timeout: 15_000 },
   );
   await page.locator("#context-open").click();
-  await expect(page.locator("#target-context")).toHaveValue(
-    /document-scoped-token/,
-  );
+  await expect(page.locator("#target-context")).toHaveValue("");
   await page.locator("#context-close").click();
 
   // The strip's status line is a button only when it opens something. With
