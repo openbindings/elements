@@ -244,7 +244,7 @@ export class SourceDetailElement extends OpenBindingsElement {
     );
 
     reconcile(refs.require(".target-list"), targets, {
-      key: (target, index) => `${index}:${target.selector ?? ""}`,
+      key: (target, index) => `${index}:${typeof target.selector === "string" ? target.selector : ""}`,
       create: () => {
         const item = document.createElement("li");
         const selector = document.createElement("code");

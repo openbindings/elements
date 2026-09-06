@@ -198,6 +198,9 @@ describe("SourceDetailElement", () => {
     [{ selector: null }, "Invalid inspection target: selector must be a string"],
     [{ selector: 0 }, "Invalid inspection target: selector must be a string"],
     [{ selector: false }, "Invalid inspection target: selector must be a string"],
+    [{ selector: {} }, "Invalid inspection target: selector must be a string"],
+    [{ selector: [] }, "Invalid inspection target: selector must be a string"],
+    [{ selector: { toString: null } }, "Invalid inspection target: selector must be a string"],
   ])("shows malformed inspection selectors without inventing a target: %j", async (target, message) => {
     const element = mount();
     element.obi = obi;
