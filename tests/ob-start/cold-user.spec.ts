@@ -5,6 +5,11 @@ import type { AddressInfo } from "node:net";
 let servers: Server[] = [];
 let origins: string[] = [];
 let delayedTarget: number | null = null;
+let heldResponses: Array<() => void> = [];
+
+function releaseHeldResponses() {
+  for (const release of heldResponses.splice(0)) release();
+}
 let receipts: { target: number; path: string; key: boolean; backend: boolean; query: string }[] = [];
 
 test.beforeAll(async () => {
@@ -22,7 +27,7 @@ test.beforeAll(async () => {
             "/choice": { get: { operationId: "chooseServer", servers: [{ url: origins[0] + "/api" }, { url: origins[1] + "/api" }], responses: { "200": ok } } },
             "/drift": { get: { operationId: "drift", responses: { "200": ok } } },
           } });
-        if (delayedTarget === target) setTimeout(() => res.end(document), 700);
+        if (delayedTarget === target) heldResponses.push(() => res.end(document));
         else res.end(document);
         return;
       }
@@ -37,13 +42,20 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  releaseHeldResponses();
   await Promise.all(servers.map(server => new Promise<void>(resolve => server.close(() => resolve()))));
 });
 test.beforeEach(async ({ page }) => {
   receipts = [];
   delayedTarget = null;
+  releaseHeldResponses();
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+});
+
+test.afterEach(() => {
+  delayedTarget = null;
+  releaseHeldResponses();
 });
 
 async function acquire(page: Page, target: number) {
@@ -137,8 +149,13 @@ test("a late old-document challenge cannot authorize the replacement", async ({ 
   await select(page, "secure");
   delayedTarget = 0;
   await page.locator("#sheet-run").click();
+  // Prove the old request is in flight, then keep its response blocked until
+  // replacement completes. Wall-clock fixture delays cannot establish order.
+  await expect.poll(() => heldResponses.length).toBeGreaterThan(0);
   await acquire(page, 1);
-  await page.waitForTimeout(1000); // deliberately exceeds the old fixture response delay
+  delayedTarget = null;
+  releaseHeldResponses();
+  await page.waitForTimeout(1000); // bounded observation window for a stale challenge
   await expect(page.locator("#target-requirements")).toBeHidden();
   expect(receipts.filter(r => r.path === "/api/secure")).toEqual([]);
   await select(page, "secure");

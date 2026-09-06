@@ -100,7 +100,7 @@ jobs:
         working-directory: openbindings-ts
         run: |
           pnpm install --frozen-lockfile
-          pnpm --filter @openbindings/sdk build
+          pnpm --filter @openbindings/sdk... build
 
       - name: Install element dependencies
         working-directory: elements
