@@ -122,6 +122,10 @@
     "rev": 17,
     "detail": "show which binding specs can be ingested; waits on the document-verb re-homing (review/120)"
   },
+  "openbindings.ob.checkBindingSpecs": {
+    "status": "internal",
+    "detail": "exact binding-support negotiation performed by the embedded invocation carrier"
+  },
   "openbindings.ob.prepareBinding": {
     "status": "internal",
     "detail": "server-side invocation preflight path"

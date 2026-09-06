@@ -29,6 +29,9 @@ import {
   type OperationSource,
 } from "@openbindings/ui-core";
 import type {
+  BindingInvokerInputFrame,
+  BindingInvokerOutputFrame,
+  InvocationInputFrame,
   OperationFrameError,
   OperationInvokerInputFrame,
   OperationInvokerOutputFrame,
@@ -55,7 +58,10 @@ import {
   type SchemaObjectField,
   type SchemaPrimitiveField,
 } from "./input-model.js";
-import { invokeOperationRequirement } from "./requirement.js";
+import {
+  invokeBindingRequirement,
+  invokeOperationRequirement,
+} from "./requirement.js";
 
 export {
   analyzeInputSchema,
@@ -74,11 +80,18 @@ export type {
 } from "./input-model.js";
 
 export {
+  BINDING_INVOKER_OPERATION,
+  bindingInvokerInterface,
+  invokeBindingRequirement,
   invokeOperationRequirement,
   operationInvokerInterface,
   OPERATION_INVOKER_OPERATION,
 } from "./requirement.js";
 export type {
+  BindingInvocationInput,
+  BindingInvokerInputFrame,
+  BindingInvokerOutputFrame,
+  InvocationInputFrame,
   OperationFrameError,
   OperationInvocationInput,
   OperationInvokerInputFrame,
@@ -90,16 +103,22 @@ export const DEFAULT_MAX_DISPLAYED_OUTPUTS = 100;
 export type OperationInputMode = "single" | "sequence";
 export type OperationInputView = "json" | "form";
 export type OperationWorkbenchLayout = "stacked" | "split";
+export type OperationInvocationMode = "operation" | "binding";
 
 const SEQUENCE_FORM_REASON =
   'Form view edits one JSON value. Switch the cardinality to "One value" to use it.';
 
 
 
-type DependencyResolution = OperationRequirementResolution<
-  OperationInvokerInputFrame,
-  OperationInvokerOutputFrame
->;
+type DependencyResolution =
+  | OperationRequirementResolution<
+      OperationInvokerInputFrame,
+      OperationInvokerOutputFrame
+    >
+  | OperationRequirementResolution<
+      BindingInvokerInputFrame,
+      BindingInvokerOutputFrame
+    >;
 
 type DependencyState =
   | { status: "unavailable"; message: string }
@@ -127,6 +146,8 @@ export interface OperationDependencyStateDetail {
 export interface InvocationStartDetail {
   interface: OBInterface;
   operationKey: string;
+  invocationMode: OperationInvocationMode;
+  bindingKey?: string;
 }
 
 export interface InvocationOutputDetail {
@@ -143,6 +164,11 @@ export interface InvocationInputChangeDetail {
   operationKey: string;
   text: string;
   mode: OperationInputMode;
+  invocationMode: OperationInvocationMode;
+}
+
+export interface InvocationModeChangeDetail {
+  invocationMode: OperationInvocationMode;
 }
 
 export interface InvocationContextRequiredDetail {
@@ -188,6 +214,7 @@ export interface OperationWorkbenchEventMap {
   "ob-invocation-start": CustomEvent<InvocationStartDetail>;
   "ob-output": CustomEvent<InvocationOutputDetail>;
   "ob-input-change": CustomEvent<InvocationInputChangeDetail>;
+  "ob-invocation-mode-change": CustomEvent<InvocationModeChangeDetail>;
   "ob-input-closed": CustomEvent<InvocationInputClosedDetail>;
   "ob-context-required": CustomEvent<InvocationContextRequiredDetail>;
   "ob-invocation-complete": CustomEvent<InvocationCompleteDetail>;
@@ -201,6 +228,11 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
   #operationSource: OperationSource | null = null;
   #context: Record<string, unknown> | null = null;
   #inputText = "";
+  #invocationMode: OperationInvocationMode = "operation";
+  #modeInputText: Record<OperationInvocationMode, string> = {
+    operation: "",
+    binding: "",
+  };
   #inputMode: OperationInputMode = "single";
   #inputTouched = false;
   #dependency: DependencyState = {
@@ -210,7 +242,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
   #unsubscribe: (() => void) | null = null;
   #resolutionController: AbortController | null = null;
   #activeInvocation:
-    | Invocation<OperationInvokerInputFrame, OperationInvokerOutputFrame>
+    | Invocation<InvocationInputFrame, OperationInvokerOutputFrame>
     | null = null;
   #runID = 0;
   #running = false;
@@ -254,7 +286,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
   #layoutObserver: ResizeObserver | null = null;
 
   static get observedAttributes(): string[] {
-    return ["layout", "hide-identity", "hide-run", "flush"];
+    return ["layout", "hide-identity", "hide-run", "flush", "invocation-mode"];
   }
 
   attributeChangedCallback(
@@ -270,6 +302,9 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     if (name === "hide-identity") this.hideIdentity = value !== null;
     if (name === "hide-run") this.hideRun = value !== null;
     if (name === "flush") this.flush = value !== null;
+    if (name === "invocation-mode") {
+      this.invocationMode = value === "binding" ? "binding" : "operation";
+    }
   }
 
   /**
@@ -339,6 +374,8 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
   set obi(value: OBInterface | null) {
     if (value === this.#obi) return;
     this.#obi = value;
+    this.#modeInputText = { operation: "", binding: "" };
+    this.#inputText = "";
     this.#inputTouched = false;
     this.#resetInputPresentation();
     this.#resetInput();
@@ -354,6 +391,8 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
   set operationKey(value: string | null) {
     if (value === this.#operationKey) return;
     this.#operationKey = value;
+    this.#modeInputText = { operation: "", binding: "" };
+    this.#inputText = "";
     this.#inputTouched = false;
     this.#resetInputPresentation();
     this.#resetInput();
@@ -371,6 +410,34 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     this.#bindingKey = value;
     this.#clearResult();
     void this.cancel();
+    if (this.#invocationMode === "binding") this.#resolveDependency();
+    this.requestRender();
+  }
+
+  /**
+   * Chooses the semantic operation contract or an explicit raw binding hop.
+   * Raw mode is diagnostic: it bypasses operation schemas and transforms and
+   * requires an exact binding key. It remains protocol-neutral because the
+   * binding-invoker contract treats the source and selector opaquely.
+   */
+  get invocationMode(): OperationInvocationMode {
+    return this.#invocationMode;
+  }
+
+  set invocationMode(value: OperationInvocationMode) {
+    if (value !== "operation" && value !== "binding") {
+      throw new TypeError('invocationMode must be "operation" or "binding"');
+    }
+    if (value === this.#invocationMode) return;
+    this.#modeInputText[this.#invocationMode] = this.#inputText;
+    this.#invocationMode = value;
+    if (this.getAttribute("invocation-mode") !== value) this.setAttribute("invocation-mode", value);
+    this.#inputText = this.#modeInputText[value];
+    this.#inputView = "json";
+    this.#inputTouched = Boolean(this.#inputText);
+    this.#clearResult();
+    void this.cancel();
+    this.#resolveDependency();
     this.requestRender();
   }
 
@@ -484,6 +551,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
   }
 
   resetInputToSchema(): boolean {
+    if (this.#invocationMode === "binding") return false;
     const operation =
       this.#obi && this.#operationKey
         ? this.#obi.operations[this.#operationKey]
@@ -601,11 +669,25 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     const targetInterface = this.#obi;
     const targetOperationKey = this.#operationKey;
     const targetBindingKey = this.#bindingKey;
+    const targetInvocationMode = this.#invocationMode;
     const operation =
       this.#obi && this.#operationKey
         ? this.#obi.operations[this.#operationKey]
         : undefined;
     if (!targetInterface || !targetOperationKey || !operation) return;
+    const rawBinding = targetBindingKey
+      ? targetInterface.bindings?.[targetBindingKey]
+      : undefined;
+    const rawSource = rawBinding
+      ? targetInterface.sources?.[rawBinding.source]
+      : undefined;
+    const rawSelector = typeof rawBinding?.selector === "string"
+      ? rawBinding.selector
+      : undefined;
+    if (
+      targetInvocationMode === "binding" &&
+      (!rawBinding || !rawSource || rawSelector === undefined)
+    ) return;
     if (this.#dependency.status !== "available") return;
 
     // What the caller writes is the caller's to decide, and an empty editor is
@@ -649,6 +731,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       this.#obi !== targetInterface ||
       this.#operationKey !== targetOperationKey ||
       this.#bindingKey !== targetBindingKey
+      || this.#invocationMode !== targetInvocationMode
     ) {
       return;
     }
@@ -660,7 +743,10 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
 
     const runID = ++this.#runID;
     const runStart = performance.now();
-    const call = resolution.match.invoke();
+    const call = resolution.match.invoke() as Invocation<
+      InvocationInputFrame,
+      OperationInvokerOutputFrame
+    >;
     this.#activeInvocation = call;
     this.#running = true;
     this.#outputs = [];
@@ -674,6 +760,8 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     this.emit<InvocationStartDetail>("ob-invocation-start", {
       interface: targetInterface,
       operationKey: targetOperationKey,
+      invocationMode: targetInvocationMode,
+      ...(targetBindingKey ? { bindingKey: targetBindingKey } : {}),
     });
     this.requestRender();
 
@@ -728,16 +816,25 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     };
 
     const pump = async () => {
-      const open: OperationInvokerInputFrame = {
-        kind: "open",
-        input: {
-          interface: targetInterface,
-          ...(targetBindingKey
-            ? { binding: targetBindingKey }
-            : { operation: targetOperationKey }),
-          ...(targetContext ? { context: targetContext } : {}),
-        },
-      };
+      const open: InvocationInputFrame = targetInvocationMode === "binding"
+        ? {
+            kind: "open",
+            input: {
+              source: rawSource!,
+              selector: rawSelector!,
+              ...(targetContext ? { context: targetContext } : {}),
+            },
+          }
+        : {
+            kind: "open",
+            input: {
+              interface: targetInterface,
+              ...(targetBindingKey
+                ? { binding: targetBindingKey }
+                : { operation: targetOperationKey }),
+              ...(targetContext ? { context: targetContext } : {}),
+            },
+          };
       await call.write(open);
       for (const value of inputValues) {
         await call.write({ kind: "input", value });
@@ -852,6 +949,19 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
         this.emit<BindingSelectDetail>("ob-binding-select", {
           bindingKey: key,
           binding,
+        });
+      });
+
+    refs
+      .find<HTMLSelectElement>(".invocation-mode")
+      ?.addEventListener("change", event => {
+        const mode = (event.target as HTMLSelectElement).value === "binding"
+          ? "binding"
+          : "operation";
+        if (mode === this.#invocationMode) return;
+        this.invocationMode = mode;
+        this.emit<InvocationModeChangeDetail>("ob-invocation-mode-change", {
+          invocationMode: mode,
         });
       });
 
@@ -989,6 +1099,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     const errorDetails = refs.find<HTMLDetailsElement>(".error details");
     const bindingBar = refs.find(".binding-bar");
     const bindingSelect = refs.find<HTMLSelectElement>(".binding-select");
+    const invocationMode = refs.find<HTMLSelectElement>(".invocation-mode");
     const statusMessage = this.#running
       ? "Running"
       : this.#bindingKey && this.#dependency.status === "available"
@@ -1005,6 +1116,14 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     if (status) {
       status.textContent = statusMessage;
       status.className = `status ${this.#dependency.status}`;
+    }
+    if (invocationMode) {
+      invocationMode.value = this.#invocationMode;
+      invocationMode.disabled = this.#running;
+      invocationMode.setAttribute(
+        "aria-label",
+        `Invocation level for ${this.#operationKey ?? "operation"}`,
+      );
     }
 
     if (!this.#obi || !this.#operationKey || !operation) {
@@ -1067,6 +1186,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     // nothing else. The JSON editor is always open: a caller may always speak,
     // and a caller with nothing to say says so by leaving it empty.
     const hasContract =
+      this.#invocationMode === "operation" &&
       operation.input !== undefined && operation.input !== null;
     const analysis = hasContract ? this.#analyzeInput(operation) : null;
     const form = hasContract
@@ -1082,7 +1202,9 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       editor.hidden = showForm;
       editor.readOnly = this.#running;
       editor.text = this.#inputText;
-      editor.label = `Input for ${this.#operationKey ?? "operation"} as JSON`;
+      editor.label = this.#invocationMode === "binding"
+        ? `Raw binding input for ${this.#bindingKey ?? "selected binding"} as JSON`
+        : `Input for ${this.#operationKey ?? "operation"} as JSON`;
       editor.placeholder =
         this.#inputMode === "single"
           ? "Enter one JSON input value"
@@ -1117,9 +1239,16 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       resetInput.disabled = this.#running || !starterAvailable;
     }
     // A note, not a wall: the editor stays open beneath it.
-    if (inputEmpty) inputEmpty.hidden = hasContract;
+    if (inputEmpty) {
+      inputEmpty.hidden = hasContract;
+      inputEmpty.textContent = this.#invocationMode === "binding"
+        ? "Raw binding mode bypasses operation schemas and transforms. Supply the binding-level value expected by the selected binding specification."
+        : "No input contract declared — the binding decides what this operation accepts.";
+    }
 
-    const available = this.#dependency.status === "available";
+    const available =
+      this.#dependency.status === "available" &&
+      (this.#invocationMode === "operation" || Boolean(this.#bindingKey));
     if (runButton) {
       runButton.disabled = !available || this.#running;
     }
@@ -1274,7 +1403,9 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       this.#operationKey,
       operation,
     );
-    const show = entries.length >= 2;
+    const show = this.#invocationMode === "binding"
+      ? entries.length >= 1
+      : entries.length >= 2;
     bar.hidden = !show;
     if (!show) return;
 
@@ -1817,6 +1948,25 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       return;
     }
 
+    const rawBinding = this.#bindingKey
+      ? this.#obi?.bindings?.[this.#bindingKey]
+      : undefined;
+    const rawSource = rawBinding
+      ? this.#obi?.sources?.[rawBinding.source]
+      : undefined;
+    if (
+      this.#invocationMode === "binding" &&
+      (!rawBinding || !rawSource || typeof rawBinding.selector !== "string")
+    ) {
+      this.#dependency = {
+        status: "unavailable",
+        message: "Choose a complete binding for raw invocation",
+      };
+      this.#emitDependencyState();
+      this.requestRender();
+      return;
+    }
+
     const controller = new AbortController();
     this.#resolutionController = controller;
     this.#dependency = {
@@ -1826,11 +1976,19 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     this.#emitDependencyState();
     this.requestRender();
 
-    void resolveOperationRequirement(
-      invokeOperationRequirement,
-      source.snapshot(),
-      { signal: controller.signal },
-    ).then(
+    const pending: Promise<DependencyResolution> =
+      this.#invocationMode === "binding"
+        ? resolveOperationRequirement(
+            invokeBindingRequirement,
+            source.snapshot(),
+            { signal: controller.signal },
+          )
+        : resolveOperationRequirement(
+            invokeOperationRequirement,
+            source.snapshot(),
+            { signal: controller.signal },
+          );
+    void pending.then(
       resolution => {
         if (controller.signal.aborted) return;
         this.#resolutionController = null;
@@ -1849,7 +2007,9 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
         } else {
           this.#dependency = {
             status: "unavailable",
-            message: "No compatible Operation Invoker is available",
+            message: this.#invocationMode === "binding"
+              ? "No compatible Binding Invoker is available"
+              : "No compatible Operation Invoker is available",
           };
         }
         this.#emitDependencyState();
@@ -1884,14 +2044,15 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       operationKey: this.#operationKey,
       text: this.#inputText,
       mode: this.#inputMode,
+      invocationMode: this.#invocationMode,
     });
   }
 }
 
 /**
  * The bindings of one operation in display order. A binding belongs to the
- * operation when its `operation` field names the operation key or any alias —
- * the key plus aliases form one flat namespace (OBI-T-12). Order: descending
+ * operation when its `operation` field names the canonical operation key
+ * (OBI-D-08). Order: descending
  * numeric `preference`, entries without a preference last, ties broken
  * lexicographically by binding key. This order is presentation only; it is
  * not a selection policy.
@@ -1899,17 +2060,11 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
 function operationBindingEntries(
   obi: OBInterface | null,
   operationKey: string | null,
-  operation: Operation | undefined,
+  _operation: Operation | undefined,
 ): Array<[string, BindingEntry]> {
   if (!obi?.bindings || !operationKey) return [];
-  const names = new Set<string>([operationKey]);
-  if (Array.isArray(operation?.aliases)) {
-    for (const alias of operation.aliases) {
-      if (typeof alias === "string") names.add(alias);
-    }
-  }
   const entries = Object.entries(obi.bindings).filter(([, entry]) =>
-    names.has(entry.operation),
+    entry.operation === operationKey,
   );
   entries.sort(([keyA, entryA], [keyB, entryB]) => {
     const preferenceA =
@@ -2080,6 +2235,8 @@ const CODE_SUMMARIES: Record<string, string> = {
   ERR_CANCELLED: "The operation was cancelled.",
   ERR_CONNECT_FAILED: CONNECT_FAILED_SUMMARY,
   ERR_UNAVAILABLE: "The target could not be reached.",
+  ERR_REFUSED: "The binding refused this invocation. Check the selected binding, declared input requirements, and supplied configuration before retrying.",
+  ERR_EXECUTION_FAILED: "The binding reported an unsuccessful execution. Check the service and its protocol-specific diagnostics before deciding whether a retry is safe.",
 };
 
 export function presentInvocationError(
@@ -2417,6 +2574,13 @@ const CONTENT_SHELL = `
              <h2></h2>
            </div>
            <div class="header-tools">
+             <label class="invocation-mode-bar">
+               <span>invoke</span>
+               <select class="invocation-mode" part="invocation-mode">
+                 <option value="operation">operation contract</option>
+                 <option value="binding">raw binding</option>
+               </select>
+             </label>
              <span class="binding-bar" part="binding-bar" hidden>
                <span aria-hidden="true">via</span>
                <select class="binding-select" part="binding-select"></select>
@@ -2734,7 +2898,16 @@ const styles = `
     font-size: 0.7rem;
   }
 
+  .invocation-mode-bar {
+    display: inline-flex;
+    gap: 0.35rem;
+    align-items: center;
+    color: var(--_ob-color-text-muted);
+    font-size: 0.7rem;
+  }
+
   .binding-select,
+  .invocation-mode,
   .input-shape {
     min-height: 1.8rem;
     padding: 0.2rem 0.35rem;

@@ -47,12 +47,9 @@ export interface WorkspaceRecord {
    * existing restore path replays it without knowing workspaces exist. */
   sessionsJSON: string | null;
   /**
-   * Target invocation context for THIS document (rev 17.20). It rides the
-   * workspace because it belongs to the document whose operations it
-   * authorizes — while it lived in app chrome it evaporated on every
-   * reload, which is exactly the loss 17.18 set out to end. It can carry
-   * secrets, so the honest statement is the one the dialog makes: held in
-   * this browser, alongside the session, sent only to the selected target.
+   * Legacy unscoped context storage slot. The workbench writes null and
+   * ignores old values on restore. A document is not an authorization scope;
+   * new credentials stay in attempt state or bounded, challenge-keyed RAM.
    */
   context: Record<string, unknown> | null;
   createdAt: number;

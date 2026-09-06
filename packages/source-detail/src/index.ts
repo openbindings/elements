@@ -27,7 +27,8 @@ export interface SourceBindingDetail {
  */
 export interface SourceInspection {
   targets?: Array<{
-    selector?: string;
+    /** Required by Source Inspector; interpretation belongs to the binding specification. */
+    selector: string;
     operationKey?: string;
     operation?: { description?: string };
   }>;
@@ -253,7 +254,13 @@ export class SourceDetailElement extends OpenBindingsElement {
       },
       update: (node, target) => {
         const selector = node.querySelector("code");
-        if (selector) setTextIfChanged(selector, target.selector ?? "whole source");
+        if (selector) {
+          const value: unknown = target.selector;
+          setTextIfChanged(selector,
+            value === undefined ? "Invalid inspection target: missing selector"
+              : typeof value !== "string" ? "Invalid inspection target: selector must be a string"
+                : value === "" ? '"" (empty selector)' : value);
+        }
         const operation = node.querySelector("span");
         if (operation) {
           setTextIfChanged(
@@ -298,7 +305,11 @@ export class SourceDetailElement extends OpenBindingsElement {
         const operation = row.querySelector("span");
         if (operation) setTextIfChanged(operation, binding.operation);
         const selector = row.querySelector("code");
-        if (selector) setTextIfChanged(selector, binding.selector ?? "whole source");
+        if (selector) {
+          setTextIfChanged(selector, binding.selector === undefined
+            ? "Selector omitted"
+            : binding.selector === "" ? '"" (empty selector)' : binding.selector);
+        }
         const remove = row.querySelector<HTMLButtonElement>(".binding-remove");
         if (remove) {
           remove.setAttribute("aria-label", `Remove binding ${key}`);

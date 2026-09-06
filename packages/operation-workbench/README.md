@@ -1,12 +1,15 @@
 # `@openbindings/operation-workbench`
 
-Invokes a selected operation through any implementation of the published
-OpenBindings Operation Invoker interface.
+Invokes either a selected semantic operation through the published
+OpenBindings Operation Invoker interface or one exact binding through the
+published Binding Invoker interface.
 
 The element does not receive protocol implementations, URLs, tokens, or an
 `ob` client. Its application supplies an `OperationSource`; the element
-resolves its canonical `openbindings.operation-invoker.invokeOperation`
-requirement against that source.
+resolves either its canonical
+`openbindings.operation-invoker.invokeOperation` requirement or, in raw mode,
+its canonical `openbindings.binding-invoker.invokeBinding` requirement against
+that source. Both are protocol-neutral published contracts.
 
 ```html
 <ob-operation-workbench></ob-operation-workbench>
@@ -36,6 +39,13 @@ requirement against that source.
   element applies no selection policy of its own — it never auto-selects a
   binding, by `preference` or otherwise. Selection policy belongs to the host
   application, expressed by setting `bindingKey`.
+- `invocationMode: "operation" | "binding"` — defaults to `"operation"` and
+  reflects to the `invocation-mode` attribute. `"binding"` is an explicit
+  diagnostic/exploration lane: it requires an exact complete `bindingKey`,
+  sends the current JSON value unchanged to that binding, and bypasses the
+  operation's schemas and transforms. The two modes retain separate editor
+  text, so switching modes never silently reuses operation-shaped input as a
+  raw binding value.
 - `operationSource: OperationSource | null`
 - `context: Record<string, unknown> | null` — context passed by value to the
   selected target invocation
@@ -82,9 +92,11 @@ requirement against that source.
 - `ob-binding-select` — `{ bindingKey, binding }`; the same detail family as
   `@openbindings/operation-detail`. Emitted only when the user chooses a
   binding in the picker; programmatic `bindingKey` assignment never echoes.
-- `ob-invocation-start` — `{ interface, operationKey }`
+- `ob-invocation-mode-change` — `{ invocationMode }`; emitted only after a
+  user changes the mode selector. Programmatic assignment never echoes.
+- `ob-invocation-start` — `{ interface, operationKey, invocationMode }`
 - `ob-output` — `{ operationKey, value, index }`
-- `ob-input-change` — `{ operationKey, text, mode }`
+- `ob-input-change` — `{ operationKey, text, mode, invocationMode }`
 - `ob-input-closed` — `{ operationKey }`
 - `ob-context-required` — `{ operationKey, data?, error }`
 - `ob-invocation-complete` —
@@ -116,6 +128,16 @@ Every event is a bubbling, composed `CustomEvent`. The package augments
 
 Cmd+Enter (macOS) or Ctrl+Enter runs the operation from anywhere in the input
 surface.
+
+### Raw binding mode
+
+Raw mode is deliberately not a second protocol client. It resolves the same
+application-owned `OperationSource`, invokes the exact opaque binding key
+through the canonical Binding Invoker contract, and displays its output frame
+stream. The editor is JSON-only and schema reset/form controls are unavailable
+because operation schemas and transforms do not govern a binding-level value.
+This makes service drift and adapter behavior directly inspectable without
+teaching the element OpenAPI or any other binding family.
 
 ## Customization
 

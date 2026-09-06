@@ -11,6 +11,13 @@ const copies = [
       "packages/operation-workbench/src/requirements/operation-invoker.json",
     ),
   },
+  {
+    source: resolve(root, "../interfaces/binding-invoker/0.1.json"),
+    target: resolve(
+      root,
+      "packages/operation-workbench/src/requirements/binding-invoker.json",
+    ),
+  },
 ];
 
 for (const copy of copies) {

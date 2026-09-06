@@ -16,6 +16,20 @@ commits every verb through the contract (`pullSource`, `inspectSource`,
 - `pulling: boolean` — host-set while a pull is in flight; disables the Pull
   verb and relabels it
 
+## Selector display
+
+Inspection targets require a string `selector`, matching the published Source
+Inspector contract and the SDKs. Hosts that previously omitted this field must
+provide the inspector's actual selector; they must not substitute an empty
+string merely to satisfy the type. Untyped results with missing or non-string
+selectors show an invalid-target diagnostic. Empty strings are displayed
+explicitly, and other strings are preserved verbatim.
+
+For saved OBI bindings, an absent selector is displayed as "Selector omitted,"
+not as "whole source." These labels describe the supplied representation; they
+do not resolve a target or establish validity. Selector meaning, including
+omission, remains the governing binding specification's responsibility.
+
 ## Events
 
 - `ob-source-pull` `{ sourceKey }`

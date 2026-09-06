@@ -58,6 +58,7 @@ import {
   type ResolvedContextEntry,
 } from "./context-resolution.js";
 import "./styles.css";
+import { ContextMemory, matchingRetryContext } from "./context-memory.js";
 
 const explorer = requiredElement<OBIExplorerElement>("ob-obi-explorer");
 const interfaceEditor =
@@ -187,6 +188,17 @@ const tabContent = requiredElement<HTMLElement>("#tab-content");
 const sheetStatus = requiredElement<HTMLButtonElement>("#sheet-status");
 const sheetDot = requiredElement<HTMLElement>("#sheet-dot");
 const sheetRun = requiredElement<HTMLButtonElement>("#sheet-run");
+const invocationMode = requiredElement<HTMLSelectElement>("#invocation-mode");
+invocationMode.addEventListener("change", () => {
+  const invocation = activeInvocation();
+  if (!invocation) return;
+  resetAttemptContext();
+  invocation.invocationMode = invocationMode.value === "binding" ? "binding" : "operation";
+  bootstrapMessage.textContent = invocation.invocationMode === "binding"
+    ? "Binding mode bypasses operation schemas and transforms. Select an exact binding and explicitly Run; binding rules still apply."
+    : "Strict operation mode validates operation inputs and outputs and applies transforms.";
+  updateSheetStatus();
+});
 const sheetToggle = requiredElement<HTMLButtonElement>("#sheet-toggle");
 const schemasStrip = requiredElement<HTMLElement>("#schemas-strip");
 const schemasGutter = requiredElement<HTMLElement>("#schemas-gutter");
@@ -300,7 +312,9 @@ function workspaceSnapshot(): WorkspaceRecord | null {
     version: targetInterface.version?.trim() || "",
     origin: documentOrigin,
     sessionsJSON: currentSessionsJSON(),
-    context: targetContext,
+    // Attempt context is never a workspace credential profile. Older unscoped
+    // context records are deliberately not restored into live invocations.
+    context: null,
     createdAt: workspaceCreatedAt,
     updatedAt: Date.now(),
   };
@@ -363,15 +377,8 @@ function adoptWorkspace(record: WorkspaceRecord, note: string): void {
     }
   }
   setTarget(obi, record.label, sessionID);
-  // setTarget clears context (a target switch must not carry one service's
-  // credentials to another), so the record's own context is restored after
-  // it — this is the document coming back, not a navigation.
-  if (record.context) {
-    targetContext = record.context;
-    targetContextInput.value = JSON.stringify(record.context, null, 2);
-    applyTargetContext();
-    renderTargetContextState();
-  }
+  // Legacy document-wide context has no destination/requirement authorization.
+  // Ask again; preserving the document does not authorize replaying its secrets.
   // The buffer is restored VERBATIM — an unparseable mid-edit state comes
   // back exactly as typed, not as the last-valid document reformatted.
   if (record.documentText && record.documentText !== interfaceEditor.text) {
@@ -423,6 +430,15 @@ let obInvoker: OperationInvoker | null = null;
 let targetInterface: OBInterface | null = null;
 let targetLabel = "";
 let targetContext: Record<string, unknown> | null = null;
+let contextOwner: OperationWorkbenchElement | null = null;
+let retryDurableContext: Record<string, unknown> | null = null;
+let retryContextTarget: string | null = null;
+const contextMemory = new ContextMemory();
+let challengeOwner: OperationWorkbenchElement | null = null;
+let challengeRevision: OBInterface | null = null;
+let challengeBinding: string | null = null;
+let challengeMode: "operation" | "binding" = "operation";
+let contextRetryCount = 0;
 let pendingInterfaceDraft: OBInterface | null = null;
 let targetSessionID = "";
 
@@ -730,10 +746,17 @@ schemasGutter.addEventListener("dblclick", () => {
 // The invocation element's own compact binding picker emits the same intent event;
 // keep the contract view in sync with it.
 invocationSessions.addEventListener("ob-binding-select", event => {
+  resetAttemptContext();
   const detailEvent = event as CustomEvent<{ bindingKey: string }>;
   detail.selectedBindingKey = detailEvent.detail.bindingKey;
   bootstrapMessage.textContent = `Using binding ${detailEvent.detail.bindingKey}.`;
+  updateSheetStatus();
   schedulePreflight();
+});
+
+invocationSessions.addEventListener("ob-invocation-mode-change", () => {
+  resetAttemptContext();
+  updateSheetStatus();
 });
 
 operationTabs.addEventListener("ob-tab-activate", event => {
@@ -929,6 +952,9 @@ function applySheetLayout(): void {
  */
 function updateSheetStatus(): void {
   const session = activeSession();
+  const invocation = session?.kind === "operation" ? session.element : null;
+  invocationMode.value = invocation?.invocationMode ?? "operation";
+  invocationMode.disabled = !invocation || session?.status.state === "running";
   const status = session?.status ?? { state: "idle" as const };
   const capable = Boolean(obInvoker) && sessionAuth === "verified";
   // The dot is the status (fixed anchor beside the title): green ready,
@@ -969,14 +995,17 @@ function updateSheetStatus(): void {
   // credentials, and ONLY then: a button that opens nothing would be a
   // control lying about being one. Steady rails still hold — the element
   // never appears or vanishes, it stops being actionable.
-  const opensContext = Boolean(contextAdvisory) || status.state === "failed";
+  const opensContext = status.state === "failed"
+    ? status.code === "CONTEXT_REQUIRED"
+    : Boolean(contextAdvisory);
   sheetStatus.disabled = !opensContext;
   sheetStatus.classList.toggle("actionable", opensContext);
   sheetStatus.title = opensContext
     ? "Open target credentials for this document"
     : "";
   // Run is a fixture: present in both states, disabled when it cannot act.
-  sheetRun.disabled = !capable || status.state === "running";
+  sheetRun.disabled = !capable || status.state === "running" ||
+    (invocation?.invocationMode === "binding" && !invocation.bindingKey);
 }
 
 function formatDuration(durationMs: number): string {
@@ -1217,35 +1246,49 @@ requirementAlternative.addEventListener("change", renderRequirementFields);
 requirementForm.addEventListener("submit", event => {
   event.preventDefault();
   if (!contextChallenge) return;
+  const invocation = activeInvocation();
+  if (!invocation || challengeOwner !== invocation || challengeRevision !== targetInterface ||
+      challengeBinding !== invocation.bindingKey || challengeMode !== invocation.invocationMode) {
+    hideContextChallenge();
+    return;
+  }
   const alternative =
     contextChallenge.alternatives[Number(requirementAlternative.value)];
   if (!alternative) return;
   const resolved = contextFromRequirementFields(alternative);
   if (!resolved) return;
-  if (resolved.durable) {
-    targetContext = mergeContext(targetContext, resolved.durable);
-    targetContextInput.value = JSON.stringify(targetContext, null, 2);
+  const prior = contextOwner === invocation
+    ? matchingRetryContext(retryContextTarget, contextChallenge.target, retryDurableContext) : null;
+  const next = mergeContext(prior,
+    mergeContext(resolved.durable, resolved.transient ?? {}));
+  if (++contextRetryCount > 4 || JSON.stringify(next) === JSON.stringify(targetContext)) {
+    bootstrapMessage.textContent = "Context did not resolve the requirement. Start a new attempt or change the supplied values.";
+    return;
   }
+  for (const [index, requirement] of alternative.requirements.entries()) {
+    const fields: Record<string, string> = {};
+    for (const field of requirementFields.querySelectorAll<HTMLInputElement | HTMLSelectElement>(`[data-requirement-index="${index}"]`)) {
+      fields[field.dataset.field!] = field.value;
+    }
+    contextMemory.remember(contextChallenge.target, requirement, fields);
+  }
+  targetContext = next;
+  retryDurableContext = mergeContext(prior, resolved.durable ?? {});
+  retryContextTarget = contextChallenge.target;
+  contextOwner = invocation;
   applyTargetContext();
   renderTargetContextState();
-  // Only requirements that explicitly permit reuse may ride the workspace.
-  if (resolved.durable) ensureWorkspace();
   hideContextChallenge();
   bootstrapMessage.textContent = retryAfterContext
     ? "Credentials applied. Retrying the operation…"
     : "Credentials applied to this target.";
   const shouldRetry = retryAfterContext;
   retryAfterContext = false;
-  const invocation = activeInvocation();
   if (shouldRetry && invocation) {
     // One-shot context belongs to this exact invocation attempt. It never
     // enters target-global state, so another open or concurrent session
     // cannot observe it while the retry is running.
-    invocation.context = effectiveTargetContext(resolved.transient);
-    void invocation.run().finally(() => {
-      invocation.context = effectiveTargetContext();
-      renderTargetContextState();
-    });
+    void invocation.run();
   }
   else schedulePreflight();
 });
@@ -1318,12 +1361,16 @@ targetContextForm.addEventListener("submit", event => {
       throw new Error("target context must be one JSON object");
     }
     targetContext = parsed as Record<string, unknown>;
+    retryDurableContext = null;
+    retryContextTarget = null;
+    contextOwner = activeInvocation();
+    if (!contextOwner) throw new Error("Select an invocation before applying context.");
     applyTargetContext();
     renderTargetContextState();
     ensureWorkspace();
     hideContextChallenge();
     bootstrapMessage.textContent =
-      "Target context applied to invocations for the selected interface.";
+      "Context applied to the selected invocation attempt only.";
     schedulePreflight();
   } catch (error) {
     bootstrapMessage.textContent = errorText(error);
@@ -1471,6 +1518,26 @@ async function bootstrap(): Promise<void> {
       new OBStartFrameInvoker({
         origin: globalThis.location.origin,
         token: () => sessionToken,
+        diagnostics: input => {
+          if (!isRecord(input)) return undefined;
+          // Match only an unambiguous running UI session. Background services
+          // and concurrent identical routes never borrow a tab's diagnostics.
+          const candidates = [...sessionsById.values()].filter((session): session is OperationSession =>
+            session.kind === "operation" && session.status.state === "running" &&
+            (input.binding ? session.element.bindingKey === input.binding : session.operationKey === input.operation));
+          if (candidates.length !== 1) return undefined;
+          const session = candidates[0]!;
+          const revision = targetInterface;
+          const status = session.status;
+          return records => {
+            if (targetInterface !== revision || session.status !== status || activeSessionId !== session.id || !records.length) return;
+            bootstrapMessage.textContent = records.map(record =>
+              `Operation contract ${record.phase}: ${record.pointer || "<root>"} (${record.keyword || "validation"}).`).join("\n") +
+              (records.some(record => record.phase === "output")
+                ? " The source returned a value that does not match the operation contract. For deliberate exploration, select Binding (raw), choose the exact binding, then Run."
+                : " Check the operation input schema and supply the required fields with their declared types.");
+          };
+        },
       }),
     ]);
     publishOBImplementation();
@@ -1754,7 +1821,7 @@ async function invokeThroughOB<I, O>(
         interface: target,
         operation,
         ...(target === obInterface && sessionToken
-          ? { context: { bearerToken: sessionToken } }
+          ? { context: obStartSelfInvocationContext(null) }
           : {}),
       },
     });
@@ -1784,6 +1851,8 @@ async function invokeThroughOB<I, O>(
 }
 
 function setTarget(obi: OBInterface, label: string, sessionID: string): void {
+  resetAttemptContext();
+  contextMemory.clear();
   preflightAttempt += 1;
   preflightKey = null;
   preflightCache.clear();
@@ -1829,6 +1898,10 @@ function updateCurrentTarget(
   options: { editorOriginated?: boolean } = {},
 ): void {
   const previous = targetInterface;
+  // Every revised document invalidates pending authorization, including the
+  // import/replace, merge, source-pull, and editor reconciliation paths.
+  resetAttemptContext();
+  contextMemory.clear();
   const previousActiveId = activeSessionId;
 
   // Sessions whose subject vanished from the document close; the rest keep
@@ -1845,10 +1918,13 @@ function updateCurrentTarget(
   for (const session of sessionsById.values()) {
     if (session.kind !== "operation") continue;
     const invocation = session.element;
+    // Replacing the component's document cancels its old run without emitting
+    // that run's completion event. Do not leave the host's Run button latched.
+    session.status = { state: "idle" };
     invocation.obi = obi;
     invocation.operationKey = session.operationKey;
     invocation.operationSource = operationEnvironment;
-    invocation.context = effectiveTargetContext();
+    invocation.context = effectiveTargetContext(null, invocation);
     const bindingKey = invocation.bindingKey;
     const binding = bindingKey ? obi.bindings?.[bindingKey] : null;
     if (!binding || binding.operation !== session.operationKey) {
@@ -2005,7 +2081,7 @@ function createOperationSession(seed: OperationSessionSeed): OperationSession {
   invocation.splitRatio = workspaceLayout.execSplit;
   invocation.bindingKey = preferredBindingKey(targetInterface, operationKey);
   invocation.operationSource = operationEnvironment;
-  invocation.context = effectiveTargetContext();
+  invocation.context = effectiveTargetContext(null, invocation);
   invocation.hidden = true;
   // The sheet strip + breadcrumb already name the invocation; the element's
   // identity header would be the third naming in two rows (rev 17.1). The
@@ -2047,6 +2123,7 @@ function createOperationSession(seed: OperationSessionSeed): OperationSession {
     if (activeSessionId === id) updateSheetStatus();
   });
   invocation.addEventListener("ob-invocation-complete", event => {
+    if (contextOwner === invocation) resetAttemptContext();
     session.status = {
       state: "done",
       outputCount: event.detail.outputCount,
@@ -2059,6 +2136,13 @@ function createOperationSession(seed: OperationSessionSeed): OperationSession {
   });
   invocation.addEventListener("ob-invocation-error", event => {
     const error = event.detail.error;
+    if (contextOwner === invocation && (error as { code?: string }).code !== "CONTEXT_REQUIRED") resetAttemptContext();
+    else if (contextOwner === invocation) {
+      // A non-durable resolution is consumed by this attempt even if a new
+      // challenge follows it. It must not become standing retry-chain context.
+      targetContext = retryDurableContext;
+      applyTargetContext();
+    }
     session.status = {
       state: "failed",
       code:
@@ -2070,9 +2154,10 @@ function createOperationSession(seed: OperationSessionSeed): OperationSession {
     if (activeSessionId === id) updateSheetStatus();
   });
   invocation.addEventListener("ob-context-required", event => {
+    if (!sessionsById.has(id) || invocation.obi !== targetInterface) return;
     if (activeSessionId !== id) focusSession(id);
-    openCredentialDialog();
     if (targetInterface === obInterface && !sessionToken) {
+      openCredentialDialog();
       bootstrapMessage.textContent =
         "This browser session needs the local ob start credential.";
       tokenInput.focus();
@@ -2117,10 +2202,11 @@ function duplicateSession(id: string): void {
     collapsed: source.collapsed,
     ratio: source.ratio,
   });
+  session.element.bindingKey = source.element.bindingKey;
+  session.element.invocationMode = source.element.invocationMode;
   session.element.inputText = source.element.inputText;
   session.element.inputMode = source.element.inputMode;
   session.element.inputView = source.element.inputView;
-  session.element.bindingKey = source.element.bindingKey;
   const index = openSessionIds.indexOf(id);
   if (index >= 0) openSessionIds.splice(index + 1, 0, session.id);
   focusSession(session.id);
@@ -2162,6 +2248,7 @@ function removeSession(id: string): void {
   const session = sessionsById.get(id);
   if (!session) return;
   if (session.kind === "operation") {
+    if (contextOwner === session.element || challengeOwner === session.element) resetAttemptContext();
     void session.element.cancel();
     session.element.remove();
   }
@@ -3048,7 +3135,7 @@ async function ensureAcquireCandidate(): Promise<AcquisitionCandidate | null> {
       if (!current()) return null;
       acquireCandidate = null;
       acquireResolvedFor = "";
-      showAcquireProblem(errorText(error));
+      showAcquireProblem(callFailureText(error));
       return null;
     })
     .finally(() => {
@@ -3285,7 +3372,7 @@ async function commitAcquisition(mode: "replace" | "merge"): Promise<void> {
     acquireDialog.close();
     applyManagedInterface(result.interface, mergeOutcomeText(target, result));
   } catch (error) {
-    showAcquireProblem(errorText(error));
+    showAcquireProblem(callFailureText(error));
   } finally {
     setAcquireBusy(false);
   }
@@ -3454,28 +3541,50 @@ function applyTargetContext(): void {
   // The local session token authenticates this ob start process. It must
   // never become an arbitrary remote target's bearer token. It is supplied
   // as target context only when the selected target is the server itself.
-  const context = effectiveTargetContext();
   for (const session of sessionsById.values()) {
-    if (session.kind === "operation") session.element.context = context;
+    if (session.kind === "operation") session.element.context = effectiveTargetContext(null, session.element);
   }
 }
 
 function effectiveTargetContext(
   oneShot: Record<string, unknown> | null = null,
+  invocation: OperationWorkbenchElement | null = activeInvocation(),
 ): Record<string, unknown> | null {
-  const selected = oneShot ? mergeContext(targetContext, oneShot) : targetContext;
+  const owned = invocation && invocation === contextOwner ? targetContext : null;
+  const selected = oneShot ? mergeContext(owned, oneShot) : owned;
   const base =
     targetInterface === obInterface && sessionToken
-      ? { ...(selected ?? {}), bearerToken: sessionToken }
+      ? obStartSelfInvocationContext(selected)
       : selected;
   return withPreferenceSelection(base);
 }
 
+/**
+ * The ob start API deliberately publishes OAuth and Bearer as two separate
+ * OpenAPI security alternatives. Its local browser session is specifically a
+ * Bearer session, so this application adapter makes that required choice
+ * explicitly instead of asking the protocol-neutral workbench to infer one.
+ */
+function obStartSelfInvocationContext(
+  selected: Record<string, unknown> | null,
+): Record<string, unknown> {
+  const configuration = selected?.configuration;
+  const configured = configuration && typeof configuration === "object" && !Array.isArray(configuration)
+    ? configuration as Record<string, unknown>
+    : {};
+  return {
+    ...(selected ?? {}),
+    bearerToken: sessionToken,
+    configuration: {
+      ...configured,
+      security: { index: 1 },
+    },
+  };
+}
+
 function clearTargetContext(): void {
-  targetContext = null;
-  targetContextInput.value = "";
-  applyTargetContext();
-  renderTargetContextState();
+  resetAttemptContext();
+  contextMemory.clear();
   // Clearing is a change worth persisting, but never worth MINTING a
   // workspace: erasing nothing on a pristine document is not work.
   if (workspaceId) autosaveWorkspace();
@@ -3485,10 +3594,27 @@ function clearTargetContext(): void {
   schedulePreflight();
 }
 
+function resetAttemptContext(): void {
+  targetContext = null;
+  contextOwner = null;
+  retryDurableContext = null;
+  retryContextTarget = null;
+  contextRetryCount = 0;
+  targetContextInput.value = "";
+  hideContextChallenge();
+  retryAfterContext = false;
+  preflightAttempt += 1;
+  preflightKey = null;
+  preflightCache.clear();
+  contextAdvisory = null;
+  applyTargetContext();
+  renderTargetContextState();
+}
+
 function renderTargetContextState(): void {
   targetContextStatus.textContent = targetContext
-    ? "Context is configured for the selected target."
-    : "No target credentials configured.";
+    ? "Context is configured for one selected invocation attempt."
+    : "No context will be sent automatically. Remembered values require a matching challenge and Apply.";
 }
 
 /**
@@ -3594,6 +3720,10 @@ async function preflightTarget(): Promise<void> {
 
 function showContextChallenge(details: ContextRequiredDetails): void {
   contextChallenge = details;
+  challengeOwner = activeInvocation();
+  challengeRevision = targetInterface;
+  challengeBinding = challengeOwner?.bindingKey ?? null;
+  challengeMode = challengeOwner?.invocationMode ?? "operation";
   requirementAlternative.replaceChildren();
   for (const [index, alternative] of details.alternatives.entries()) {
     const option = document.createElement("option");
@@ -3605,7 +3735,7 @@ function showContextChallenge(details: ContextRequiredDetails): void {
   requirementAlternativeLabel.hidden = details.alternatives.length <= 1;
   targetRequirements.hidden = false;
   targetRequirementsCopy.textContent = details.target
-    ? `Choose how this operation may access ${displayTarget(details.target)}.`
+    ? `Resolve requirements for context scope ${displayTarget(details.target)}. This scope is not necessarily the API destination.`
     : "Choose how to satisfy this operation’s runtime requirements.";
   renderRequirementFields();
   // A CONTEXT_REQUIRED failure IS the moment: open the repair surface
@@ -3615,6 +3745,8 @@ function showContextChallenge(details: ContextRequiredDetails): void {
 
 function hideContextChallenge(): void {
   contextChallenge = null;
+  challengeOwner = null;
+  challengeRevision = null;
   targetRequirements.hidden = true;
   requirementFields.replaceChildren();
 }
@@ -3669,6 +3801,7 @@ function requirementControls(
     input.dataset.requirementIndex = String(index);
     input.dataset.field = field;
     input.required = true;
+    input.value = contextMemory.recall(contextChallenge?.target ?? "", requirement)[field] ?? "";
     label.append(input);
     controls.push(label);
   };
@@ -3695,7 +3828,21 @@ function requirementControls(
       );
       break;
     case "config.value":
-      addInput("config.value", requirement.description || "Configuration value", "text");
+      if (isRecord(requirement.schema) && Array.isArray(requirement.schema.enum)) {
+        const label = document.createElement("label");
+        label.textContent = requirement.description || "Configuration value";
+        const select = document.createElement("select");
+        select.dataset.requirementIndex = String(index);
+        select.dataset.field = "config.value";
+        select.required = true;
+        select.append(new Option("Choose a value…", ""));
+        for (const value of requirement.schema.enum) {
+          select.append(new Option(typeof value === "string" ? value : JSON.stringify(value), JSON.stringify(value)));
+        }
+        select.value = contextMemory.recall(contextChallenge?.target ?? "", requirement)["config.value"] ?? "";
+        label.append(select);
+        controls.push(label);
+      } else addInput("config.value", requirement.description || "Configuration value", "text");
       break;
   }
   return controls;
@@ -3759,7 +3906,9 @@ function requirementFieldValue(
       if (!value) return null;
       const point = typeof requirement.point === "string" ? requirement.point : "";
       const path = typeof requirement.path === "string" ? requirement.path : "";
-      return configurationContext(point, path, value);
+      const typed = isRecord(requirement.schema) && Array.isArray(requirement.schema.enum)
+        ? JSON.parse(value) as unknown : value;
+      return configurationContext(point, path, typed);
     }
     default:
       return null;
@@ -3788,7 +3937,7 @@ function requirementLabel(requirement: ContextRequirement): string {
 }
 
 function focusFirstRequirement(): void {
-  const field = requirementFields.querySelector<HTMLInputElement>("input");
+  const field = requirementFields.querySelector<HTMLInputElement | HTMLSelectElement>("input, select");
   if (field) field.focus();
   else targetContextInput.focus();
 }
@@ -4143,7 +4292,9 @@ const CALL_FAILURE_TEXT_CAP = 800;
 
 /** The bounded ordinary message for a failed call through ob. */
 function callFailureText(error: unknown): string {
-  const message = errorText(error);
+  const message = error instanceof WireCallError
+    ? `Invocation completed unsuccessfully (${error.wire.code}).`
+    : errorText(error);
   return message.length > CALL_FAILURE_TEXT_CAP
     ? `${message.slice(0, CALL_FAILURE_TEXT_CAP)}…`
     : message;

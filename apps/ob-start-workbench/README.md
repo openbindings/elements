@@ -26,6 +26,13 @@ binding-family implementation. It:
 4. asks that operation to resolve/synthesize targets and invoke selected
    operations.
 
+The invocation workbench also offers an explicit raw-binding mode. The browser
+resolves the canonical Binding Invoker contract through the same environment
+and forwards an exact opaque binding selector to `ob`; it does not add an
+OpenAPI-specific route or parse meaning from the key. Raw mode bypasses
+operation schemas and transforms and is intended for deliberate exploration
+when the strict semantic operation reports service drift.
+
 Protocol processing stays in `ob`. A raw API artifact can therefore be
 resolved and invoked without shipping its binding family to the browser.
 
@@ -39,6 +46,24 @@ The session token authenticates the local `ob start` carrier. It is removed
 from the URL fragment immediately, retained in tab-scoped session storage, and
 never forwarded as the bearer token for an arbitrary resolved target. Target
 invocation context is a separate explicit value.
+
+Target context is scoped to one selected invocation attempt. Durable fields
+may be remembered in bounded, in-memory storage keyed by the exact opaque
+challenge target and requirement. A fresh matching challenge only prefills
+controls: the user must select Apply before anything is sent. One-shot fields
+are not remembered. Retry-chain context is discarded on a scope change, and
+automatic context retries are bounded. Document replacement, revision, and
+explicit clearing invalidate this memory. New workspace saves contain no
+target context; legacy unscoped context is ignored on restore, not replayed.
+Legacy records are not proactively erased, so this is not secure deletion of
+previously stored secrets.
+
+Strict operation failures can show value-free validation phase, instance path,
+and keyword through an authenticated, single-read, short-lived workbench
+diagnostic endpoint. This is a private host facility, not a portable invoker
+frame or error extension. It never exposes native error text or response values.
+Raw recovery remains an explicit mode and exact binding choice; a failed
+strict call is never automatically resent as a raw call.
 
 The application uses the server's optional `prepareOperation` capability to
 turn standard context requirements into focused controls before invocation.

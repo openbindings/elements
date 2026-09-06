@@ -9,11 +9,16 @@ import {
 import { OperationEnvironment } from "@openbindings/ui-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
+  BindingInvocationInput,
+  InvocationInputFrame,
   OperationFrameError,
   OperationInvokerInputFrame,
   OperationInvokerOutputFrame,
 } from "./frames.js";
-import { operationInvokerInterface } from "./requirement.js";
+import {
+  bindingInvokerInterface,
+  operationInvokerInterface,
+} from "./requirement.js";
 import {
   OPERATION_WORKBENCH_TAG,
   OperationWorkbenchElement,
@@ -33,6 +38,7 @@ class LocalOperationInvokerBinding implements BindingInvoker {
     operation?: string;
     binding?: string;
   }> = [];
+  readonly receivedBindingTargets: BindingInvocationInput[] = [];
 
   constructor(
     private readonly mode: "complete" | "hang" | "many" | "error" = "complete",
@@ -45,11 +51,18 @@ class LocalOperationInvokerBinding implements BindingInvoker {
     return [{ bindingSpec: LOCAL_BINDING_SPEC }];
   }
 
+  checkBindingSpecs(bindingSpecs: readonly string[]) {
+    return bindingSpecs.map(bindingSpec => ({
+      bindingSpec,
+      supported: bindingSpec === LOCAL_BINDING_SPEC,
+    }));
+  }
+
   invokeBinding<I = unknown, O = unknown>(
     _args: BindingInvocationArgs,
   ): InvocationImpl<I, O> {
     const invocation = new InvocationImpl<
-      OperationInvokerInputFrame,
+      InvocationInputFrame,
       OperationInvokerOutputFrame
     >();
     queueMicrotask(() => void this.drive(invocation));
@@ -58,7 +71,7 @@ class LocalOperationInvokerBinding implements BindingInvoker {
 
   private async drive(
     invocation: InvocationImpl<
-      OperationInvokerInputFrame,
+      InvocationInputFrame,
       OperationInvokerOutputFrame
     >,
   ): Promise<void> {
@@ -67,14 +80,18 @@ class LocalOperationInvokerBinding implements BindingInvoker {
     let targetInput: unknown;
     for await (const frame of invocation.inputs()) {
       if (frame.kind === "open") {
-        targetOperation = frame.input.operation ?? "";
-        targetBinding = frame.input.binding ?? "";
-        this.receivedTargets.push({
-          ...(frame.input.operation
-            ? { operation: frame.input.operation }
-            : {}),
-          ...(frame.input.binding ? { binding: frame.input.binding } : {}),
-        });
+        if ("source" in frame.input) {
+          this.receivedBindingTargets.push(frame.input);
+        } else {
+          targetOperation = frame.input.operation ?? "";
+          targetBinding = frame.input.binding ?? "";
+          this.receivedTargets.push({
+            ...(frame.input.operation
+              ? { operation: frame.input.operation }
+              : {}),
+            ...(frame.input.binding ? { binding: frame.input.binding } : {}),
+          });
+        }
       } else if (frame.kind === "input") {
         targetInput = frame.value;
         this.receivedInputs.push(frame.value);
@@ -139,6 +156,25 @@ function operationInvokerCandidate(): OBInterface {
     bindings: {
       invoke: {
         operation: "openbindings.operation-invoker.invokeOperation",
+        source: "local",
+        selector: "invoke",
+      },
+    },
+  };
+}
+
+function bindingInvokerCandidate(): OBInterface {
+  return {
+    ...structuredClone(bindingInvokerInterface),
+    sources: {
+      local: {
+        bindingSpec: LOCAL_BINDING_SPEC,
+        content: {},
+      },
+    },
+    bindings: {
+      invoke: {
+        operation: "openbindings.binding-invoker.invokeBinding",
         source: "local",
         selector: "invoke",
       },
@@ -270,6 +306,7 @@ describe("OperationWorkbenchElement", () => {
       operationKey: "echo",
       text: '{\n  "message": "hello"\n}',
       mode: "single",
+      invocationMode: "operation",
     });
 
     expect(element.resetInputToSchema()).toBe(true);
@@ -351,6 +388,66 @@ describe("OperationWorkbenchElement", () => {
 
     expect(binding.receivedTargets).toEqual([{ binding: "echo.http" }]);
     expect(element.bindingKey).toBe("echo.http");
+  });
+
+  it("makes raw binding invocation an explicit schema-and-transform bypass", async () => {
+    const binding = new LocalOperationInvokerBinding();
+    const environment = new OperationEnvironment([
+      {
+        interface: bindingInvokerCandidate(),
+        invoker: new OperationInvoker([binding]),
+      },
+    ]);
+    const element = document.createElement(
+      OPERATION_WORKBENCH_TAG,
+    ) as OperationWorkbenchElement;
+    element.obi = {
+      ...targetOBI,
+      sources: {
+        api: {
+          bindingSpec: "openbindings.openapi-3.1@1",
+          content: { openapi: "3.1.2" },
+        },
+      },
+      bindings: {
+        "echo.http": {
+          operation: "echo",
+          source: "api",
+          selector: "#/paths/~1echo/post",
+          inputTransform: "{'body': $}",
+        },
+      },
+    };
+    element.operationKey = "echo";
+    element.bindingKey = "echo.http";
+    element.operationSource = environment;
+    element.invocationMode = "binding";
+    element.inputText = '{"body":{"message":"wire"}}';
+    document.body.append(element);
+    await waitFor(() =>
+      element.shadowRoot?.querySelector(".status")?.textContent ===
+        "Ready · echo.http",
+    );
+
+    await element.run();
+
+    expect(binding.receivedBindingTargets).toEqual([
+      {
+        source: {
+          bindingSpec: "openbindings.openapi-3.1@1",
+          content: { openapi: "3.1.2" },
+        },
+        selector: "#/paths/~1echo/post",
+      },
+    ]);
+    expect(binding.receivedInputs).toEqual([
+      { body: { message: "wire" } },
+    ]);
+    expect(element.resetInputToSchema()).toBe(false);
+    expect(
+      element.shadowRoot?.querySelector<HTMLButtonElement>(".view-form")
+        ?.disabled,
+    ).toBe(true);
   });
 
   it("distinguishes ambiguity from unavailability", async () => {
@@ -795,7 +892,6 @@ describe("binding picker", () => {
     expect(options.map(option => option.value)).toEqual([
       "echo.http",
       "echo.ws",
-      "echo.aliased",
       "echo.alt",
       "echo.legacy",
     ]);
@@ -946,6 +1042,13 @@ class GatedStreamBinding implements BindingInvoker {
 
   bindingSpecs(): BindingSpecInfo[] {
     return [{ bindingSpec: LOCAL_BINDING_SPEC }];
+  }
+
+  checkBindingSpecs(bindingSpecs: readonly string[]) {
+    return bindingSpecs.map(bindingSpec => ({
+      bindingSpec,
+      supported: bindingSpec === LOCAL_BINDING_SPEC,
+    }));
   }
 
   async push(value: unknown): Promise<void> {
