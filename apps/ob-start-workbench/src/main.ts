@@ -1754,7 +1754,7 @@ async function invokeThroughOB<I, O>(
         interface: target,
         operation,
         ...(target === obInterface && sessionToken
-          ? { context: { bearerToken: sessionToken } }
+          ? { context: obStartSelfInvocationContext(null) }
           : {}),
       },
     });
@@ -2117,10 +2117,11 @@ function duplicateSession(id: string): void {
     collapsed: source.collapsed,
     ratio: source.ratio,
   });
+  session.element.bindingKey = source.element.bindingKey;
+  session.element.invocationMode = source.element.invocationMode;
   session.element.inputText = source.element.inputText;
   session.element.inputMode = source.element.inputMode;
   session.element.inputView = source.element.inputView;
-  session.element.bindingKey = source.element.bindingKey;
   const index = openSessionIds.indexOf(id);
   if (index >= 0) openSessionIds.splice(index + 1, 0, session.id);
   focusSession(session.id);
@@ -3466,9 +3467,32 @@ function effectiveTargetContext(
   const selected = oneShot ? mergeContext(targetContext, oneShot) : targetContext;
   const base =
     targetInterface === obInterface && sessionToken
-      ? { ...(selected ?? {}), bearerToken: sessionToken }
+      ? obStartSelfInvocationContext(selected)
       : selected;
   return withPreferenceSelection(base);
+}
+
+/**
+ * The ob start API deliberately publishes OAuth and Bearer as two separate
+ * OpenAPI security alternatives. Its local browser session is specifically a
+ * Bearer session, so this application adapter makes that required choice
+ * explicitly instead of asking the protocol-neutral workbench to infer one.
+ */
+function obStartSelfInvocationContext(
+  selected: Record<string, unknown> | null,
+): Record<string, unknown> {
+  const configuration = selected?.configuration;
+  const configured = configuration && typeof configuration === "object" && !Array.isArray(configuration)
+    ? configuration as Record<string, unknown>
+    : {};
+  return {
+    ...(selected ?? {}),
+    bearerToken: sessionToken,
+    configuration: {
+      ...configured,
+      security: { index: 1 },
+    },
+  };
 }
 
 function clearTargetContext(): void {

@@ -26,6 +26,13 @@ binding-family implementation. It:
 4. asks that operation to resolve/synthesize targets and invoke selected
    operations.
 
+The invocation workbench also offers an explicit raw-binding mode. The browser
+resolves the canonical Binding Invoker contract through the same environment
+and forwards an exact opaque binding selector to `ob`; it does not add an
+OpenAPI-specific route or parse meaning from the key. Raw mode bypasses
+operation schemas and transforms and is intended for deliberate exploration
+when the strict semantic operation reports service drift.
+
 Protocol processing stays in `ob`. A raw API artifact can therefore be
 resolved and invoked without shipping its binding family to the browser.
 

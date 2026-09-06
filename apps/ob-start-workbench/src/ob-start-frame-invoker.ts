@@ -45,8 +45,8 @@ export function adaptOBStartFrameBindings(iface: OBInterface): OBInterface {
 
   for (const binding of Object.values(adapted.bindings ?? {})) {
     if (
-      binding.ref === "#/operations/invokeOperation" ||
-      binding.ref === "#/operations/invokeBinding"
+      binding.selector === "#/operations/invokeOperation" ||
+      binding.selector === "#/operations/invokeBinding"
     ) {
       binding.source = sourceName;
     }
@@ -80,10 +80,17 @@ export class OBStartFrameInvoker implements BindingInvoker {
     ];
   }
 
+  checkBindingSpecs(bindingSpecs: readonly string[]) {
+    return bindingSpecs.map(bindingSpec => ({
+      bindingSpec,
+      supported: bindingSpec === OB_START_FRAME_BINDING,
+    }));
+  }
+
   async prepareBinding(
     args: BindingInvocationArgs,
   ): Promise<ContextRequiredDetails | null> {
-    this.#route(args.ref);
+    this.#route(args.selector);
     if (!this.#token()) {
       throw new Error("the ob start session token has not been supplied");
     }
@@ -120,7 +127,7 @@ export class OBStartFrameInvoker implements BindingInvoker {
       return;
     }
 
-    const endpoint = new URL(this.#route(args.ref), this.#origin);
+    const endpoint = new URL(this.#route(args.selector), this.#origin);
     endpoint.protocol = endpoint.protocol === "https:" ? "wss:" : "ws:";
 
     const encodedToken = encodeBase64Url(token);

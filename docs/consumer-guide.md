@@ -203,6 +203,23 @@ registration order or hidden policy.
 Call `environment.replace(nextImplementations)` when application state
 changes. Elements re-resolve without owning or mutating that state.
 
+### Explore an exact binding
+
+Set `workbench.invocationMode = "binding"` (or the `invocation-mode="binding"`
+attribute) and provide an exact `bindingKey` to use the published Binding
+Invoker contract instead of the Operation Invoker contract. This is a raw,
+protocol-neutral diagnostic lane. The workbench forwards the current JSON
+value unchanged, does not apply the operation's input/output schemas or
+transforms, and keeps separate editor text for operation and binding modes.
+The supplied `OperationSource` must therefore expose an implementation of
+`openbindings.binding-invoker.invokeBinding` in addition to any Operation
+Invoker implementation.
+
+This mode is useful when an operation invocation reports service-output drift:
+the semantic operation remains strict, while a user can deliberately inspect
+the binding-level response. Binding keys stay opaque; the workbench selects an
+exact key but never parses protocol meaning from its spelling.
+
 ## Context and credentials
 
 The application passes target invocation context by value:

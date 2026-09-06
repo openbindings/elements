@@ -27,7 +27,7 @@ export interface SourceBindingDetail {
  */
 export interface SourceInspection {
   targets?: Array<{
-    ref?: string;
+    selector: string;
     operationKey?: string;
     operation?: { description?: string };
   }>;
@@ -243,7 +243,7 @@ export class SourceDetailElement extends OpenBindingsElement {
     );
 
     reconcile(refs.require(".target-list"), targets, {
-      key: (target, index) => `${index}:${target.ref ?? ""}`,
+      key: (target, index) => `${index}:${target.selector}`,
       create: () => {
         const item = document.createElement("li");
         const ref = document.createElement("code");
@@ -253,7 +253,7 @@ export class SourceDetailElement extends OpenBindingsElement {
       },
       update: (node, target) => {
         const ref = node.querySelector("code");
-        if (ref) setTextIfChanged(ref, target.ref ?? "whole source");
+        if (ref) setTextIfChanged(ref, target.selector || "whole source");
         const operation = node.querySelector("span");
         if (operation) {
           setTextIfChanged(
@@ -298,7 +298,7 @@ export class SourceDetailElement extends OpenBindingsElement {
         const operation = row.querySelector("span");
         if (operation) setTextIfChanged(operation, binding.operation);
         const ref = row.querySelector("code");
-        if (ref) setTextIfChanged(ref, binding.ref ?? "whole source");
+        if (ref) setTextIfChanged(ref, binding.selector ?? "whole source");
         const remove = row.querySelector<HTMLButtonElement>(".binding-remove");
         if (remove) {
           remove.setAttribute("aria-label", `Remove binding ${key}`);

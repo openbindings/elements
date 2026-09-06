@@ -30,6 +30,13 @@ class VanillaOperationInvokerBinding implements BindingInvoker {
     return [{ bindingSpec: LOCAL_SPEC }];
   }
 
+  checkBindingSpecs(bindingSpecs: readonly string[]) {
+    return bindingSpecs.map(bindingSpec => ({
+      bindingSpec,
+      supported: bindingSpec === LOCAL_SPEC,
+    }));
+  }
+
   invokeBinding<I = unknown, O = unknown>(
     _args: BindingInvocationArgs,
   ): InvocationImpl<I, O> {
@@ -116,7 +123,7 @@ const provider: OBInterface = {
     invoke: {
       operation: "openbindings.operation-invoker.invokeOperation",
       source: "local",
-      ref: "invoke",
+      selector: "invoke",
     },
   },
 };

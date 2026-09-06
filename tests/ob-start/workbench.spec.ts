@@ -703,7 +703,7 @@ test("operation tabs retain independent invocation sessions, reorder, close, and
   );
   await page.locator("#sheet-run").click();
   await expect(activeWorkbench.locator('[part~="output"] .cm-content')).toContainText(
-    "openbindings.openapi@1",
+    "openbindings.openapi-3.1@1",
   );
 
   await explorer.locator('input[type="search"]').fill("listOperations");
@@ -721,7 +721,7 @@ test("operation tabs retain independent invocation sessions, reorder, close, and
     .filter({ hasText: "openbindings.ob.listBindingSpecs" })
     .click();
   await expect(activeWorkbench.locator('[part~="output"] .cm-content')).toContainText(
-    "openbindings.openapi@1",
+    "openbindings.openapi-3.1@1",
   );
 
   const activeTab = tabs.locator('[role="tab"][aria-selected="true"]');
