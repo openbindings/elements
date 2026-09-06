@@ -811,7 +811,7 @@ describe("presentInvocationError", () => {
   });
 });
 
-describe("binding selector", () => {
+describe("binding picker", () => {
   const multiBindingOBI: OBInterface = {
     openbindings: "0.2.0",
     name: "Target",

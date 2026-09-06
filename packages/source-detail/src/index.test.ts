@@ -1,6 +1,6 @@
 import type { OBInterface } from "@openbindings/sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SOURCE_DETAIL_TAG, SourceDetailElement } from "./index.js";
+import { SOURCE_DETAIL_TAG, SourceDetailElement, type SourceInspection } from "./index.js";
 
 if (!customElements.get(SOURCE_DETAIL_TAG)) {
   customElements.define(SOURCE_DETAIL_TAG, SourceDetailElement);
@@ -171,6 +171,58 @@ describe("SourceDetailElement", () => {
     element.sourceKey = "embedded";
     await settled();
     expect(inspection.hidden).toBe(true);
+  });
+
+  it("requires an inspection selector in the public type", () => {
+    // @ts-expect-error Source Inspector requires a selector even without operation framing.
+    const missing: NonNullable<SourceInspection["targets"]>[number] = {};
+    expect(missing).toEqual({});
+    const empty: NonNullable<SourceInspection["targets"]>[number] = { selector: "" };
+    expect(empty.selector).toBe("");
+  });
+
+  it("renders inspection selectors without interpreting or rewriting them", async () => {
+    const element = mount();
+    element.obi = obi;
+    element.sourceKey = "api";
+    const targets = [{ selector: "" }, { selector: "  opaque/<target>  " }];
+    element.inspection = { targets, exhaustive: true };
+    await settled();
+    expect(Array.from(element.shadowRoot!.querySelectorAll(".target-list code"), node => node.textContent))
+      .toEqual(['"" (empty selector)', "  opaque/<target>  "]);
+    expect(targets).toEqual([{ selector: "" }, { selector: "  opaque/<target>  " }]);
+  });
+
+  it.each([
+    [{}, "Invalid inspection target: missing selector"],
+    [{ selector: null }, "Invalid inspection target: selector must be a string"],
+    [{ selector: 0 }, "Invalid inspection target: selector must be a string"],
+    [{ selector: false }, "Invalid inspection target: selector must be a string"],
+  ])("shows malformed inspection selectors without inventing a target: %j", async (target, message) => {
+    const element = mount();
+    element.obi = obi;
+    element.sourceKey = "api";
+    // Exercise untyped external data, not a conforming inspector implementation.
+    element.inspection = JSON.parse(JSON.stringify({ targets: [target], exhaustive: true }));
+    await settled();
+    expect(element.shadowRoot!.querySelector(".target-list code")?.textContent).toBe(message);
+    element.inspection = { targets: [{ selector: "" }], exhaustive: true };
+    await settled();
+    expect(element.shadowRoot!.querySelector(".target-list code")?.textContent).toBe('"" (empty selector)');
+  });
+
+  it("distinguishes omitted and empty binding selectors without declaring their meaning", async () => {
+    const element = mount();
+    const document = structuredClone(obi);
+    delete document.bindings!.createPetHTTP!.selector;
+    document.bindings!.listPetsHTTP!.selector = "";
+    element.obi = document;
+    element.sourceKey = "api";
+    await settled();
+    expect(Array.from(element.shadowRoot!.querySelectorAll(".binding-list code"), node => node.textContent))
+      .toEqual(["Selector omitted", '"" (empty selector)']);
+    expect(document.bindings!.createPetHTTP).not.toHaveProperty("selector");
+    expect(document.bindings!.listPetsHTTP!.selector).toBe("");
   });
 
   it("explains the empty states honestly", async () => {

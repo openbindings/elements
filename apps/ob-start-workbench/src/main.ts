@@ -743,7 +743,7 @@ schemasGutter.addEventListener("dblclick", () => {
   persistSessions();
 });
 
-// The invocation element's own compact selector emits the same intent event;
+// The invocation element's own compact binding picker emits the same intent event;
 // keep the contract view in sync with it.
 invocationSessions.addEventListener("ob-binding-select", event => {
   resetAttemptContext();

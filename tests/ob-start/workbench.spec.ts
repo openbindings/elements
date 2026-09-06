@@ -597,7 +597,7 @@ test("document and source elements compose through direct edits to the living do
     "graphDemo.graph": {
       operation: "graphDemo",
       source: "graphSource",
-      ref: "#",
+      selector: "#",
     },
   };
   // Author the draft through the element contract: assign the document and

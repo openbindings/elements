@@ -281,8 +281,8 @@ export class OBStartFrameInvoker implements BindingInvoker {
     }
   }
 
-  #route(ref: string): string {
-    switch (ref) {
+  #route(selector: string): string {
+    switch (selector) {
       case "#/operations/invokeOperation":
         return "/operations/invoke";
       case "#/operations/invokeBinding":

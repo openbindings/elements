@@ -27,6 +27,7 @@ export interface SourceBindingDetail {
  */
 export interface SourceInspection {
   targets?: Array<{
+    /** Required by Source Inspector; interpretation belongs to the binding specification. */
     selector: string;
     operationKey?: string;
     operation?: { description?: string };
@@ -243,17 +244,23 @@ export class SourceDetailElement extends OpenBindingsElement {
     );
 
     reconcile(refs.require(".target-list"), targets, {
-      key: (target, index) => `${index}:${target.selector}`,
+      key: (target, index) => `${index}:${target.selector ?? ""}`,
       create: () => {
         const item = document.createElement("li");
-        const ref = document.createElement("code");
+        const selector = document.createElement("code");
         const operation = document.createElement("span");
-        item.append(ref, operation);
+        item.append(selector, operation);
         return item;
       },
       update: (node, target) => {
-        const ref = node.querySelector("code");
-        if (ref) setTextIfChanged(ref, target.selector || "whole source");
+        const selector = node.querySelector("code");
+        if (selector) {
+          const value: unknown = target.selector;
+          setTextIfChanged(selector,
+            value === undefined ? "Invalid inspection target: missing selector"
+              : typeof value !== "string" ? "Invalid inspection target: selector must be a string"
+                : value === "" ? '"" (empty selector)' : value);
+        }
         const operation = node.querySelector("span");
         if (operation) {
           setTextIfChanged(
@@ -280,8 +287,8 @@ export class SourceDetailElement extends OpenBindingsElement {
         select.className = "binding-select";
         const key = document.createElement("strong");
         const operation = document.createElement("span");
-        const ref = document.createElement("code");
-        select.append(key, operation, ref);
+        const selector = document.createElement("code");
+        select.append(key, operation, selector);
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "binding-remove danger";
@@ -297,8 +304,12 @@ export class SourceDetailElement extends OpenBindingsElement {
         if (strong) setTextIfChanged(strong, key);
         const operation = row.querySelector("span");
         if (operation) setTextIfChanged(operation, binding.operation);
-        const ref = row.querySelector("code");
-        if (ref) setTextIfChanged(ref, binding.selector ?? "whole source");
+        const selector = row.querySelector("code");
+        if (selector) {
+          setTextIfChanged(selector, binding.selector === undefined
+            ? "Selector omitted"
+            : binding.selector === "" ? '"" (empty selector)' : binding.selector);
+        }
         const remove = row.querySelector<HTMLButtonElement>(".binding-remove");
         if (remove) {
           remove.setAttribute("aria-label", `Remove binding ${key}`);
