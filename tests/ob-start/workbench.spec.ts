@@ -1,13 +1,16 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const browserErrors = new WeakMap<object, string[]>();
 
-// Rev 17 (review/120): the Open flow is killed pending the document-verb
-// re-homing. Tests that needed an external target are suspended below with
-// this marker; their specs stay intact for revival when Open returns.
-const OPEN_FLOW_SUSPENDED =
-  "Suspended by rev 17: the Open flow died with the document verb row " +
-  "(review/120 loss ledger). Revive with the verb re-homing (rev 18).";
+async function acquireTargetUrl(page: Page, address: string) {
+  await page.locator("#acquire-open").click();
+  await page.locator("#acquire-locator").fill(address);
+  await expect(page.locator("#acquire-replace")).toBeEnabled({
+    timeout: 30_000,
+  });
+  await page.locator("#acquire-replace").click();
+  await expect(page.locator("#acquire-dialog")).toBeHidden();
+}
 
 test.beforeEach(async ({ page }) => {
   const errors: string[] = [];
@@ -811,16 +814,17 @@ test("tabs are workspace items: duplicate forks a session, rename sticks, the co
 test("a raw API artifact is synthesized and invoked without a browser binding-family client", async ({
   page,
 }) => {
-  test.skip(true, OPEN_FLOW_SUSPENDED);
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
 
-  await openTargetUrl(page, "http://127.0.0.1:20391/openapi.yaml");
-
-  await expect(page.locator("#bootstrap-message")).toContainText(
-    "Synthesized ob start API",
-    { timeout: 15_000 },
+  await page.locator("#acquire-open").click();
+  await page.locator("#acquire-locator").fill("http://127.0.0.1:20391/openapi.yaml");
+  await expect(page.locator("#acquire-found")).toContainText(
+    "synthesized from", { timeout: 30_000 },
   );
+  await expect(page.locator("#acquire-replace")).toBeEnabled();
+  await page.locator("#acquire-replace").click();
+  await expect(page.locator("#acquire-dialog")).toBeHidden();
   const explorer = page.locator("ob-obi-explorer");
   const workbench = page.locator("ob-operation-workbench:not([hidden])");
   await expect(explorer.locator("h2")).toHaveText("ob start API");
@@ -832,20 +836,26 @@ test("a raw API artifact is synthesized and invoked without a browser binding-fa
   await expect(workbench.locator("h2")).toHaveText("getOBI");
   await page.locator("#sheet-run").click();
 
-  await expect(workbench.locator('[part~="output"] .cm-content')).toContainText(
-    '"openbindings": "0.2.0"',
-  );
+  // CodeMirror renders only the viewport; inspect the public editor value.
+  await expect.poll(() => workbench.locator('[part~="output"]').evaluate(
+    element => (element as HTMLElement & { text: string }).text,
+  )).toContain('"openbindings": "0.2.0"');
   await expect(workbench.locator(".error")).toBeHidden();
 });
 
-test("target authentication is preflighted into focused fields", async ({
+test("target authentication challenges produce focused fields", async ({
   page,
 }) => {
-  test.skip(true, OPEN_FLOW_SUSPENDED);
+  const diagnosticRequests: string[] = [];
+  page.on("request", request => {
+    if (new URL(request.url()).pathname.startsWith("/workbench/diagnostics/")) {
+      diagnosticRequests.push(request.url());
+    }
+  });
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
 
-  await openTargetUrl(page, "http://127.0.0.1:20391/openapi.yaml");
+  await acquireTargetUrl(page, "http://127.0.0.1:20391/openapi.yaml");
   await expect(page.locator("#document-name")).toHaveText("ob start API");
 
   const explorer = page.locator("ob-obi-explorer");
@@ -854,21 +864,18 @@ test("target authentication is preflighted into focused fields", async ({
     .filter({ hasText: "describe" })
     .click();
 
-  // Rev 17.10: the preflight is a quiet strip advisory — authoring never
-  // raises the banner. The banner appears only when a RUN actually emits
-  // CONTEXT_REQUIRED.
-  await expect(page.locator("#sheet-status")).toHaveText(
-    "needs target credentials",
-  );
+  // Location-only preflight may be unknown. It must not prompt during
+  // authoring; the actual invocation supplies the authoritative challenge.
   await expect(page.locator("#context-dialog")).toBeHidden();
   // Rev 17.20: a CONTEXT_REQUIRED failure IS the moment, so the repair
   // surface opens directly instead of raising a banner that asked the user
   // to go find it.
   await page.locator("#sheet-run").click();
   await expect(page.locator("#context-dialog")).toBeVisible();
-  await page.locator("#requirement-alternative").selectOption({
-    label: "Bearer token",
-  });
+  // The first challenge asks for the explicit security alternative, then
+  // the selected bearer alternative asks for its credential.
+  await page.locator("#requirement-fields select").selectOption("1");
+  await page.locator("#apply-requirements").click();
   const bearer = page.locator(
     '#requirement-fields input[data-field="bearerToken"]',
   );
@@ -876,64 +883,79 @@ test("target authentication is preflighted into focused fields", async ({
   await bearer.fill("test-token");
   await page.locator("#apply-requirements").click();
 
-  await expect(page.locator("#context-dialog")).toBeHidden();
+  // Apply authorizes and retries the challenged attempt automatically.
   const workbench = page.locator("ob-operation-workbench:not([hidden])");
-  await page.locator("#sheet-run").click();
   await expect(workbench.locator('[part~="output"] .cm-content')).toContainText(
     '"name": "OpenBindings CLI"',
   );
   await expect(workbench.locator(".error")).toBeHidden();
+  expect(diagnosticRequests).toEqual([]);
 });
 
 test("local and target credentials remain visibly separate", async ({
   page,
 }) => {
-  test.skip(true, OPEN_FLOW_SUSPENDED);
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+
+  await page.locator('ob-obi-explorer [part~="operation"]')
+    .filter({ hasText: "describe" }).click();
 
   await page.locator("#connection-status").click();
   await expect(page.locator("#session-status")).toHaveText(
     "Authenticated for this browser.",
   );
-  await expect(page.locator("#target-context-status")).toHaveText(
-    "No target credentials configured.",
+  await page.locator("#credential-close").click();
+  await page.locator("#context-open").click();
+  await expect(page.locator("#target-context-status")).toContainText(
+    "No context will be sent automatically.",
   );
 
   await page.locator(".raw-context summary").click();
   await page
     .locator("#target-context")
     .fill('{"bearerToken":"target-only-token"}');
-  await page.locator("#target-context-form button").first().click();
+  await page.locator('#target-context-form button[type="submit"]').click();
   await expect(page.locator("#target-context-status")).toHaveText(
-    "Context is configured for the selected target.",
+    "Context is configured for one selected invocation attempt.",
   );
   await expect(page.locator("#session-status")).toHaveText(
     "Authenticated for this browser.",
   );
 
-  await openTargetUrl(page, "http://127.0.0.1:20391/openapi.yaml");
+  await page.locator("#context-close").click();
+  await acquireTargetUrl(page, "http://127.0.0.1:20391/openapi.yaml");
   await expect(page.locator("#document-name")).toHaveText("ob start API");
-  await expect(page.locator("#target-context-status")).toHaveText(
-    "No target credentials configured.",
+  await page.locator("#context-open").click();
+  await expect(page.locator("#target-context-status")).toContainText(
+    "No context will be sent automatically.",
   );
   await expect(page.locator("#target-context")).toHaveValue("");
+  await expect(page.locator("#session-status")).toHaveText(
+    "Authenticated for this browser.",
+  );
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
 });
 
 test("a malformed target fails recoverably without replacing the current interface", async ({
   page,
 }) => {
-  test.skip(true, OPEN_FLOW_SUSPENDED);
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
   await expect(page.locator("#document-name")).toHaveText("ob");
 
-  await openTargetUrl(page, "http://[::1");
-
-  await expect(page.locator("#bootstrap-message")).not.toBeEmpty();
-  await expect(page.locator("#doc-open")).toBeEnabled();
+  await page.locator("#acquire-open").click();
+  await page.locator("#acquire-locator").fill("http://[::1");
+  await expect(page.locator("#acquire-problem")).toBeVisible();
+  await expect(page.locator("#acquire-problem")).not.toBeEmpty();
+  await expect(page.locator("#acquire-replace")).toBeDisabled();
+  await expect(page.locator("#acquire-merge")).toBeDisabled();
+  await expect(page.locator("#acquire-locator")).toBeEnabled();
   await expect(page.locator("#document-name")).toHaveText("ob");
+  await page.locator("#acquire-close").click();
   await expect(page.locator("#sheet-run")).toBeEnabled();
+  await acquireTargetUrl(page, "http://127.0.0.1:20391/openapi.yaml");
+  await expect(page.locator("#document-name")).toHaveText("ob start API");
 });
 
 test("the complete primary flow remains usable without horizontal overflow on mobile", async ({
@@ -966,12 +988,11 @@ test("the complete primary flow remains usable without horizontal overflow on mo
 test("multi-binding operations default to the author's preferred binding and run one-click — including through an operation graph", async ({
   page,
 }) => {
-  test.skip(true, OPEN_FLOW_SUSPENDED);
   test.setTimeout(120_000);
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
 
-  await openTargetUrl(page, "http://127.0.0.1:20392");
+  await acquireTargetUrl(page, "http://127.0.0.1:20392");
   await expect(page.locator("#document-name")).toHaveText("OpenBlendings", {
     timeout: 20_000,
   });
@@ -985,16 +1006,16 @@ test("multi-binding operations default to the author's preferred binding and run
     .filter({ hasText: "getMenu" })
     .click();
   await expect(workbench.locator("h2")).toHaveText("getMenu");
+  await expect(page.locator("#invocation-mode")).toHaveValue("operation");
   const select = workbench.locator('select[part~="binding-select"]');
   await expect(select).toHaveValue("getMenu.restApi");
   await expect(page.locator("#bootstrap-message")).toContainText(
     "author's preferred binding",
   );
   await page.locator("#sheet-run").click();
-  await expect(workbench.locator('[part~="output"] .cm-content')).toContainText(
-    "Schema Latte",
-    { timeout: 15_000 },
-  );
+  await expect.poll(() => workbench.locator('[part~="output"]').evaluate(
+    element => (element as HTMLElement & { text: string }).text,
+  ), { timeout: 15_000 }).toContain("Schema Latte");
   await expect(workbench.locator(".error")).toBeHidden();
 
   // placeAndTrack: a graph operation whose inner steps (placeOrder,
@@ -1005,18 +1026,10 @@ test("multi-binding operations default to the author's preferred binding and run
     .click();
   const graphSession = page.locator("ob-operation-workbench:not([hidden])");
   await expect(graphSession.locator("h2")).toHaveText("placeAndTrack");
-  const input = graphSession.locator("ob-json-editor").first();
-  await input.evaluate((el, value) => {
-    const editorElement = el as HTMLElement & { text: string };
-    editorElement.text = value;
-    editorElement.dispatchEvent(
-      new CustomEvent("ob-json-input", {
-        detail: { text: value, structured: false },
-        bubbles: true,
-        composed: true,
-      }),
-    );
-  }, '{"customer":"E2E","drink":"Schema Latte","size":"v2"}');
+  await expect(page.locator("#invocation-mode")).toHaveValue("operation");
+  await graphSession.getByRole("textbox", {
+    name: "Input for placeAndTrack as JSON", exact: true,
+  }).fill('{"customer":"E2E","drink":"Schema Latte","size":"v2"}');
   await page.locator("#sheet-run").click();
   // The output view renders each stream value as its own block.
   await expect(graphSession.locator('[part~="output"] .cm-content').first()).toContainText(
@@ -1033,12 +1046,11 @@ test("multi-binding operations default to the author's preferred binding and run
 test("form input mode drives placeOrder through schema fields", async ({
   page,
 }) => {
-  test.skip(true, OPEN_FLOW_SUSPENDED);
   test.setTimeout(120_000);
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
 
-  await openTargetUrl(page, "http://127.0.0.1:20392");
+  await acquireTargetUrl(page, "http://127.0.0.1:20392");
   await expect(page.locator("#document-name")).toHaveText("OpenBlendings", {
     timeout: 20_000,
   });
@@ -1051,6 +1063,7 @@ test("form input mode drives placeOrder through schema fields", async ({
     .click();
   const workbench = page.locator("ob-operation-workbench:not([hidden])");
   await expect(workbench.locator("h2")).toHaveText("placeOrder");
+  await expect(page.locator("#invocation-mode")).toHaveValue("operation");
 
   // PlaceOrderInput is a $ref-rooted schema: the local reference resolves
   // before capability analysis, so Form view is available.
@@ -1085,24 +1098,37 @@ test("form input mode drives placeOrder through schema fields", async ({
 test("a failed resolve stays recoverable without requiring protocol diagnostics", async ({
   page,
 }) => {
-  test.skip(true, OPEN_FLOW_SUSPENDED);
   // The ordinary workbench surface consumes structural unsuccessful
   // completion. Raw HTTP status/body evidence may exist diagnostically, but
   // correct recovery and useful presentation cannot depend on parsing it.
   await page.goto("/#token=test-token");
   await expect(page.locator("#connection-status-text")).toHaveText("Ready");
 
-  await openTargetUrl(page, "http://127.0.0.1:20392/definitely-not-here.json");
+  await page.locator("#acquire-open").click();
+  await page.locator("#acquire-locator").fill(
+    "http://127.0.0.1:20392/definitely-not-here.json",
+  );
 
-  const message = page.locator("#bootstrap-message");
+  const message = page.locator("#acquire-problem");
+  await expect(message).toBeVisible();
   await expect(message).toContainText("Invocation completed unsuccessfully", {
     timeout: 30_000,
   });
   await expect(message).not.toContainText("Bad Gateway");
   await expect(message).not.toContainText("HTTP 502");
   // Recoverable: the control returns and the current target is untouched.
-  await expect(page.locator("#doc-open")).toBeEnabled();
+  await expect(page.locator("#acquire-locator")).toBeEnabled();
+  await expect(page.locator("#acquire-replace")).toBeDisabled();
+  await expect(page.locator("#acquire-merge")).toBeDisabled();
   await expect(page.locator("#document-name")).toHaveText("ob");
+  // Correcting the same locator recovers without restarting the workbench.
+  await page.locator("#acquire-locator").fill("http://127.0.0.1:20392");
+  await expect(page.locator("#acquire-replace")).toBeEnabled({ timeout: 30_000 });
+  await expect(message).toBeHidden();
+  await page.locator("#acquire-replace").click();
+  await expect(page.locator("#acquire-dialog")).toBeHidden();
+  await expect(page.locator("#document-name")).toHaveText("OpenBlendings");
+  await expect(page.locator("#sheet-run")).toBeEnabled();
 });
 
 // Rev 17.16: acquisition. An ephemeral process gets a modal, not a tab —

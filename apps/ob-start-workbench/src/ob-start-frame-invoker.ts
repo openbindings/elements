@@ -197,7 +197,9 @@ export class OBStartFrameInvoker implements BindingInvoker {
             terminalFrameSeen = true;
           }
           if (diagnosticID && diagnosticObserver && frame && typeof frame === "object" &&
-              "kind" in frame && frame.kind === "error") {
+              "kind" in frame && frame.kind === "error" && "error" in frame &&
+              frame.error !== null && typeof frame.error === "object" &&
+              "code" in frame.error && frame.error.code === "ERR_OPERATION_VALIDATION_FAILED") {
             try {
               const response = await fetch(new URL(`/workbench/diagnostics/${diagnosticID}`, this.#origin), {
                 headers: { Authorization: `Bearer ${token}` },

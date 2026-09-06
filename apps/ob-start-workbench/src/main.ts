@@ -3135,7 +3135,7 @@ async function ensureAcquireCandidate(): Promise<AcquisitionCandidate | null> {
       if (!current()) return null;
       acquireCandidate = null;
       acquireResolvedFor = "";
-      showAcquireProblem(errorText(error));
+      showAcquireProblem(callFailureText(error));
       return null;
     })
     .finally(() => {
@@ -3372,7 +3372,7 @@ async function commitAcquisition(mode: "replace" | "merge"): Promise<void> {
     acquireDialog.close();
     applyManagedInterface(result.interface, mergeOutcomeText(target, result));
   } catch (error) {
-    showAcquireProblem(errorText(error));
+    showAcquireProblem(callFailureText(error));
   } finally {
     setAcquireBusy(false);
   }
@@ -4292,7 +4292,9 @@ const CALL_FAILURE_TEXT_CAP = 800;
 
 /** The bounded ordinary message for a failed call through ob. */
 function callFailureText(error: unknown): string {
-  const message = errorText(error);
+  const message = error instanceof WireCallError
+    ? `Invocation completed unsuccessfully (${error.wire.code}).`
+    : errorText(error);
   return message.length > CALL_FAILURE_TEXT_CAP
     ? `${message.slice(0, CALL_FAILURE_TEXT_CAP)}…`
     : message;
