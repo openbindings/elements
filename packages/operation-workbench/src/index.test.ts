@@ -892,7 +892,6 @@ describe("binding selector", () => {
     expect(options.map(option => option.value)).toEqual([
       "echo.http",
       "echo.ws",
-      "echo.aliased",
       "echo.alt",
       "echo.legacy",
     ]);

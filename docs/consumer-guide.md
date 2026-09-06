@@ -175,7 +175,7 @@ const candidate = {
     invoke: {
       operation: "openbindings.operation-invoker.invokeOperation",
       source: "local",
-      ref: "invoke",
+      selector: "invoke",
     },
   },
 };

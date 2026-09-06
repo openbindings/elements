@@ -431,6 +431,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     if (value === this.#invocationMode) return;
     this.#modeInputText[this.#invocationMode] = this.#inputText;
     this.#invocationMode = value;
+    if (this.getAttribute("invocation-mode") !== value) this.setAttribute("invocation-mode", value);
     this.#inputText = this.#modeInputText[value];
     this.#inputView = "json";
     this.#inputTouched = Boolean(this.#inputText);
@@ -2006,7 +2007,9 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
         } else {
           this.#dependency = {
             status: "unavailable",
-            message: "No compatible Operation Invoker is available",
+            message: this.#invocationMode === "binding"
+              ? "No compatible Binding Invoker is available"
+              : "No compatible Operation Invoker is available",
           };
         }
         this.#emitDependencyState();
@@ -2048,8 +2051,8 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
 
 /**
  * The bindings of one operation in display order. A binding belongs to the
- * operation when its `operation` field names the operation key or any alias —
- * the key plus aliases form one flat namespace (OBI-T-12). Order: descending
+ * operation when its `operation` field names the canonical operation key
+ * (OBI-D-08). Order: descending
  * numeric `preference`, entries without a preference last, ties broken
  * lexicographically by binding key. This order is presentation only; it is
  * not a selection policy.
@@ -2057,17 +2060,11 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
 function operationBindingEntries(
   obi: OBInterface | null,
   operationKey: string | null,
-  operation: Operation | undefined,
+  _operation: Operation | undefined,
 ): Array<[string, BindingEntry]> {
   if (!obi?.bindings || !operationKey) return [];
-  const names = new Set<string>([operationKey]);
-  if (Array.isArray(operation?.aliases)) {
-    for (const alias of operation.aliases) {
-      if (typeof alias === "string") names.add(alias);
-    }
-  }
   const entries = Object.entries(obi.bindings).filter(([, entry]) =>
-    names.has(entry.operation),
+    entry.operation === operationKey,
   );
   entries.sort(([keyA, entryA], [keyB, entryB]) => {
     const preferenceA =
