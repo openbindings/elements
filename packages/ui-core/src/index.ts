@@ -5,6 +5,7 @@ export {
 } from "./operation-environment.js";
 export { OpenBindingsElement, defineElement } from "./element.js";
 export { formatJSON, isRecord, renderStatic, setText } from "./dom.js";
+export { mapSchemaChildren } from "./schema-children.js";
 export { baseStyles } from "./styles.js";
 export {
   SPLIT_NARROW_REM,

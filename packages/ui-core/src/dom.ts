@@ -1,3 +1,4 @@
+import { stringifyJSON, isJSONNumber } from "@openbindings/sdk";
 /** Replaces a shadow root with static trusted markup and returns it. */
 export function renderStatic(root: ShadowRoot, markup: string): ShadowRoot {
   root.innerHTML = markup;
@@ -15,12 +16,12 @@ export function setText(
 
 export function formatJSON(value: unknown): string {
   try {
-    return JSON.stringify(value, null, 2);
+    return stringifyJSON(value, 2);
   } catch {
     return String(value);
   }
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !Array.isArray(value) && !isJSONNumber(value);
 }

@@ -1,3 +1,5 @@
+import { stringifyJSON, isJSONNumber } from "@openbindings/sdk";
+import { mapSchemaChildren } from "@openbindings/ui-core";
 import type { JSONEditorElement } from "@openbindings/json-editor";
 import type { OBInterface } from "@openbindings/sdk";
 import {
@@ -202,7 +204,7 @@ export class SchemaSplitElement extends OpenBindingsElement {
     // useless to a reader (rev 17.12.1). Local refs resolve against the
     // document before display; the copy verb copies what is SHOWN.
     return (
-      JSON.stringify(dereferenceLocalRefs(schema, this.#obi), null, 2) ?? null
+      stringifyJSON(dereferenceLocalRefs(schema, this.#obi), 2) ?? null
     );
   }
 
@@ -308,7 +310,7 @@ function dereferenceLocalRefs(
   seen: ReadonlySet<string> = new Set(),
   depth = 0,
 ): unknown {
-  if (depth > 32 || schema === null || typeof schema !== "object") {
+  if (depth > 32 || schema === null || typeof schema !== "object" || isJSONNumber(schema)) {
     return schema;
   }
   if (Array.isArray(schema)) {
@@ -339,11 +341,7 @@ function dereferenceLocalRefs(
       ? { ...(resolved as Record<string, unknown>), ...resolvedSiblings }
       : resolved;
   }
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(record)) {
-    out[key] = dereferenceLocalRefs(value, root, seen, depth + 1);
-  }
-  return out;
+  return mapSchemaChildren(record,value=>dereferenceLocalRefs(value,root,seen,depth+1));
 }
 
 function resolveLocalPointer(root: OBInterface | null, ref: string): unknown {

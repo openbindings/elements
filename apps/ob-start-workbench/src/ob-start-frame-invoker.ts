@@ -1,3 +1,4 @@
+import { cloneValueGraph, parseJSON, stringifyJSON } from "@openbindings/sdk";
 import {
   ERR_CONNECT_FAILED,
   ERR_FRAME_PROTOCOL,
@@ -37,7 +38,7 @@ export interface WorkbenchDiagnostic { phase: "input" | "output"; pointer: strin
  * embedded client's private carrier.
  */
 export function adaptOBStartFrameBindings(iface: OBInterface): OBInterface {
-  const adapted = structuredClone(iface);
+  const adapted = cloneValueGraph(iface);
   adapted.sources ??= {};
   let sourceName = "__obStartFrameCarrier";
   while (Object.hasOwn(adapted.sources, sourceName)) sourceName = `_${sourceName}`;
@@ -178,7 +179,7 @@ export class OBStartFrameInvoker implements BindingInvoker {
 
           let frame: O;
           try {
-            frame = JSON.parse(text) as O;
+            frame = parseJSON(text) as O;
           } catch (error) {
             transportFailed = true;
             invocation.fireError(
@@ -265,7 +266,7 @@ export class OBStartFrameInvoker implements BindingInvoker {
           if (this.#diagnostics && frame && typeof frame === "object" && "kind" in frame && frame.kind === "open" && "input" in frame) {
             try { diagnosticObserver = this.#diagnostics(frame.input); } catch { /* Presentation is optional. */ }
           }
-          socket.send(JSON.stringify(frame));
+          socket.send(stringifyJSON(frame));
         }
       };
       await Promise.all([send(), closed]);

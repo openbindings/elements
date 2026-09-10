@@ -1,3 +1,4 @@
+import { stringifyJSON } from "@openbindings/sdk";
 import {
   formatValidationErrors,
   type OBInterface,
@@ -10,7 +11,8 @@ import {
   baseStyles,
   debounce,
 } from "@openbindings/ui-core";
-import { parse as parseYAML, stringify as stringifyYAML } from "yaml";
+import { parseValueYAML, stringifyValueYAML } from "./value-yaml.js";
+export { parseValueYAML, stringifyValueYAML } from "./value-yaml.js";
 
 export const OBI_EDITOR_TAG = "ob-obi-editor";
 export type OBIDocumentFormat = "json" | "yaml";
@@ -309,13 +311,10 @@ function parseInterface(
     if (format === "json") {
       return { valid: true, value: parseDocument(text) };
     }
-    const parsed: unknown = parseYAML(text, {
-      prettyErrors: true,
-      uniqueKeys: true,
-    });
+    const parsed: unknown = parseValueYAML(text);
     return {
       valid: true,
-      value: parseDocument(JSON.stringify(parsed)),
+      value: parseDocument(stringifyJSON(parsed)),
     };
   } catch (error) {
     return { valid: false, error: formatValidationErrors(error) };
@@ -327,8 +326,8 @@ function formatInterface(
   format: OBIDocumentFormat,
 ): string {
   return format === "json"
-    ? `${JSON.stringify(value, null, 2)}\n`
-    : stringifyYAML(value, { indent: 2, lineWidth: 0 });
+    ? `${stringifyJSON(value, 2)}\n`
+    : stringifyValueYAML(value);
 }
 
 function normalizeFormat(value: unknown): OBIDocumentFormat {

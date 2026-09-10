@@ -1,3 +1,4 @@
+import { cloneValueGraph, stringifyJSON, parseJSON } from "@openbindings/sdk";
 import {
   type OperationGraph,
   type OperationGraphNode,
@@ -195,7 +196,7 @@ export class OperationGraphEditorElement extends OpenBindingsElement {
           );
           return;
         }
-        const next = structuredClone(selected);
+        const next = cloneValueGraph(selected);
         const parsed = parseNodeField(control, field);
         if (!parsed.ok) {
           this.#showStatus(parsed.error);
@@ -328,7 +329,7 @@ function nodeFormTemplate(
     type: "text" | "number" = "text",
   ) => `<label>${label}<input data-node-field="${key}" type="${type}" value="${escapeHTML(String(node[key] ?? ""))}"></label>`;
   const jsonField = (key: "schema" | "until" | "through", label: string) =>
-    `<label>${label}<textarea data-node-field="${key}" spellcheck="false" placeholder="JSON value">${node[key] === undefined ? "" : escapeHTML(JSON.stringify(node[key], null, 2))}</textarea></label>`;
+    `<label>${label}<textarea data-node-field="${key}" spellcheck="false" placeholder="JSON value">${node[key] === undefined ? "" : escapeHTML(stringifyJSON(node[key], 2))}</textarea></label>`;
   const operationOptions = [
     ...(node.operation && !operationKeys.includes(node.operation)
       ? [node.operation]
@@ -433,7 +434,7 @@ function parseNodeField(
   }
   if (field === "schema" || field === "until" || field === "through") {
     try {
-      return { ok: true, value: JSON.parse(raw) as unknown };
+      return { ok: true, value: parseJSON(raw) as unknown };
     } catch (error) {
       return {
         ok: false,
@@ -476,7 +477,7 @@ function newNodeFromForm(
   if (transform) node.transform = transform;
   if (schemaText) {
     try {
-      node.schema = JSON.parse(schemaText) as unknown;
+      node.schema = parseJSON(schemaText) as unknown;
     } catch (error) {
       return {
         ok: false,

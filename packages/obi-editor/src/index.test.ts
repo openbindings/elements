@@ -1,4 +1,4 @@
-import type { OBInterface } from "@openbindings/sdk";
+import { parseJSON, stringifyJSON, type OBInterface } from "@openbindings/sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { JSON_EDITOR_TAG, JSONEditorElement } from "@openbindings/json-editor";
 import { OBI_EDITOR_TAG, OBIEditorElement } from "./index.js";
@@ -27,6 +27,17 @@ afterEach(() => {
 });
 
 describe("OBIEditorElement", () => {
+  it("preserves exact values when switching JSON and YAML views",async()=>{
+    const raw='{"openbindings":"0.2.0","operations":{},"x-values":[9007199254740993,0.10000000000000001,1e-400,1e400,null,{"rawJSON":"7"}]}';
+    const element=document.createElement(OBI_EDITOR_TAG) as OBIEditorElement;
+    element.value=parseJSON(raw) as OBInterface;document.body.append(element);await settled();
+    expect(stringifyJSON(element.value)).toBe(raw);
+    element.format="yaml";
+    expect(stringifyJSON(element.value)).toBe(raw);
+    expect(element.text).not.toContain("rawJSON: 9007199254740993");
+    element.format="json";
+    expect(stringifyJSON(element.value)).toBe(raw);
+  });
   it("formats incoming values without emitting application edit intent", async () => {
     const element = document.createElement(OBI_EDITOR_TAG) as OBIEditorElement;
     const edited = vi.fn();

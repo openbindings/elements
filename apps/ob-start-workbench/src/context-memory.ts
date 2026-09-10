@@ -1,3 +1,4 @@
+import { cloneValueGraph, equalJSON } from "@openbindings/sdk";
 import type { ContextRequirement } from "@openbindings/sdk";
 
 /** Retained retry-chain values never cross even an opaque scope change. */
@@ -24,13 +25,13 @@ export class ContextMemory {
   remember(target: string, requirement: ContextRequirement, fields: Record<string, string>): void {
     if (!target || requirement.durable !== true) return;
     this.#entries = this.#entries.filter(entry => !matches(entry, target, requirement));
-    this.#entries.push(structuredClone({ target, requirement, fields }));
+    this.#entries.push(cloneValueGraph({ target, requirement, fields }));
     if (this.#entries.length > 32) this.#entries.shift();
   }
 
   recall(target: string, requirement: ContextRequirement): Record<string, string> {
     const entry = this.#entries.find(entry => matches(entry, target, requirement));
-    return entry ? structuredClone(entry.fields) : {};
+    return entry ? cloneValueGraph(entry.fields) : {};
   }
 
   clear(): void { this.#entries = []; }
@@ -39,5 +40,6 @@ export class ContextMemory {
 function matches(entry: RememberedRequirement, target: string, requirement: ContextRequirement): boolean {
   // Deliberately conservative: no origin folding, scheme-name aliasing, or
   // cross-requirement credential projection. A changed requirement asks again.
-  return entry.target === target && JSON.stringify(entry.requirement) === JSON.stringify(requirement);
+  if(entry.target!==target)return false;
+  try {return equalJSON(entry.requirement,requirement);}catch{return false;}
 }

@@ -1,3 +1,5 @@
+import { parseJSON, stringifyJSON, cloneValueGraph, isJSONNumber, numberToken, type JSONNumber } from "@openbindings/sdk";
+import { mapSchemaChildren } from "@openbindings/ui-core";
 /**
  * Schema-driven form input model, translated from panjir's exec-view input
  * mode (input-mode.ts + schema-shell.ts) into plain TypeScript with no
@@ -43,7 +45,7 @@ interface SchemaFieldBase {
 export interface SchemaPrimitiveField extends SchemaFieldBase {
   kind: "primitive";
   valueType: PrimitiveType;
-  enumValues?: Array<string | number | boolean> | undefined;
+  enumValues?: Array<string | number | JSONNumber | boolean> | undefined;
 }
 
 export interface SchemaObjectField extends SchemaFieldBase {
@@ -106,7 +108,7 @@ function resolveNode(
   schemas: Record<string, unknown>,
   resolving: Set<string>,
 ): unknown {
-  if (value === null || typeof value !== "object") return value;
+  if (value === null || typeof value !== "object" || isJSONNumber(value)) return value;
   if (Array.isArray(value)) {
     return value.map(entry => resolveNode(entry, schemas, resolving));
   }
@@ -125,11 +127,7 @@ function resolveNode(
       return resolved;
     }
   }
-  const out: JSONRecord = {};
-  for (const [key, entry] of Object.entries(record)) {
-    out[key] = resolveNode(entry, schemas, resolving);
-  }
-  return out;
+  return mapSchemaChildren(record,entry=>resolveNode(entry,schemas,resolving));
 }
 
 export function createSchemaFormModel(schema: unknown): {
@@ -227,7 +225,7 @@ export function parseJsonObjectInput(raw: string): {
     return { payload: null, error: null, empty: true };
   }
   try {
-    const parsed = JSON.parse(trimmed) as unknown;
+    const parsed = parseJSON(trimmed) as unknown;
     if (!isRecord(parsed)) {
       return {
         payload: null,
@@ -242,7 +240,7 @@ export function parseJsonObjectInput(raw: string): {
 }
 
 export function payloadToPrettyJson(payload: JSONRecord): string {
-  return JSON.stringify(payload, null, 2);
+  return stringifyJSON(payload, 2);
 }
 
 export function buildPayloadFromDefaults(model: SchemaFormModel): JSONRecord {
@@ -250,7 +248,7 @@ export function buildPayloadFromDefaults(model: SchemaFormModel): JSONRecord {
   for (const field of model.fields) {
     const value = defaultForField(field);
     if (value !== undefined) {
-      out[field.key] = value;
+      Object.defineProperty(out, field.key, {value, enumerable:true, writable:true, configurable:true});
     }
   }
   return out;
@@ -264,7 +262,7 @@ export function defaultForField(field: SchemaField): unknown {
     const out: JSONRecord = {};
     for (const child of field.fields) {
       const value = defaultForField(child);
-      if (value !== undefined) out[child.key] = value;
+      if (value !== undefined) Object.defineProperty(out, child.key, {value, enumerable:true, writable:true, configurable:true});
     }
     return Object.keys(out).length > 0 || field.required ? out : undefined;
   }
@@ -475,6 +473,7 @@ function inferType(schema: JSONRecord): PrimitiveType | "object" | "array" | nul
   if (Array.isArray(schema.enum) && schema.enum.length > 0) {
     const value = schema.enum[0];
     if (typeof value === "string") return "string";
+    if (isJSONNumber(value)) return "number";
     if (typeof value === "number") {
       return Number.isInteger(value) ? "integer" : "number";
     }
@@ -486,17 +485,17 @@ function inferType(schema: JSONRecord): PrimitiveType | "object" | "array" | nul
 function parseEnum(
   rawEnum: unknown,
   type: PrimitiveType,
-): Array<string | number | boolean> | null {
+): Array<string | number | JSONNumber | boolean> | null {
   if (rawEnum === undefined) return null;
   if (!Array.isArray(rawEnum)) return null;
-  const out: Array<string | number | boolean> = [];
+  const out: Array<string | number | JSONNumber | boolean> = [];
   for (const item of rawEnum) {
     if (type === "string" && typeof item === "string") out.push(item);
     else if (
       (type === "number" || type === "integer") &&
-      typeof item === "number"
+      numberToken(item) !== undefined
     ) {
-      out.push(item);
+      out.push(item as number | JSONNumber);
     } else if (type === "boolean" && typeof item === "boolean") out.push(item);
     else return null;
   }
@@ -527,7 +526,7 @@ function setPathMutable(
     if (segment === undefined) return;
     if (typeof segment === "number") {
       if (!Array.isArray(current)) return;
-      const child = current[segment];
+      const child = Object.hasOwn(current,segment)?current[segment]:undefined;
       if (
         nextSegment !== undefined &&
         (typeof nextSegment === "number" ? !Array.isArray(child) : !isRecord(child))
@@ -537,12 +536,12 @@ function setPathMutable(
       current = current[segment] as JSONRecord | unknown[];
     } else {
       if (!isRecord(current)) return;
-      const child = current[segment];
+      const child = Object.hasOwn(current,segment)?current[segment]:undefined;
       if (
         nextSegment !== undefined &&
         (typeof nextSegment === "number" ? !Array.isArray(child) : !isRecord(child))
       ) {
-        current[segment] = typeof nextSegment === "number" ? [] : {};
+        Object.defineProperty(current,segment,{value:typeof nextSegment === "number" ? [] : {},enumerable:true,writable:true,configurable:true});
       }
       current = current[segment] as JSONRecord | unknown[];
     }
@@ -551,10 +550,10 @@ function setPathMutable(
   if (last === undefined) return;
   if (typeof last === "number") {
     if (!Array.isArray(current)) return;
-    current[last] = cloneJSONValue(value);
+    Object.defineProperty(current,last,{value:cloneJSONValue(value),enumerable:true,writable:true,configurable:true});
   } else {
     if (!isRecord(current)) return;
-    current[last] = cloneJSONValue(value);
+    Object.defineProperty(current,last,{value:cloneJSONValue(value),enumerable:true,writable:true,configurable:true});
   }
 }
 
@@ -593,7 +592,7 @@ function cloneJSONRecord(input: JSONRecord): JSONRecord {
 }
 
 function cloneJSONValue<T>(input: T): T {
-  return JSON.parse(JSON.stringify(input)) as T;
+  return cloneValueGraph(input);
 }
 
 function asRequiredSet(raw: unknown): Set<string> {
@@ -602,7 +601,7 @@ function asRequiredSet(raw: unknown): Set<string> {
 }
 
 function isRecord(value: unknown): value is JSONRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !Array.isArray(value) && !isJSONNumber(value);
 }
 
 /**
@@ -645,7 +644,7 @@ export function conformsToSchema(value: unknown, schema: unknown): boolean {
   }
 
   if (type === "string") return typeof value === "string";
-  if (type === "number" || type === "integer") return typeof value === "number";
+  if (type === "number" || type === "integer") return numberToken(value) !== undefined;
   if (type === "boolean") return typeof value === "boolean";
 
   // No type information — accept anything.
