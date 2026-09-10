@@ -2,14 +2,13 @@ import { expect, test } from "@playwright/test";
 import { moment } from "./telemetry";
 
 // Journey D — failure and abuse paths. Failure moments are first-class
-// citizens: the wrong-token honesty checks run on every build even while the
-// defect is adjudicated known-open (the fix ships in a later rev), so the
-// telemetry histogram keeps the miss visible without failing the suite.
+// citizens: wrong-token honesty is a hard correctness gate, including the
+// connection-level refusal when invocation never becomes available.
 
-test("wrong token: the connection pill must not claim Ready (WB-HONESTY-01, known-open)", async ({
+test("wrong token: the connection pill must not claim Ready (WB-HONESTY-01)", async ({
   page,
 }) => {
-  const record = await moment("wrong-token-pill", "WB-HONESTY-01", async () => {
+  await moment("wrong-token-pill", "WB-HONESTY-01", async () => {
     await page.goto("/#token=wrong-token");
     const pill = page.locator("#connection-status-text");
     await expect(pill).not.toHaveText("", { timeout: 10_000 });
@@ -23,16 +22,9 @@ test("wrong token: the connection pill must not claim Ready (WB-HONESTY-01, know
     }
     return {
       ok: text !== "Ready",
-      knownOpen: true,
       note: `pill read ${JSON.stringify(text)} with a wrong token`,
     };
   });
-  // test.fixme()-style: the miss is recorded in telemetry above, then the
-  // test steps aside instead of failing — the fix lands in a later rev.
-  test.fixme(
-    record.outcome === "known-open",
-    `WB-HONESTY-01 known-open: ${record.note}`,
-  );
   await expect(page.locator("#connection-status-text")).not.toHaveText("Ready");
 });
 
@@ -59,7 +51,10 @@ test("invoking with a wrong token surfaces a non-empty, ideally credential-namin
     await expect(error).toBeVisible({ timeout: 15_000 });
     errorText = ((await error.textContent()) ?? "").trim();
   } else {
-    const status = workbench.locator(".status");
+    // A disabled Run has no invocation outcome. The workbench's idle status
+    // can legitimately say Ready; the connection owns this authentication
+    // refusal, as in the primary ob-start rejected-session test.
+    const status = page.locator("#connection-status-text");
     const bootstrap = page.locator("#bootstrap-message");
     errorText = ((await status.textContent().catch(() => "")) ?? "").trim();
     if (!errorText) {
@@ -73,11 +68,9 @@ test("invoking with a wrong token surfaces a non-empty, ideally credential-namin
   );
 
   // Honesty target: the failure is *named* as a credential failure, not
-  // blamed on the network. Known-open until the credential-naming rev lands.
+  // blamed on the network.
   await moment("wrong-token-error-names-credentials", "WB-HONESTY-01", async () => ({
     ok: /credential|token|auth|unauthorized|forbidden|401|403/i.test(errorText),
-    knownOpen: true,
-    soft: true,
     note: `error read ${JSON.stringify(errorText.slice(0, 140))}`,
   }));
 });
