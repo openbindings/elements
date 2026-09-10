@@ -26,6 +26,12 @@ jobs:
           ref: release/0.2
           path: openbindings-ts
 
+      - uses: actions/checkout@v4
+        with:
+          repository: openbindings/jsonata
+          ref: e2a5e518e6b5bd247ab327d427c591dc72743f2d
+          path: jsonata
+
       - name: Check out standalone artifact clients
         uses: actions/checkout@v4
         with:
@@ -77,6 +83,13 @@ jobs:
         with:
           go-version-file: ob/go.mod
           cache-dependency-path: ob/go.sum
+
+      - name: Build runtime and neutral JSON prerequisites
+        run: |
+          npm --prefix jsonata/javascript ci --ignore-scripts
+          npm --prefix jsonata/javascript run build
+          pnpm --dir openbindings-ts install --frozen-lockfile --ignore-scripts
+          pnpm --dir openbindings-ts --filter @openbindings/json --filter @openbindings/json-schema build
 
       - name: Build standalone artifact clients
         run: |
