@@ -1,3 +1,4 @@
+import { stringifyJSON, cloneValueGraph } from "@openbindings/sdk";
 export interface OperationGraph {
   "openbindings.operation-graph": string;
   description?: string;
@@ -158,7 +159,7 @@ export function diagnoseOperationGraph(
       diagnostics.push({
         severity: "warning",
         path: `/nodes/${pointerToken(key)}/type`,
-        message: `Unknown node type ${JSON.stringify(node.type)} is preserved.`,
+        message: `Unknown node type ${stringifyJSON(node.type)} is preserved.`,
       });
     }
     if (node.type === "input") inputs += 1;
@@ -170,7 +171,7 @@ export function diagnoseOperationGraph(
       diagnostics.push({
         severity: "error",
         path: `/nodes/${pointerToken(key)}/onError`,
-        message: `onError references missing node ${JSON.stringify(node.onError)}.`,
+        message: `onError references missing node ${stringifyJSON(node.onError)}.`,
       });
     }
   }
@@ -207,14 +208,14 @@ export function diagnoseOperationGraph(
       diagnostics.push({
         severity: "error",
         path: `/edges/${index}/from`,
-        message: `Edge starts at missing node ${JSON.stringify(edge.from)}.`,
+        message: `Edge starts at missing node ${stringifyJSON(edge.from)}.`,
       });
     }
     if (!nodeKeys.has(edge.to)) {
       diagnostics.push({
         severity: "error",
         path: `/edges/${index}/to`,
-        message: `Edge ends at missing node ${JSON.stringify(edge.to)}.`,
+        message: `Edge ends at missing node ${stringifyJSON(edge.to)}.`,
       });
     }
     const identity = `${edge.from}\u0000${edge.to}`;
@@ -307,20 +308,20 @@ export function applyOperationGraphPatches(
   graph: OperationGraph,
   patches: readonly OperationGraphPatch[],
 ): OperationGraph {
-  const next = structuredClone(graph);
+  const next = cloneValueGraph(graph);
   for (const patch of patches) {
     switch (patch.type) {
       case "add-node": {
         requireNodeKey(patch.nodeKey);
         if (Object.hasOwn(next.nodes, patch.nodeKey)) {
-          throw new Error(`node ${JSON.stringify(patch.nodeKey)} already exists`);
+          throw new Error(`node ${stringifyJSON(patch.nodeKey)} already exists`);
         }
-        next.nodes[patch.nodeKey] = structuredClone(patch.node);
+        next.nodes[patch.nodeKey] = cloneValueGraph(patch.node);
         break;
       }
       case "set-node": {
         requireExistingNode(next, patch.nodeKey);
-        next.nodes[patch.nodeKey] = structuredClone(patch.node);
+        next.nodes[patch.nodeKey] = cloneValueGraph(patch.node);
         break;
       }
       case "remove-node": {
@@ -336,7 +337,7 @@ export function applyOperationGraphPatches(
       case "add-edge": {
         requireExistingNode(next, patch.edge.from);
         requireExistingNode(next, patch.edge.to);
-        const edge = structuredClone(patch.edge);
+        const edge = cloneValueGraph(patch.edge);
         if (patch.index === undefined) next.edges.push(edge);
         else {
           if (
@@ -374,7 +375,7 @@ export function applyOperationGraphPatches(
 function requireExistingNode(graph: OperationGraph, key: string): void {
   requireNodeKey(key);
   if (!Object.hasOwn(graph.nodes, key)) {
-    throw new Error(`node ${JSON.stringify(key)} does not exist`);
+    throw new Error(`node ${stringifyJSON(key)} does not exist`);
   }
 }
 

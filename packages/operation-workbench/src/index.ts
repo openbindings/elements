@@ -1,3 +1,4 @@
+import { stringifyJSON, parseJSON, cloneValueGraph, isJSONNumber, numberToken, integerNumberToken, equalJSON, compareNumberTokens } from "@openbindings/sdk";
 import type { JSONEditorElement } from "@openbindings/json-editor";
 import {
   CODE_BLOCK_STYLES,
@@ -565,7 +566,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     const sample = sampleFromSchema(effective, this.#obi);
     if (!sample.available) return false;
     this.#inputTouched = false;
-    this.#inputText = JSON.stringify(sample.value, null, 2) ?? "";
+    this.#inputText = stringifyJSON(sample.value, 2) ?? "";
     this.#runtimeError = null;
     this.#emitInputChange();
     this.requestRender();
@@ -575,8 +576,8 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
   formatInput(): boolean {
     if (!this.#inputText.trim()) return false;
     try {
-      const parsed = JSON.parse(this.#inputText) as unknown;
-      this.#inputText = JSON.stringify(parsed, null, 2) ?? "";
+      const parsed = parseJSON(this.#inputText) as unknown;
+      this.#inputText = stringifyJSON(parsed, 2) ?? "";
       this.#runtimeError = null;
       this.#emitInputChange();
       this.requestRender();
@@ -700,7 +701,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     let inputValues: unknown[] = [];
     if (this.#inputText.trim()) {
       try {
-        const parsed = JSON.parse(this.#inputText) as unknown;
+        const parsed = parseJSON(this.#inputText) as unknown;
         if (this.#inputMode === "sequence") {
           if (!Array.isArray(parsed)) {
             throw new Error(
@@ -1350,7 +1351,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
         const detailText = presentation?.detail ?? "";
         let parses = false;
         try {
-          JSON.parse(detailText);
+          parseJSON(detailText);
           parses = true;
         } catch {
           parses = false;
@@ -1477,7 +1478,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       );
       this.#inputTouched = false;
       this.#inputText = sample.available
-        ? (JSON.stringify(sample.value, null, 2) ?? "")
+        ? (stringifyJSON(sample.value, 2) ?? "")
         : "";
       this.#runtimeError = null;
       this.#emitInputChange();
@@ -1668,11 +1669,11 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       }
       for (const choice of field.enumValues) {
         const option = document.createElement("option");
-        option.value = String(choice);
-        option.textContent = String(choice);
+        option.value = numberToken(choice) ?? String(choice);
+        option.textContent = option.value;
         select.append(option);
       }
-      select.value = current === undefined || current === null ? "" : String(current);
+      select.value = current === undefined || current === null ? "" : (numberToken(current) ?? String(current));
       select.addEventListener("change", () =>
         this.#applyPrimitive(field, path, select.value),
       );
@@ -1692,9 +1693,11 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     }
     const input = document.createElement("input");
     input.id = id;
-    input.type = field.valueType === "string" ? "text" : "number";
-    if (field.valueType === "integer") input.step = "1";
-    input.value = current === undefined || current === null ? "" : String(current);
+    // Native number inputs sanitize valid JSON such as 1e400 to an empty
+    // string. Keep the authored token; the existing parser owns admission.
+    input.type = "text";
+    if (field.valueType !== "string") input.inputMode = "decimal";
+    input.value = current === undefined || current === null ? "" : (numberToken(current) ?? String(current));
     input.addEventListener("input", () =>
       this.#applyPrimitive(field, path, input.value),
     );
@@ -1841,10 +1844,12 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
       this.#commitFormPayload(setValueAtPath(base, path, text), false);
       return;
     }
-    const numeric = Number(text);
-    if (Number.isNaN(numeric)) return;
-    const value = field.valueType === "integer" ? Math.trunc(numeric) : numeric;
-    this.#commitFormPayload(setValueAtPath(base, path, value), false);
+    try {
+      const value = parseJSON(text);
+      const token = numberToken(value);
+      if (token === undefined || (field.valueType === "integer" && !integerNumberToken(token))) return;
+      this.#commitFormPayload(setValueAtPath(base, path, value), false);
+    } catch { /* An incomplete/unsupported numeric edit must not replace data. */ }
   }
 
   #formPayloadBase(): Record<string, unknown> {
@@ -1886,7 +1891,7 @@ export class OperationWorkbenchElement extends OpenBindingsElement {
     if (!this.#inputTouched) {
       const sample = sampleFromSchema(operation.input, this.#obi);
       this.#inputText =
-        sample.available ? (JSON.stringify(sample.value, null, 2) ?? "") : "";
+        sample.available ? (stringifyJSON(sample.value, 2) ?? "") : "";
     }
   }
 
@@ -2141,7 +2146,7 @@ export function formatDuration(ms: number): string {
 function previewValue(value: unknown): string {
   let text: string;
   try {
-    text = JSON.stringify(value) ?? String(value);
+    text = stringifyJSON(value) ?? String(value);
   } catch {
     text = String(value);
   }
@@ -2259,10 +2264,8 @@ export function presentInvocationError(
   const hasData = Object.hasOwn(frame, "data");
   return {
     summary: introduction,
-    detail: JSON.stringify(
-      hasData ? { code, data: frame.data } : { code },
-      null,
-      2,
+    detail: stringifyJSON(
+      hasData ? { code, data: frame.data } : { code }, 2,
     ),
   };
 }
@@ -2292,16 +2295,16 @@ function sampleFromSchema(
   const value = schema as Record<string, unknown>;
 
   if (Object.hasOwn(value, "const")) {
-    return { available: true, value: structuredClone(value.const) };
+    return { available: true, value: cloneValueGraph(value.const) };
   }
   if (Array.isArray(value.enum) && value.enum.length > 0) {
-    return { available: true, value: structuredClone(value.enum[0]) };
+    return { available: true, value: cloneValueGraph(value.enum[0]) };
   }
   if (Object.hasOwn(value, "default")) {
-    return { available: true, value: structuredClone(value.default) };
+    return { available: true, value: cloneValueGraph(value.default) };
   }
   if (Array.isArray(value.examples) && value.examples.length > 0) {
-    return { available: true, value: structuredClone(value.examples[0]) };
+    return { available: true, value: cloneValueGraph(value.examples[0]) };
   }
   if (typeof value.$ref === "string") {
     const resolved = resolveLocalReference(root, value.$ref);
@@ -2321,12 +2324,16 @@ function sampleFromSchema(
       );
       if (!sample.available) return { available: false };
       if (!hasCombined) {
-        combined = structuredClone(sample.value);
+        combined = cloneValueGraph(sample.value);
         hasCombined = true;
       } else if (isRecord(combined) && isRecord(sample.value)) {
         combined = { ...combined, ...sample.value };
-      } else if (JSON.stringify(combined) !== JSON.stringify(sample.value)) {
-        return { available: false };
+      } else {
+        try {
+          if (!equalJSON(combined, sample.value)) return { available: false };
+        } catch {
+          return { available: false };
+        }
       }
     }
     // An empty allOf imposes no constraint, so null is a valid conservative
@@ -2380,89 +2387,91 @@ function sampleFromSchema(
         return { available: false };
       }
       if (sample.available && (required.has(key) || hasSuggestedValue(propertySchema))) {
-        result[key] = sample.value;
+        Object.defineProperty(result, key, {value:sample.value, enumerable:true, writable:true, configurable:true});
       }
     }
     return { available: true, value: result };
   }
   if (types.includes("array")) {
-    const minimum =
-      typeof value.minItems === "number" && value.minItems > 0
-        ? Math.ceil(value.minItems)
-        : 0;
+    const minimum = boundedSampleCount(value.minItems);
+    if(minimum===null || !sampleCountFits(minimum,value.maxItems))return {available:false};
     if (minimum === 0) return { available: true, value: [] };
     const itemSchema = value.items;
     if (itemSchema === undefined) return { available: false };
     const item = sampleFromSchema(itemSchema, root, new Set(seen), depth + 1);
+    // Prevent nested count constraints multiplying a tiny schema into an
+    // enormous automatically generated payload. This is only a UI starter.
+    if (item.available && minimum * (stringifyJSON(item.value).length + 1) > 65536) {
+      return { available: false };
+    }
     return item.available
       ? {
           available: true,
           value: Array.from({ length: minimum }, () =>
-            structuredClone(item.value),
+            cloneValueGraph(item.value),
           ),
         }
       : { available: false };
   }
   if (types.includes("string")) {
     if (typeof value.pattern === "string") return { available: false };
-    const minimum =
-      typeof value.minLength === "number" && value.minLength > 0
-        ? Math.ceil(value.minLength)
-        : 0;
-    if (
-      typeof value.maxLength === "number" &&
-      minimum > Math.floor(value.maxLength)
-    ) {
-      return { available: false };
-    }
+    const minimum = boundedSampleCount(value.minLength);
+    if(minimum===null || !sampleCountFits(minimum,value.maxLength))return {available:false};
     return { available: true, value: "x".repeat(minimum) };
   }
   if (types.includes("integer")) {
-    const floor =
-      typeof value.exclusiveMinimum === "number"
-        ? Math.floor(value.exclusiveMinimum) + 1
-        : typeof value.minimum === "number"
-          ? Math.ceil(value.minimum)
-          : 0;
-    const ceiling =
-      typeof value.exclusiveMaximum === "number"
-        ? Math.ceil(value.exclusiveMaximum) - 1
-        : typeof value.maximum === "number"
-          ? Math.floor(value.maximum)
-          : Number.POSITIVE_INFINITY;
-    return floor <= ceiling
-      ? { available: true, value: floor }
-      : { available: false };
+    return numericSchemaSample(value,true);
   }
   if (types.includes("number")) {
-    const exclusiveMinimum =
-      typeof value.exclusiveMinimum === "number"
-        ? value.exclusiveMinimum
-        : null;
-    const floor =
-      exclusiveMinimum !== null
-        ? exclusiveMinimum +
-          Math.max(1, Math.abs(exclusiveMinimum)) * Number.EPSILON
-        : typeof value.minimum === "number"
-          ? value.minimum
-          : 0;
-    const maximum =
-      typeof value.exclusiveMaximum === "number"
-        ? value.exclusiveMaximum
-        : typeof value.maximum === "number"
-          ? value.maximum
-          : Number.POSITIVE_INFINITY;
-    const validMaximum =
-      typeof value.exclusiveMaximum === "number"
-        ? floor < maximum
-        : floor <= maximum;
-    return validMaximum
-      ? { available: true, value: floor }
-      : { available: false };
+    return numericSchemaSample(value,false);
   }
   if (types.includes("boolean")) return { available: true, value: false };
   if (types.includes("null")) return { available: true, value: null };
   return { available: false };
+}
+
+// A starter is newly generated example data, not an arithmetic API. Reuse an
+// inclusive exact minimum directly. Any native candidate for an exclusive or
+// fractional integer bound must pass exact checks before it can be offered.
+function numericSchemaSample(schema:Record<string,unknown>,integer:boolean):SchemaSample {
+  try {
+    let candidate:unknown=schema.minimum??0;
+    const exclusive=numberToken(schema.exclusiveMinimum);
+    if(exclusive!==undefined){
+      const n=Number(exclusive);
+      candidate=integer?Math.floor(n)+1:n+Math.max(1,Math.abs(n))*Number.EPSILON;
+    }else if(integer){
+      const t=numberToken(candidate);
+      if(t===undefined)return {available:false};
+      if(!integerNumberToken(t))candidate=Math.ceil(Number(t));
+    }
+    const token=numberToken(candidate);
+    if(token===undefined || (integer&&!integerNumberToken(token)))return {available:false};
+    for(const key of ["minimum","maximum","exclusiveMinimum","exclusiveMaximum"]){
+      const bound=numberToken(schema[key]);if(bound===undefined)continue;
+      const order=compareNumberTokens(token,bound);
+      if((key==="minimum"&&order<0)||(key==="maximum"&&order>0)||(key==="exclusiveMinimum"&&order<=0)||(key==="exclusiveMaximum"&&order>=0))return {available:false};
+    }
+    return {available:true,value:candidate};
+  }catch{return {available:false};}
+}
+
+// Bound automatic UI generation, not the operation's accepted values. Larger
+// inputs remain editable/invocable through the ordinary source input surface.
+function boundedSampleCount(value:unknown):number|null {
+  if(value===undefined)return 0;
+  try {
+    const token=numberToken(value);
+    if(token===undefined || !integerNumberToken(token) || compareNumberTokens(token,"0")<0 || compareNumberTokens(token,"1024")>0)return null;
+    return Number(token);
+  }catch{return null;}
+}
+function sampleCountFits(minimum:number,maximum:unknown):boolean {
+  if(maximum===undefined)return true;
+  try {
+    const token=numberToken(maximum);
+    return token!==undefined && integerNumberToken(token) && compareNumberTokens(String(minimum),token)<=0;
+  }catch{return false;}
 }
 
 function hasSuggestedValue(schema: unknown): boolean {
@@ -2490,7 +2499,7 @@ function resolveLocalReference(
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return value !== null && typeof value === "object" && !Array.isArray(value) && !isJSONNumber(value);
 }
 
 export interface OperationWorkbenchElement {

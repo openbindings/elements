@@ -1,3 +1,4 @@
+import { parseJSON, stringifyJSON } from "@openbindings/sdk";
 import {
   OpenBindingsElement,
   type Refs,
@@ -233,8 +234,8 @@ export class JSONEditorElement extends OpenBindingsElement {
   format(): boolean {
     if (this.#readOnly || this.#language !== "json") return false;
     try {
-      const parsed = JSON.parse(this.#text) as JSONValue;
-      this.#applyText(`${JSON.stringify(parsed, null, 2)}\n`, true);
+      const parsed = parseJSON(this.#text) as JSONValue;
+      this.#applyText(`${stringifyJSON(parsed, 2)}\n`, true);
       return true;
     } catch {
       return false;

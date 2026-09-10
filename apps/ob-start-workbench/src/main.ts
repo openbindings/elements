@@ -1,3 +1,4 @@
+import { stringifyJSON, parseJSON, cloneValueGraph, isJSONNumber } from "@openbindings/sdk";
 import "@openbindings/obi-editor/define";
 import "@openbindings/obi-explorer/define";
 import "@openbindings/operation-detail/define";
@@ -27,7 +28,7 @@ import {
   beginDragCursor,
   debounce,
 } from "@openbindings/ui-core";
-import { parse as parseYAML } from "yaml";
+import { parseValueYAML } from "@openbindings/obi-editor";
 import {
   WorkspaceLeases,
   type WorkspaceRecord,
@@ -1261,7 +1262,7 @@ requirementForm.addEventListener("submit", event => {
     ? matchingRetryContext(retryContextTarget, contextChallenge.target, retryDurableContext) : null;
   const next = mergeContext(prior,
     mergeContext(resolved.durable, resolved.transient ?? {}));
-  if (++contextRetryCount > 4 || JSON.stringify(next) === JSON.stringify(targetContext)) {
+  if (++contextRetryCount > 4 || stringifyJSON(next) === stringifyJSON(targetContext)) {
     bootstrapMessage.textContent = "Context did not resolve the requirement. Start a new attempt or change the supplied values.";
     return;
   }
@@ -1352,7 +1353,7 @@ targetContextForm.addEventListener("submit", event => {
     return;
   }
   try {
-    const parsed = JSON.parse(raw) as unknown;
+    const parsed = parseJSON(raw) as unknown;
     if (
       parsed === null ||
       typeof parsed !== "object" ||
@@ -2336,7 +2337,7 @@ function restoreSessions(): void {
   let restoredActiveId: string | null = null;
   try {
     const raw = globalThis.sessionStorage.getItem(operationTabsStorageKey());
-    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+    const parsed = raw ? (parseJSON(raw) as unknown) : null;
     if (isRecord(parsed) && parsed.version === 2 && Array.isArray(parsed.sessions)) {
       const availableSources = targetInterface?.sources ?? {};
       const seen = new Set<string>();
@@ -2503,7 +2504,7 @@ function persistSessions(): void {
   try {
     globalThis.sessionStorage.setItem(
       operationTabsStorageKey(),
-      JSON.stringify({
+      stringifyJSON({
         version: 2,
         sessions: openSessionIds.flatMap<PersistedSessionV2>(id => {
           const session = sessionsById.get(id);
@@ -3285,13 +3286,13 @@ function parseInterfaceText(text: string, name: string): unknown {
   if (!trimmed) throw new Error(`${name} is empty.`);
   if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
     try {
-      return JSON.parse(trimmed);
+      return parseJSON(trimmed);
     } catch (error) {
       throw new Error(`${name} is not valid JSON: ${errorText(error)}`);
     }
   }
   try {
-    return parseYAML(trimmed);
+    return parseValueYAML(trimmed);
   } catch (error) {
     throw new Error(`${name} is not valid YAML: ${errorText(error)}`);
   }
@@ -3431,7 +3432,7 @@ function overwrittenSchemaKeys(
   const changed: string[] = [];
   for (const [key, value] of Object.entries(previous)) {
     if (!(key in next)) continue;
-    if (JSON.stringify(next[key]) !== JSON.stringify(value)) {
+    if (stringifyJSON(next[key]) !== stringifyJSON(value)) {
       changed.push(`#/schemas/${key}`);
     }
   }
@@ -3470,7 +3471,7 @@ function confirmChange(
 function resolveJSONPointer(document: unknown, ref: string): unknown {
   if (ref === "#") return document;
   if (!ref.startsWith("#/")) {
-    throw new Error(`ref ${JSON.stringify(ref)} is not a graph JSON Pointer`);
+    throw new Error(`ref ${stringifyJSON(ref)} is not a graph JSON Pointer`);
   }
   let current = document;
   for (const rawToken of ref.slice(2).split("/")) {
@@ -3478,13 +3479,13 @@ function resolveJSONPointer(document: unknown, ref: string): unknown {
     if (Array.isArray(current)) {
       const index = canonicalArrayIndex(token);
       if (index >= current.length) {
-        throw new Error(`ref ${JSON.stringify(ref)} does not resolve`);
+        throw new Error(`ref ${stringifyJSON(ref)} does not resolve`);
       }
       current = current[index];
     } else if (isRecord(current) && Object.hasOwn(current, token)) {
       current = current[token];
     } else {
-      throw new Error(`ref ${JSON.stringify(ref)} does not resolve`);
+      throw new Error(`ref ${stringifyJSON(ref)} does not resolve`);
     }
   }
   return current;
@@ -3495,11 +3496,11 @@ function replaceJSONPointer(
   ref: string,
   replacement: unknown,
 ): unknown {
-  if (ref === "#") return structuredClone(replacement);
+  if (ref === "#") return cloneValueGraph(replacement);
   if (!ref.startsWith("#/")) {
-    throw new Error(`ref ${JSON.stringify(ref)} is not a graph JSON Pointer`);
+    throw new Error(`ref ${stringifyJSON(ref)} is not a graph JSON Pointer`);
   }
-  const next = structuredClone(document);
+  const next = cloneValueGraph(document);
   const tokens = ref
     .slice(2)
     .split("/")
@@ -3511,7 +3512,7 @@ function replaceJSONPointer(
     } else if (isRecord(current) && Object.hasOwn(current, token)) {
       current = current[token];
     } else {
-      throw new Error(`ref ${JSON.stringify(ref)} does not resolve`);
+      throw new Error(`ref ${stringifyJSON(ref)} does not resolve`);
     }
   }
   const final = tokens.at(-1);
@@ -3519,20 +3520,20 @@ function replaceJSONPointer(
   if (Array.isArray(current)) {
     const index = canonicalArrayIndex(final);
     if (index >= current.length) {
-      throw new Error(`ref ${JSON.stringify(ref)} does not resolve`);
+      throw new Error(`ref ${stringifyJSON(ref)} does not resolve`);
     }
-    current[index] = structuredClone(replacement);
+    current[index] = cloneValueGraph(replacement);
   } else if (isRecord(current) && Object.hasOwn(current, final)) {
-    current[final] = structuredClone(replacement);
+    current[final] = cloneValueGraph(replacement);
   } else {
-    throw new Error(`ref ${JSON.stringify(ref)} does not resolve`);
+    throw new Error(`ref ${stringifyJSON(ref)} does not resolve`);
   }
   return next;
 }
 
 function canonicalArrayIndex(token: string): number {
   if (!/^(0|[1-9][0-9]*)$/.test(token)) {
-    throw new Error(`JSON Pointer array token ${JSON.stringify(token)} is not canonical`);
+    throw new Error(`JSON Pointer array token ${stringifyJSON(token)} is not canonical`);
   }
   return Number(token);
 }
@@ -3639,7 +3640,7 @@ function currentPreflightKey(): string | null {
     targetLabel,
     operation,
     binding,
-    context ? stableHash(JSON.stringify(context)) : "",
+    context ? stableHash(stringifyJSON(context)) : "",
     sessionToken ? stableHash(sessionToken) : "",
   ].join("\u0000");
 }
@@ -3837,7 +3838,7 @@ function requirementControls(
         select.required = true;
         select.append(new Option("Choose a value…", ""));
         for (const value of requirement.schema.enum) {
-          select.append(new Option(typeof value === "string" ? value : JSON.stringify(value), JSON.stringify(value)));
+          select.append(new Option(typeof value === "string" ? value : stringifyJSON(value), stringifyJSON(value)));
         }
         select.value = contextMemory.recall(contextChallenge?.target ?? "", requirement)["config.value"] ?? "";
         label.append(select);
@@ -3907,7 +3908,7 @@ function requirementFieldValue(
       const point = typeof requirement.point === "string" ? requirement.point : "";
       const path = typeof requirement.path === "string" ? requirement.path : "";
       const typed = isRecord(requirement.schema) && Array.isArray(requirement.schema.enum)
-        ? JSON.parse(value) as unknown : value;
+        ? parseJSON(value) as unknown : value;
       return configurationContext(point, path, typed);
     }
     default:
@@ -4099,6 +4100,8 @@ function applyPanelToggle(
 
 function restoreWorkspaceLayout(): WorkspaceLayout {
   try {
+    // Layout is a deliberately native, bounded UI-number model, not OBI or
+    // invocation data. Preserve its matching native persistence contract.
     const parsed = JSON.parse(
       globalThis.localStorage.getItem(layoutStorageKey) ?? "null",
     ) as unknown;
@@ -4264,7 +4267,7 @@ function displayTarget(target: string): string {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return value !== null && typeof value === "object" && !Array.isArray(value) && !isJSONNumber(value);
 }
 
 function requiredElement<T extends Element>(selector: string): T {

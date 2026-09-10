@@ -1540,8 +1540,9 @@ describe("form input view", () => {
       root.querySelector<HTMLInputElement>("#f-active")?.type,
     ).toBe("checkbox");
     expect(root.querySelector<HTMLInputElement>("#f-count")?.type).toBe(
-      "number",
+      "text",
     );
+    expect(root.querySelector<HTMLInputElement>("#f-count")?.inputMode).toBe("decimal");
     // Descriptions render muted next to their field.
     expect(root.textContent).toContain("What to send");
 
