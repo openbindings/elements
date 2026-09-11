@@ -1131,6 +1131,62 @@ test("a failed resolve stays recoverable without requiring protocol diagnostics"
   await expect(page.locator("#sheet-run")).toBeEnabled();
 });
 
+test("raw artifact files use exact binding identifiers for synthesis", async ({ page }) => {
+  await page.goto("/#token=test-token");
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+  const paths = {
+    "/hello": {
+      get: { operationId: "hello", responses: { "204": { description: "ok" } } },
+    },
+  };
+  const artifacts = [
+    ...["3.0.4", "3.1.2", "3.2.0"].map(openapi => ({
+      document: { openapi, paths, servers: [{ url: "https://example.test" }] },
+      bindingSpec: `openbindings.openapi-${openapi.slice(0, 3)}@1`,
+    })),
+    {
+      document: { swagger: "2.0", host: "example.test", paths },
+      bindingSpec: "openbindings.openapi-2.0@1",
+    },
+    {
+      document: {
+        asyncapi: "3.0.0",
+        servers: { test: { host: "example.test", protocol: "mqtt" } },
+        channels: {
+          events: { address: "events", messages: { Event: { payload: { type: "string" } } } },
+        },
+        operations: { observe: { action: "send", channel: { $ref: "#/channels/events" } } },
+      },
+      bindingSpec: "openbindings.asyncapi@1",
+    },
+  ];
+  for (const { document, bindingSpec } of artifacts) {
+    await test.step(bindingSpec, async () => {
+      await page.locator("#acquire-open").click();
+      await page.locator("#acquire-file").setInputFiles({
+        name: "artifact.json",
+        mimeType: "application/json",
+        buffer: Buffer.from(JSON.stringify({
+          ...document, info: { title: "File import", version: "1" },
+        })),
+      });
+      await expect(page.locator("#acquire-replace")).toBeEnabled({ timeout: 30_000 });
+      await expect(page.locator("#acquire-problem")).toBeHidden();
+      await expect(page.locator("#acquire-found")).toContainText(bindingSpec);
+      await page.locator("#acquire-replace").click();
+      await expect(page.locator("#acquire-dialog")).toBeHidden();
+      const text = await page.locator("ob-obi-editor").locator("ob-json-editor").evaluate(
+        element => (element as HTMLElement & { text: string }).text,
+      );
+      const acquired = JSON.parse(text);
+      expect(Object.keys(acquired.operations).length).toBeGreaterThan(0);
+      expect(Object.values(acquired.sources).map(source =>
+        (source as { bindingSpec: string }).bindingSpec,
+      )).toEqual([bindingSpec]);
+    });
+  }
+});
+
 // Rev 17.16: acquisition. An ephemeral process gets a modal, not a tab —
 // tabs are document data. The dialog asks one question and offers two
 // answers; dismissal is chrome at the top, not a third footer button.

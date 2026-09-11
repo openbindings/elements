@@ -3300,9 +3300,12 @@ function parseInterfaceText(text: string, name: string): unknown {
 
 function detectBindingSpec(document: unknown): string | null {
   if (!isRecord(document)) return null;
-  if (typeof document.openapi === "string") return "openapi";
-  if (typeof document.swagger === "string") return "openapi";
-  if (typeof document.asyncapi === "string") return "asyncapi";
+  if (typeof document.openapi === "string") {
+    const edition = /^(3\.[012])\.\d+$/.exec(document.openapi)?.[1];
+    return edition ? `openbindings.openapi-${edition}@1` : null;
+  }
+  if (document.swagger === "2.0") return "openbindings.openapi-2.0@1";
+  if (typeof document.asyncapi === "string") return "openbindings.asyncapi@1";
   return null;
 }
 
