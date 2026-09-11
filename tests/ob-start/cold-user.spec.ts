@@ -10,7 +10,7 @@ let heldResponses: Array<() => void> = [];
 function releaseHeldResponses() {
   for (const release of heldResponses.splice(0)) release();
 }
-let receipts: { target: number; path: string; key: boolean; backend: boolean; query: string }[] = [];
+let receipts: { target: number; path: string; key: boolean; credential: string; backend: boolean; query: string }[] = [];
 
 test.beforeAll(async () => {
   for (const target of [0, 1]) {
@@ -31,7 +31,7 @@ test.beforeAll(async () => {
         else res.end(document);
         return;
       }
-      receipts.push({ target, path: url.pathname, key: req.headers["x-test-key"] === "test-only", backend: JSON.stringify(req.headers).includes("test-token"), query: url.search });
+      receipts.push({ target, path: url.pathname, key: req.headers["x-test-key"] === "test-only", credential: String(req.headers["x-test-key"] ?? ""), backend: JSON.stringify(req.headers).includes("test-token"), query: url.search });
       if (url.pathname === "/api/drift") res.end('{"unexpected":"private-response-sentinel"}');
       else res.end('{"ok":true}');
     });
@@ -70,6 +70,95 @@ async function select(page: Page, operation: string) {
   await page.locator("ob-obi-explorer").locator(".operation-key").getByText(operation, { exact: true }).click();
   await expect(page.locator("#sheet-run")).toBeEnabled();
 }
+
+test("legacy workspace restores the draft but never restores credential authority", async ({ page, context }) => {
+  const legacy = "legacy-workspace-secret-sentinel";
+  const fresh = "fresh-explicit-attempt-sentinel";
+  const id = "legacy-context-closeout";
+  await acquire(page, 0);
+  const editor = page.locator("ob-obi-editor").locator("ob-json-editor");
+  const documentText = await editor.evaluate(el => (el as HTMLElement & { text: string }).text);
+  const document = JSON.parse(documentText) as Record<string, unknown>;
+  document.description = "Legacy recoverable edit sentinel";
+  const text = JSON.stringify(document, null, 2);
+  // Seed the real pre-migration record shape; going through today's save path
+  // would already write context:null and could not detect a restore regression.
+  await page.evaluate(async ({ id, document, text, legacy }) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("openbindings.ob-start.workspaces.v1", 1);
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains("workspaces")) request.result.createObjectStore("workspaces", { keyPath: "id" });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction("workspaces", "readwrite");
+      transaction.objectStore("workspaces").put({ id, document, documentText: text,
+        label: "Legacy fixture", name: "Legacy fixture", version: "1", origin: "legacy local fixture",
+        sessionsJSON: null, context: { apiKeys: { TestKey: legacy }, credentials: { TestKey: legacy } },
+        createdAt: Date.now(), updatedAt: Date.now() });
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+    db.close();
+    sessionStorage.setItem("openbindings.ob-start.workspace-pointer.v1", id);
+  }, { id, document, text, legacy });
+  await page.reload();
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+  await expect.poll(() => editor.evaluate(el => (el as HTMLElement & { text: string }).text)).toContain("Legacy recoverable edit sentinel");
+  await page.locator("#context-open").click();
+  await expect(page.locator("#target-context")).toHaveValue("");
+  await page.locator("#context-close").click();
+  await select(page, "secure");
+  await page.locator("#sheet-run").click();
+  await expect(page.locator("#requirement-fields input")).toHaveValue("");
+  expect(receipts.filter(r => r.path === "/api/secure")).toEqual([]);
+  await page.locator("#requirement-fields input").fill(fresh);
+  await page.locator("#apply-requirements").click();
+  await expect.poll(() => receipts.filter(r => r.path === "/api/secure").length).toBe(1);
+  expect(receipts.find(r => r.path === "/api/secure")?.credential).toBe(fresh);
+  const leaked = (values: Array<{ credential: string }>) => values.some(r => r.credential === legacy);
+  expect(leaked(receipts)).toBe(false);
+  expect(leaked([...receipts, { credential: legacy }])).toBe(true); // test-only negative control
+  await page.locator("#context-close").click();
+  await select(page, "list");
+  await page.locator("#sheet-run").click();
+  await expect.poll(() => receipts.filter(r => r.path === "/api/list").length).toBe(1);
+  expect(receipts.find(r => r.path === "/api/list")?.credential).toBe("");
+  await expect.poll(() => page.evaluate(async id => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("openbindings.ob-start.workspaces.v1", 1);
+      request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+    });
+    const record = await new Promise<{ context: unknown }>((resolve, reject) => {
+      const request = db.transaction("workspaces").objectStore("workspaces").get(id);
+      request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+    });
+    db.close(); return record.context;
+  }, id)).toBeNull();
+  await page.reload();
+  await expect(page.locator("#connection-status-text")).toHaveText("Ready");
+  await select(page, "secure");
+  await page.locator("#sheet-run").click();
+  await expect(page.locator("#requirement-fields input")).toHaveValue("");
+  expect(receipts.filter(r => r.path === "/api/secure")).toHaveLength(1);
+  const beside = await context.newPage();
+  await beside.goto("/#token=test-token");
+  await expect(beside.locator("#connection-status-text")).toHaveText("Ready");
+  await acquire(beside, 0);
+  await select(beside, "secure");
+  await beside.locator("#sheet-run").click();
+  await expect(beside.locator("#requirement-fields input")).toHaveValue("");
+  expect(receipts.filter(r => r.path === "/api/secure")).toHaveLength(1);
+  await beside.close();
+  await acquire(page, 1);
+  await select(page, "secure");
+  await page.locator("#sheet-run").click();
+  await expect(page.locator("#requirement-fields input")).toHaveValue("");
+  expect(receipts.some(r => r.target === 1 || r.backend)).toBe(false);
+  expect(leaked(receipts)).toBe(false);
+});
 
 test("credentials never survive target replacement or leak the backend token", async ({ page }) => {
   await acquire(page, 0);
