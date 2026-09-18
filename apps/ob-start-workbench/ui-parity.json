@@ -203,31 +203,43 @@
   },
   "openbindings.ob.registerDelegate": {
     "status": "refused",
-    "detail": "instance administration; CLI surface. Reopen: a dogfood session needs delegate visibility to explain an invocation route."
+    "detail": "instance administration; CLI surface (ob delegate register <interface> --role ...). Reopen: a dogfood session needs delegate visibility to explain an invocation route."
   },
   "openbindings.ob.unregisterDelegate": {
     "status": "refused",
-    "detail": "instance administration; CLI surface. Reopen: with registerDelegate."
+    "detail": "instance administration; CLI surface (ob delegate unregister <id>). Reopen: with registerDelegate."
   },
   "openbindings.ob.listDelegates": {
     "status": "refused",
-    "detail": "instance administration; CLI surface. Reopen: with registerDelegate."
-  },
-  "openbindings.ob.resolveDelegate": {
-    "status": "refused",
-    "detail": "instance administration; CLI surface. Reopen: with registerDelegate."
-  },
-  "openbindings.ob.resolveDelegateForBindingSpec": {
-    "status": "refused",
-    "detail": "instance administration; CLI surface. Reopen: with registerDelegate."
+    "detail": "instance administration; CLI surface (ob delegate list [--role]). Reopen: with registerDelegate."
   },
   "openbindings.ob.setDelegatePreference": {
     "status": "refused",
-    "detail": "instance administration; CLI surface. Reopen: with registerDelegate."
+    "detail": "instance administration; CLI surface (ob delegate prefer <id> [n] --role). Reopen: with registerDelegate."
   },
   "openbindings.ob.getDelegateRequirements": {
     "status": "refused",
-    "detail": "instance administration; CLI surface. Reopen: with registerDelegate."
+    "detail": "instance administration; CLI surface (ob delegate requirements <role>). Reopen: with registerDelegate."
+  },
+  "openbindings.ob.listDelegateRoles": {
+    "status": "refused",
+    "detail": "instance administration; CLI surface (ob delegate roles). Reopen: with registerDelegate."
+  },
+  "openbindings.ob.setDelegateBindingPreference": {
+    "status": "refused",
+    "detail": "instance administration; CLI surface (ob delegate prefer --binding-spec). Reopen: with registerDelegate."
+  },
+  "openbindings.ob.previewDelegateMigration": {
+    "status": "refused",
+    "detail": "operator conversion facility over the environment's files; CLI-only by design, no remote realization. Reopen: never in the workbench."
+  },
+  "openbindings.ob.applyDelegateMigration": {
+    "status": "refused",
+    "detail": "operator conversion facility; CLI-only by design, no remote realization. Reopen: never in the workbench."
+  },
+  "openbindings.ob.rollbackDelegateMigration": {
+    "status": "refused",
+    "detail": "operator conversion facility; CLI-only by design, no remote realization. Reopen: never in the workbench."
   },
   "openbindings.ob.initializeEnvironment": {
     "status": "refused",
@@ -248,5 +260,9 @@
   "openbindings.ob.startMCPServer": {
     "status": "refused",
     "detail": "foreground process in the caller's environment; server-enforced LocalOnly."
+  },
+  "openbindings.ob.resolveRoleDelegate": {
+    "status": "refused",
+    "detail": "instance administration; CLI surface (ob delegate resolve --role --binding-spec). Reopen: with registerDelegate."
   }
 }
