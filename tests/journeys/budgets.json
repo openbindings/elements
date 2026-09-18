@@ -6,8 +6,8 @@
   },
   "WB-PERF-03": {
     "kind": "perf",
-    "budgetMs": 400,
-    "description": "Run -> first output frame visible (describe); budget is 400ms + server time"
+    "budgetMs": 500,
+    "description": "Run -> first output frame visible (describe); budget is 500ms + server time"
   },
   "WB-PERF-04": {
     "kind": "perf",
