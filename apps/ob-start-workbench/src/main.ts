@@ -1115,6 +1115,18 @@ function renderDocumentBar(obi: OBInterface): void {
   renderBreadcrumb();
 }
 
+/** The subset of ob's ValidationReport the validity chip reads. */
+interface ValidationReport {
+  conclusion?: "conformant" | "non-conformant" | "conformance-undetermined";
+  findings?: {
+    rule: string;
+    status: "violated" | "inconclusive";
+    path?: string;
+    message: string;
+  }[];
+  refusal?: { version: string; reason: string };
+}
+
 const scheduleValidityRefresh = debounce(() => {
   if (targetInterface) void refreshDocumentValidity(targetInterface);
 }, 600);
@@ -1140,8 +1152,10 @@ function renderBreadcrumb(): void {
  * The validity chip is the contract's own verdict: validateInterface runs
  * against the live document on every document change. Linter doctrine
  * (rev 17.9): validity is SILENT — the chip renders only when the server
- * reports problems. Unverified, checking, and valid all show nothing;
- * spell checkers don't flag correct words.
+ * establishes a violation or refuses the document's version. Checking,
+ * conformant, and conformance undetermined all show nothing: an
+ * inconclusive rule is not evidence of violation, and spell checkers don't
+ * flag correct words.
  */
 async function refreshDocumentValidity(obi: OBInterface): Promise<void> {
   const attempt = ++validationAttempt;
@@ -1155,20 +1169,34 @@ async function refreshDocumentValidity(obi: OBInterface): Promise<void> {
   try {
     const report = await invokeThroughOB<
       { interface: OBInterface },
-      { valid: boolean; problems?: string[] }
+      ValidationReport
     >(obInterface, "openbindings.ob.validateInterface", { interface: obi });
     if (attempt !== validationAttempt) return;
-    if (report.valid) {
+    if (report.refusal) {
+      documentValidity.hidden = false;
+      documentValidity.textContent = "Unsupported version";
+      documentValidity.className = "badge danger";
+      documentValidity.title = report.refusal.reason;
+    } else if (report.conclusion === "non-conformant") {
+      const violations = (report.findings ?? []).filter(
+        (finding) => finding.status === "violated",
+      );
+      documentValidity.hidden = false;
+      documentValidity.textContent = violations.length
+        ? `${violations.length} violation${violations.length === 1 ? "" : "s"}`
+        : "Non-conformant";
+      documentValidity.className = "badge danger";
+      documentValidity.title = violations
+        .slice(0, 6)
+        .map((finding) =>
+          finding.path
+            ? `${finding.path}: ${finding.message} (${finding.rule})`
+            : `${finding.message} (${finding.rule})`,
+        )
+        .join("\n");
+    } else {
       documentValidity.hidden = true;
       documentValidity.removeAttribute("title");
-    } else {
-      const problems = report.problems ?? [];
-      documentValidity.hidden = false;
-      documentValidity.textContent = problems.length
-        ? `${problems.length} problem${problems.length === 1 ? "" : "s"}`
-        : "Invalid";
-      documentValidity.className = "badge danger";
-      documentValidity.title = problems.slice(0, 6).join("\n");
     }
   } catch {
     if (attempt !== validationAttempt) return;

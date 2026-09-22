@@ -54,7 +54,7 @@
     "rev": 18,
     "detail": "document verbs re-homing (review/120); was the Add flow's merge"
   },
-  "openbindings.ob.conform": {
+  "openbindings.ob.correspond": {
     "status": "deferred",
     "rev": 18,
     "detail": "document tools menu, after authoring verbs"
