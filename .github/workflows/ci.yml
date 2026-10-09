@@ -1,77 +1,79 @@
 name: CI
 
 on:
-  pull_request:
   push:
     branches: [main]
+  pull_request:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [component, workbench]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Check out elements
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: elements
 
       - name: Check out TypeScript SDK
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: openbindings/openbindings-ts
-          # Elements main currently consumes the pre-release operation API.
-          # Keep this aligned with openbindings/project repositories.json.
-          ref: release/0.2
+          ref: c53ef707ca1170c705775532fd30a8d7e87e3e5e
           path: openbindings-ts
 
-      - uses: actions/checkout@v4
-        with:
-          repository: openbindings/jsonata
-          ref: e2a5e518e6b5bd247ab327d427c591dc72743f2d
-          path: jsonata
-
       - name: Check out standalone artifact clients
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: openbindings/openapi-client
+          ref: 7b15d57e960faa6a9e010eb9cbea80fd83f0d02e
           path: openapi-client
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: openbindings/asyncapi-client
+          ref: 7326ce4e18c12e1dcb36c3587fbe0f7fe52ec749
           path: asyncapi-client
 
       - name: Check out shared interfaces
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: openbindings/interfaces
+          ref: fe526cc5c750a21f4dd61efaa758c35c6af91192
           path: interfaces
 
       - name: Check out ob
-        uses: actions/checkout@v4
+        if: matrix.suite == 'workbench'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: openbindings/ob
-          # The embedded workbench exercises the pre-release `ob start` command.
-          # Keep this aligned with openbindings/project repositories.json.
-          ref: release/0.2
+          ref: 6c8aeb02b893b01a4d5ab581af5c819cf5ead107
           path: ob
 
       - name: Check out Go SDK
-        uses: actions/checkout@v4
+        if: matrix.suite == 'workbench'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: openbindings/openbindings-go
-          # ob's integration branch consumes the matching untagged SDK modules.
-          # Keep this aligned with openbindings/project repositories.json.
-          ref: release/0.2
+          ref: d76792a0d11566777f675e7e7f22235e03f311f1
           path: openbindings-go
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10.15.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
@@ -79,15 +81,14 @@ jobs:
             elements/pnpm-lock.yaml
             openbindings-ts/pnpm-lock.yaml
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        if: matrix.suite == 'workbench'
         with:
           go-version-file: ob/go.mod
           cache-dependency-path: ob/go.sum
 
-      - name: Build runtime and neutral JSON prerequisites
+      - name: Build neutral JSON prerequisites
         run: |
-          npm --prefix jsonata/javascript ci --ignore-scripts
-          npm --prefix jsonata/javascript run build
           pnpm --dir openbindings-ts install --frozen-lockfile --ignore-scripts
           pnpm --dir openbindings-ts --filter @openbindings/json --filter @openbindings/json-schema build
 
@@ -99,6 +100,7 @@ jobs:
           pnpm --dir asyncapi-client build
 
       - name: Resolve untagged Go SDK modules from the sibling checkout
+        if: matrix.suite == 'workbench'
         working-directory: ob
         run: |
           go work init .
@@ -119,13 +121,20 @@ jobs:
         working-directory: elements
         run: pnpm install --frozen-lockfile
 
+      - name: Build workbench packages
+        if: matrix.suite == 'workbench'
+        working-directory: elements
+        run: pnpm build
+
       - name: Verify generated contracts
+        if: matrix.suite == 'component'
         working-directory: elements
         run: |
           pnpm sync:requirements
           git diff --exit-code
 
       - name: Build, typecheck, and test packages
+        if: matrix.suite == 'component'
         working-directory: elements
         run: |
           pnpm check
@@ -139,9 +148,28 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
 
       - name: Test plain-browser composition
+        if: matrix.suite == 'component'
         working-directory: elements
         run: pnpm test:browser
 
       - name: Test embedded ob start workbench
+        if: matrix.suite == 'workbench'
         working-directory: elements
         run: pnpm test:ob-start
+
+  ci:
+    if: always()
+    needs: [verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every mandatory job to succeed
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          results = json.loads(os.environ['RESULTS'])
+          if not results or any(result != 'success' for result in results):
+              raise SystemExit('Required job results: ' + repr(results))
+          PY
