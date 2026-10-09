@@ -80,3 +80,11 @@ contract does not change.
 
 See [the consumer guide](docs/consumer-guide.md), [the design
 boundaries](docs/design.md), and [current scope](docs/status.md).
+
+## CI ownership
+
+CI runs two mandatory suites: component build/type/unit/package/browser checks,
+and the embedded `ob start` workbench tests. Each uses compatible fixed
+dependency commits. The workbench uses the CLI’s runtime-bearing legacy Go SDK,
+not the current core-only SDK. The existing commands remain in `package.json`;
+component changes no longer dispatch a whole-project integration run.
