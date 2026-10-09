@@ -30,7 +30,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: openbindings/openbindings-ts
-          ref: 173a5b4a63a4574b9576338add880b215749a66f
+          ref: c53ef707ca1170c705775532fd30a8d7e87e3e5e
           path: openbindings-ts
 
       - name: Check out standalone artifact clients
