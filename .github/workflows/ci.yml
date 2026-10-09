@@ -50,7 +50,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: openbindings/interfaces
-          ref: c3d85bd8a534d344b0309f2b9ab27deed92399d6
+          ref: fe526cc5c750a21f4dd61efaa758c35c6af91192
           path: interfaces
 
       - name: Check out ob
